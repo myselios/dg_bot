@@ -1,0 +1,127 @@
+services:
+  # AI 자동매매 트레이딩 봇
+  trading-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bitcoin-trading-bot
+    restart: unless-stopped
+
+    # 환경변수 (.env 파일에서 로드)
+    env_file:
+      - .env
+
+    # 볼륨 마운트
+    volumes:
+      # 백테스트 데이터 영속성
+      - ./backtest_data:/app/backtest_data
+      # 로그 파일 영속성 (필요시)
+      # - ./logs:/app/logs
+
+    # 네트워크 설정
+    # network_mode: bridge
+
+    # 리소스 제한 (선택적)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '1.0'
+    #       memory: 1G
+    #     reservations:
+    #       cpus: '0.5'
+    #       memory: 512M
+
+    # 로그 설정
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # 백테스팅 전용 서비스 (선택적)
+  backtest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bitcoin-backtest
+
+    env_file:
+      - .env
+
+    volumes:
+      - ./backtest_data:/app/backtest_data
+
+    # 백테스팅 실행
+    command: ["python", "backtest.py"]
+
+    # 프로파일 설정으로 선택적 실행
+    profiles:
+      - backtest
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # 데이터 수집 서비스 (선택적)
+  data-collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bitcoin-data-collector
+
+    env_file:
+      - .env
+
+    volumes:
+      - ./backtest_data:/app/backtest_data
+
+    # 데이터 수집 스크립트 실행
+    command: ["python", "scripts/backtesting/collect_eth_2024.py"]
+
+    # 프로파일 설정으로 선택적 실행
+    profiles:
+      - collect
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # 자동 거래 스케줄러 (1시간 주기)
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bitcoin-scheduler
+    restart: unless-stopped
+
+    # 환경변수 (.env 파일에서 로드)
+    env_file:
+      - .env
+
+    # 볼륨 마운트
+    volumes:
+      - ./backtest_data:/app/backtest_data
+      - ./logs:/app/logs
+
+    # 스케줄러 실행
+    command: ["python", "scheduler_main.py"]
+
+    # 로그 설정
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+# 네트워크 설정 (필요시)
+# networks:
+#   default:
+#     driver: bridge
+
+# 볼륨 설정 (필요시)
+# volumes:
+#   backtest_data:
+

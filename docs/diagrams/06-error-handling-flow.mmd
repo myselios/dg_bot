@@ -1,0 +1,74 @@
+sequenceDiagram
+    participant Scheduler as Scheduler<br/>(any module)
+    participant ErrorHandler as ErrorHandler<br/>(예외 처리)
+    participant Logger as Logger<br/>(logs/)
+    participant Metrics as Prometheus<br/>(error_counter)
+    participant Telegram as Telegram<br/>(에러 알림)
+    participant Retry as Retry Logic<br/>(재시도)
+
+    Scheduler->>Scheduler: 거래 작업 실행
+
+    alt Upbit API Error
+        Scheduler->>ErrorHandler: UpbitAPIException
+        ErrorHandler->>Logger: ERROR 로그 기록<br/>(api_call.log)
+        ErrorHandler->>Metrics: upbit_api_errors.inc(<br/>error_type='rate_limit'<br/>)
+
+        alt Retryable Error (429, 503)
+            ErrorHandler->>Retry: exponential_backoff()
+            Retry->>Retry: wait(2^attempt seconds)
+            Retry->>Scheduler: 재시도 (최대 3회)
+
+            alt 재시도 성공
+                Scheduler->>Logger: INFO: 재시도 성공
+            else 재시도 실패
+                ErrorHandler->>Telegram: 에러 알림 전송
+                ErrorHandler->>Scheduler: raise Exception
+            end
+        else Non-Retryable Error (400, 401)
+            ErrorHandler->>Telegram: 긴급 알림 전송
+            ErrorHandler->>Scheduler: raise Exception
+        end
+
+    else Database Error
+        Scheduler->>ErrorHandler: DatabaseException
+        ErrorHandler->>Logger: ERROR 로그 기록<br/>(database.log)
+        ErrorHandler->>Metrics: db_errors.inc()
+
+        alt Connection Error
+            ErrorHandler->>Retry: reconnect()
+            Retry->>Retry: wait(5 seconds)
+            Retry->>Scheduler: 재연결 시도
+        else Integrity Error
+            ErrorHandler->>Logger: CRITICAL: 데이터 무결성 오류
+            ErrorHandler->>Telegram: 긴급 알림
+            ErrorHandler->>Scheduler: raise Exception
+        end
+
+    else AI Service Error
+        Scheduler->>ErrorHandler: AIServiceException
+        ErrorHandler->>Logger: WARNING 로그 기록
+        ErrorHandler->>Metrics: ai_errors.inc()
+
+        alt GPT API Timeout
+            ErrorHandler->>Retry: retry_with_timeout()
+            Retry->>Scheduler: 타임아웃 연장 재시도
+        else GPT API Rate Limit
+            ErrorHandler->>Scheduler: fallback_decision()<br/>(규칙 기반 판단)
+            ErrorHandler->>Telegram: AI 서비스 다운 알림
+        end
+
+    else Network Error
+        Scheduler->>ErrorHandler: NetworkException
+        ErrorHandler->>Logger: ERROR 로그 기록
+        ErrorHandler->>Metrics: network_errors.inc()
+        ErrorHandler->>Retry: exponential_backoff()
+        Retry->>Scheduler: 재시도
+
+    else Unknown Error
+        Scheduler->>ErrorHandler: Exception
+        ErrorHandler->>Logger: CRITICAL 로그 기록<br/>(전체 스택 트레이스)
+        ErrorHandler->>Metrics: unknown_errors.inc()
+        ErrorHandler->>Telegram: 긴급 알림 전송<br/>(관리자 호출)
+        ErrorHandler->>Scheduler: 안전 모드 전환<br/>(거래 중단)
+    end
+

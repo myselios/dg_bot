@@ -1,0 +1,59 @@
+sequenceDiagram
+    participant BackendScheduler as Backend Scheduler<br/>(core/scheduler.py)
+    participant Main as main.py<br/>(execute_trading_cycle)
+    participant PositionService as PositionService<br/>(src/position/service.py)
+    participant DataCollector as DataCollector<br/>(src/data/collector.py)
+    participant AIService as AIService<br/>(src/ai/service.py)
+    participant BacktestRunner as BacktestRunner<br/>(src/backtesting/runner.py)
+    participant TradingService as TradingService<br/>(src/trading/service.py)
+    participant Upbit as Upbit API
+
+    BackendScheduler->>Main: execute_trading_cycle()
+
+    Note over Main: Phase 1: 데이터 수집
+    Main->>PositionService: get_current_position()
+    PositionService->>Upbit: GET /v1/accounts
+    Upbit-->>PositionService: 계좌 정보<br/>(잔고, 평가금액)
+    PositionService-->>Main: Position 객체
+
+    Main->>DataCollector: collect_chart_data()<br/>(symbol, interval, count)
+    DataCollector->>Upbit: GET /v1/candles/minutes/60
+    Upbit-->>DataCollector: 차트 데이터<br/>(OHLCV)
+    DataCollector-->>Main: DataFrame (차트)
+
+    Note over Main: Phase 2: AI 분석
+    Main->>AIService: analyze_market(<br/>chart_data,<br/>position,<br/>context<br/>)
+    AIService->>AIService: 기술적 지표 계산<br/>(RSI, MACD, BB, etc.)
+    AIService->>AIService: GPT-4 API 호출<br/>시장 분석 및 판단
+    AIService-->>Main: Decision<br/>(action, confidence, reason)
+
+    Note over Main: Phase 3: 백테스팅 필터링
+    alt decision == 'buy'
+        Main->>BacktestRunner: quick_filter_strategy()
+        BacktestRunner->>BacktestRunner: 최근 데이터로<br/>전략 검증
+        BacktestRunner-->>Main: is_passed (True/False)
+
+        alt is_passed == False
+            Main-->>BackendScheduler: {status: 'hold',<br/>reason: 'backtest_filter_failed'}
+        end
+    end
+
+    Note over Main: Phase 4: 거래 실행
+    alt decision == 'buy' and backtest_passed
+        Main->>TradingService: execute_buy(<br/>symbol,<br/>amount,<br/>price<br/>)
+        TradingService->>Upbit: POST /v1/orders<br/>(side=bid)
+        Upbit-->>TradingService: Order Response<br/>(uuid, executed_volume, price, fee)
+        TradingService-->>Main: TradeResult<br/>(success, trade_id, details)
+    else decision == 'sell'
+        Main->>TradingService: execute_sell(<br/>symbol,<br/>volume<br/>)
+        TradingService->>Upbit: POST /v1/orders<br/>(side=ask)
+        Upbit-->>TradingService: Order Response
+        TradingService-->>Main: TradeResult
+    else decision == 'hold'
+        Main-->>BackendScheduler: {status: 'hold',<br/>reason: ai_reason}
+    end
+
+    Main-->>BackendScheduler: Final Result<br/>{status, decision, price, amount, trade_id}
+
+
+

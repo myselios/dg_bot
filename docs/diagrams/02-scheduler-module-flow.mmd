@@ -1,0 +1,39 @@
+sequenceDiagram
+    participant User as 사용자/시스템
+    participant Scheduler as Scheduler<br/>(scheduler_main.py)
+    participant APScheduler as APScheduler<br/>(BackgroundScheduler)
+    participant BackendScheduler as Backend Scheduler<br/>(core/scheduler.py)
+    participant Logger as Logger
+
+    User->>Scheduler: 애플리케이션 시작
+    Scheduler->>Scheduler: load_dotenv()<br/>.env 파일 로드
+    Scheduler->>Scheduler: 환경변수 검증<br/>(API_KEY, SECRET, DB_URL)
+
+    alt 환경변수 누락
+        Scheduler->>Logger: ERROR 로그 기록
+        Scheduler->>User: 프로그램 종료 (exit 1)
+    end
+
+    Scheduler->>APScheduler: 스케줄러 생성<br/>BackgroundScheduler()
+    Scheduler->>APScheduler: add_job(<br/>trading_job,<br/>trigger='cron',<br/>hour='*'<br/>)
+
+    Note over Scheduler,APScheduler: 매시 정각에 실행되도록 설정
+
+    Scheduler->>APScheduler: start()
+    APScheduler->>Logger: INFO: 스케줄러 시작됨
+
+    loop 매 시간 정각
+        APScheduler->>BackendScheduler: trading_job() 실행
+        BackendScheduler->>Logger: INFO: 거래 작업 시작
+        BackendScheduler->>BackendScheduler: 거래 로직 실행<br/>(다음 섹션 참조)
+        BackendScheduler-->>APScheduler: 작업 완료
+        APScheduler->>Logger: INFO: 거래 작업 완료
+    end
+
+    User->>Scheduler: Ctrl+C (중단 신호)
+    Scheduler->>APScheduler: shutdown()
+    APScheduler->>Logger: INFO: 스케줄러 종료됨
+    Scheduler->>User: 프로그램 정상 종료
+
+
+

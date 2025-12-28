@@ -1,0 +1,40 @@
+sequenceDiagram
+    participant Scheduler as 스케줄러<br/>(scheduler_main.py)
+    participant BackendScheduler as Backend Scheduler<br/>(core/scheduler.py)
+    participant Main as main.py<br/>(execute_trading_cycle)
+    participant TradingService as TradingService<br/>(src/trading/service.py)
+    participant Upbit as Upbit API<br/>(거래소)
+    participant DB as PostgreSQL<br/>(trades 테이블)
+    participant API as Backend API<br/>(POST /trades/)
+    participant Metrics as Prometheus<br/>(메트릭)
+    participant Telegram as Telegram<br/>(알림)
+
+    Scheduler->>BackendScheduler: 1시간마다 trading_job() 실행
+    BackendScheduler->>Main: execute_trading_cycle() 호출
+
+    Note over Main: 1. 현재 투자 상태 조회<br/>2. 차트 데이터 수집<br/>3. 시장 분석<br/>4. 백테스팅 필터링
+
+    Main->>Main: AI 분석 수행
+    Main->>TradingService: execute_buy() 또는<br/>execute_sell() 호출
+
+    TradingService->>Upbit: 매수/매도 주문 전송
+    Upbit-->>TradingService: 주문 결과 반환<br/>(uuid, price, volume, fee)
+
+    TradingService-->>Main: 거래 실행 결과
+    Main-->>BackendScheduler: result 반환<br/>{status, decision, price, amount, trade_id}
+
+    alt 거래 성공 (buy 또는 sell)
+        BackendScheduler->>API: POST /trades/ 호출
+        Note over BackendScheduler,API: TradeCreate 스키마<br/>{trade_id, symbol, side,<br/>price, amount, total, fee, status}
+        API->>DB: Trade 레코드 INSERT
+        DB-->>API: 저장 완료
+        API-->>BackendScheduler: TradeResponse
+
+        BackendScheduler->>Metrics: 거래 메트릭 기록<br/>record_trade()
+        BackendScheduler->>Metrics: AI 판단 메트릭 기록<br/>record_ai_decision()
+        BackendScheduler->>Telegram: 거래 알림 전송<br/>notify_trade()
+    else 거래 실패 또는 hold
+        BackendScheduler->>Metrics: AI 판단만 기록
+        BackendScheduler->>Telegram: 에러 알림 (실패 시)
+    end
+

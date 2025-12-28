@@ -1,0 +1,45 @@
+sequenceDiagram
+    participant BackendScheduler as Backend Scheduler<br/>(core/scheduler.py)
+    participant MetricsService as MetricsService<br/>(backend/services/metrics.py)
+    participant Prometheus as Prometheus<br/>(메트릭 저장소)
+    participant NotificationService as NotificationService<br/>(backend/services/notification.py)
+    participant Telegram as Telegram Bot API
+    participant Grafana as Grafana<br/>(대시보드)
+
+    Note over BackendScheduler: 거래 실행 완료 후
+
+    par 병렬 처리: 메트릭 기록
+        BackendScheduler->>MetricsService: record_trade(<br/>symbol,<br/>side,<br/>price,<br/>amount<br/>)
+        MetricsService->>MetricsService: trade_counter.labels(<br/>symbol=symbol,<br/>side=side<br/>).inc()
+        MetricsService->>MetricsService: trade_amount.labels(<br/>symbol=symbol<br/>).observe(amount)
+        MetricsService->>MetricsService: trade_value.labels(<br/>symbol=symbol<br/>).observe(total)
+        MetricsService->>Prometheus: Push Metrics<br/>(HTTP /metrics)
+
+        BackendScheduler->>MetricsService: record_ai_decision(<br/>decision,<br/>confidence,<br/>reason<br/>)
+        MetricsService->>MetricsService: ai_decision_counter.labels(<br/>decision=decision<br/>).inc()
+        MetricsService->>MetricsService: ai_confidence.observe(<br/>confidence<br/>)
+        MetricsService->>Prometheus: Push Metrics
+    and 병렬 처리: 알림 전송
+        BackendScheduler->>NotificationService: notify_trade(<br/>trade_data<br/>)
+        NotificationService->>NotificationService: 메시지 포맷팅
+
+        Note over NotificationService: 📊 거래 알림<br/>━━━━━━━━━━━━━━━<br/>🔹 종목: KRW-ETH<br/>🔹 거래: 매수 ✅<br/>🔹 가격: 3,500,000 KRW<br/>🔹 수량: 0.01 ETH<br/>🔹 총액: 35,000 KRW<br/>🔹 수수료: 17.5 KRW<br/>━━━━━━━━━━━━━━━<br/>⏰ 2024-01-15 10:30:00
+
+        NotificationService->>Telegram: POST /sendMessage
+        Telegram-->>NotificationService: Message Sent
+
+        alt 알림 실패
+            NotificationService->>NotificationService: 재시도 (최대 3회)
+            alt 재시도 실패
+                NotificationService->>BackendScheduler: Warning Log<br/>(알림 실패)
+            end
+        end
+    end
+
+    Prometheus->>Grafana: Scrape Metrics<br/>(15초마다)
+    Grafana->>Grafana: 대시보드 업데이트
+
+    Note over Grafana: 실시간 차트:<br/>- 거래 횟수<br/>- 거래 금액<br/>- AI 판단 분포<br/>- 신뢰도 추이
+
+
+

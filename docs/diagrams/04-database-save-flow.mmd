@@ -1,0 +1,41 @@
+sequenceDiagram
+    participant BackendScheduler as Backend Scheduler<br/>(core/scheduler.py)
+    participant API as Backend API<br/>(POST /trades/)
+    participant TradeService as TradeService<br/>(backend/services/trade.py)
+    participant DB as PostgreSQL<br/>(trades 테이블)
+    participant Schema as Pydantic Schema<br/>(TradeCreate)
+
+    BackendScheduler->>Schema: TradeCreate 객체 생성
+    Note over Schema: trade_id: str<br/>symbol: str<br/>side: "buy" | "sell"<br/>price: float<br/>amount: float<br/>total: float<br/>fee: float<br/>status: "completed"
+
+    BackendScheduler->>API: POST /api/v1/trades/
+    API->>API: Validation<br/>(Pydantic 자동 검증)
+
+    alt Validation Failed
+        API-->>BackendScheduler: 422 Unprocessable Entity<br/>{detail: validation_errors}
+    end
+
+    API->>TradeService: create_trade(db, trade_create)
+    TradeService->>TradeService: Trade 모델 인스턴스 생성
+
+    Note over TradeService: db_trade = Trade(<br/>  id=uuid4(),<br/>  trade_id=trade_create.trade_id,<br/>  symbol=trade_create.symbol,<br/>  side=trade_create.side,<br/>  price=trade_create.price,<br/>  amount=trade_create.amount,<br/>  total=trade_create.total,<br/>  fee=trade_create.fee,<br/>  status=trade_create.status,<br/>  created_at=datetime.now()<br/>)
+
+    TradeService->>DB: INSERT INTO trades
+    DB->>DB: Commit Transaction
+
+    alt Database Error
+        DB-->>TradeService: IntegrityError /<br/>DatabaseError
+        TradeService-->>API: 500 Internal Server Error
+        API-->>BackendScheduler: Error Response
+    end
+
+    DB-->>TradeService: Row Inserted
+    TradeService->>TradeService: Refresh 객체<br/>(DB 생성 필드 로드)
+    TradeService-->>API: Trade 객체 반환
+    API->>API: TradeResponse 스키마 변환
+    API-->>BackendScheduler: 201 Created<br/>TradeResponse
+
+    BackendScheduler->>BackendScheduler: 응답 확인 및 로깅
+
+
+

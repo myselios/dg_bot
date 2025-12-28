@@ -1,0 +1,86 @@
+# Prometheus Alert Rules
+# 트레이딩 봇 모니터링 알림 규칙
+
+groups:
+  - name: trading_bot_alerts
+    interval: 30s
+    rules:
+      # 1. 스케줄러 작업 실패 알림 (최우선)
+      - alert: SchedulerJobFailed
+        expr: increase(scheduler_job_failure_total{job_name="trading_job"}[10m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: scheduler
+        annotations:
+          summary: "스케줄러 작업 실패 감지"
+          description: "{{ $labels.job_name }} 작업이 실패했습니다. 즉시 확인이 필요합니다."
+
+      # 2. 작업 실행 시간 지연 알림
+      - alert: SchedulerJobSlow
+        expr: scheduler_job_duration_seconds{job_name="trading_job"} > 300
+        for: 2m
+        labels:
+          severity: warning
+          component: scheduler
+        annotations:
+          summary: "스케줄러 작업 실행 시간 지연"
+          description: "작업 실행 시간이 {{ $value }}초로 5분을 초과했습니다."
+
+      # 3. 에러 발생률 증가 알림
+      - alert: HighErrorRate
+        expr: rate(bot_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "에러 발생률 증가"
+          description: "에러 발생률이 {{ $value }}건/초로 증가했습니다."
+
+      # 4. API 응답 지연 알림
+      - alert: SlowAPIResponse
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "API 응답 지연"
+          description: "API 95 백분위 응답 시간이 {{ $value }}초입니다."
+
+      # 5. 메트릭 수집 중단 알림
+      - alert: MetricsNotCollected
+        expr: up{job="backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: monitoring
+        annotations:
+          summary: "메트릭 수집 중단"
+          description: "Backend에서 메트릭을 수집할 수 없습니다."
+
+      # 6. 스케줄러 중단 알림
+      - alert: SchedulerDown
+        expr: absent(scheduler_job_success_total{job_name="trading_job"}) == 1
+        for: 5m
+        labels:
+          severity: critical
+          component: scheduler
+        annotations:
+          summary: "스케줄러 중단됨"
+          description: "스케줄러가 5분 이상 메트릭을 전송하지 않고 있습니다."
+
+      # 7. AI 판단 중단 알림
+      - alert: AIDecisionStalled
+        expr: rate(ai_decision_total[1h]) == 0
+        for: 2h
+        labels:
+          severity: warning
+          component: ai
+        annotations:
+          summary: "AI 판단 중단"
+          description: "2시간 동안 AI 판단 메트릭이 업데이트되지 않았습니다."
+
+
+
