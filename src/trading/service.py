@@ -9,6 +9,7 @@ from ..utils.logger import Logger
 from ..exceptions import InsufficientFundsError, OrderExecutionError
 from ..data.collector import DataCollector
 from ..backtesting.strategy import Strategy
+from .liquidity_analyzer import LiquidityAnalyzer
 
 
 class TradingService:
@@ -88,10 +89,10 @@ class TradingService:
     def execute_buy(self, ticker: str) -> dict:
         """
         매수 실행
-        
+
         Args:
             ticker: 거래 종목
-            
+
         Returns:
             거래 정보 딕셔너리:
             {
@@ -106,7 +107,7 @@ class TradingService:
         """
         krw_balance = self.exchange.get_balance("KRW")
         buy_amount = self.calculate_available_buy_amount(krw_balance)
-        
+
         if buy_amount == 0:
             min_required = self.config.MIN_ORDER_AMOUNT + self.config.MIN_FEE
             error_msg = (
@@ -119,10 +120,47 @@ class TradingService:
                 'success': False,
                 'error': error_msg
             }
-        
+
+        # 오더북 조회 및 슬리피지 분석
+        if self.data_collector:
+            try:
+                orderbook = self.data_collector.get_orderbook(ticker)
+                if orderbook:
+                    # 슬리피지 분석
+                    slippage_analysis = LiquidityAnalyzer.calculate_slippage(
+                        orderbook=orderbook,
+                        order_side='buy',
+                        order_krw_amount=buy_amount
+                    )
+
+                    # 유동성 체크
+                    if not slippage_analysis['liquidity_available']:
+                        Logger.print_error(slippage_analysis['warning'])
+                        return {
+                            'success': False,
+                            'error': slippage_analysis['warning']
+                        }
+
+                    # 슬리피지 경고
+                    if slippage_analysis['expected_slippage_pct'] > 0.5:
+                        Logger.print_warning(
+                            f"높은 슬리피지 예상: {slippage_analysis['expected_slippage_pct']:.2f}% "
+                            f"(평균 체결가: {slippage_analysis['expected_avg_price']:,.0f}원)"
+                        )
+                        # 슬리피지가 너무 크면 거래 중단
+                        if slippage_analysis['expected_slippage_pct'] > 1.0:
+                            return {
+                                'success': False,
+                                'error': f"슬리피지 과다 ({slippage_analysis['expected_slippage_pct']:.2f}%)"
+                            }
+                    elif slippage_analysis['warning']:
+                        Logger.print_warning(slippage_analysis['warning'])
+            except Exception as e:
+                Logger.print_warning(f"슬리피지 분석 실패: {str(e)}, 계속 진행")
+
         fee = self.calculate_fee(buy_amount)
         net_amount = buy_amount - fee
-        
+
         Logger.print_info(
             f"💰 매수 시도: {buy_amount:,.0f}원 "
             f"(수수료: {fee:,.0f}원, 실제 매수 금액: {net_amount:,.0f}원)"

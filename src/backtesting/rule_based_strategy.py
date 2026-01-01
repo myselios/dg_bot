@@ -420,6 +420,56 @@ class RuleBasedBreakoutStrategy(Strategy):
 
         return False, "응축 없음 (이미 변동성 확대 상태)"
     
+    def _calculate_atr_based_breakout(
+        self,
+        df: pd.DataFrame,
+        current_idx: int
+    ) -> Optional[float]:
+        """
+        ATR 기반 동적 돌파가 계산
+
+        공식: 돌파가 = 전일_종가 + ATR(14) × K
+        - 저변동성 (ATR < 2%): K = 2.0
+        - 중변동성 (2% ≤ ATR < 4%): K = 1.5
+        - 고변동성 (ATR ≥ 4%): K = 1.0
+
+        Args:
+            df: 차트 데이터
+            current_idx: 현재 인덱스
+
+        Returns:
+            ATR 기반 돌파가 (데이터 부족 시 None)
+        """
+        if current_idx < 14:  # ATR 계산 최소 기간
+            return None
+
+        # ATR 계산
+        atr_series = TechnicalIndicators.calculate_atr(df.iloc[:current_idx], period=14)
+        if atr_series.empty or len(atr_series) == 0:
+            return None
+
+        current_atr = atr_series.iloc[-1]
+        yesterday_close = df.iloc[current_idx - 1]['close']
+
+        if yesterday_close <= 0:
+            return None
+
+        # ATR 비율 계산
+        atr_pct = (current_atr / yesterday_close) * 100
+
+        # 동적 K값 결정
+        if atr_pct < 2.0:
+            k_value = 2.0  # 저변동성: 큰 돌파 필요
+        elif atr_pct < 4.0:
+            k_value = 1.5  # 중변동성
+        else:
+            k_value = 1.0  # 고변동성: 작은 돌파로도 진입
+
+        # 돌파가 계산
+        target_price = yesterday_close + current_atr * k_value
+
+        return target_price
+
     def _check_gate2_breakout(self, df: pd.DataFrame, current_price: float, k_value: Optional[float] = None) -> Tuple[bool, str]:
         """
         [관문 2 수정] 돌파 확인 (강도 측정 추가 + 동적 K값 지원)
@@ -851,4 +901,86 @@ class RuleBasedBreakoutStrategy(Strategy):
         
         # Fallback: 슬리피지 비율만큼 포지션 크기 감소
         return base_position_size * (1 - expected_slippage_pct)
+
+    # ============================================
+    # 테스트용 Wrapper 메서드
+    # ============================================
+
+    def _calculate_atr(self, data: pd.DataFrame, period: int = 14) -> pd.Series:
+        """
+        ATR 계산 (테스트용 wrapper)
+
+        Args:
+            data: OHLCV 데이터
+            period: ATR 기간 (기본 14)
+
+        Returns:
+            ATR 시리즈
+        """
+        return TechnicalIndicators.calculate_atr(data, period=period)
+
+    def _get_dynamic_k_value(self, atr_pct: float) -> float:
+        """
+        ATR 비율 기반 동적 K값 계산 (테스트용 wrapper)
+
+        Args:
+            atr_pct: ATR 비율 (%)
+
+        Returns:
+            K값 (2.0, 1.5, 1.0)
+        """
+        if atr_pct < 2.0:
+            return 2.0  # 저변동성
+        elif atr_pct < 4.0:
+            return 1.5  # 중변동성
+        else:
+            return 1.0  # 고변동성
+
+    def _calculate_target_price_atr(self, data: pd.DataFrame, current_idx: int) -> float:
+        """
+        ATR 기반 돌파가 계산 (테스트용 wrapper)
+
+        Args:
+            data: OHLCV 데이터
+            current_idx: 현재 인덱스
+
+        Returns:
+            돌파가 (데이터 부족 시 기존 방식으로 fallback)
+        """
+        # ATR 기반 돌파가 시도
+        atr_target = self._calculate_atr_based_breakout(data, current_idx)
+
+        if atr_target is not None:
+            return atr_target
+
+        # Fallback: 기존 래리 윌리엄스 방식
+        if current_idx < 2:
+            # 데이터 부족 시 현재가 반환
+            return data.iloc[current_idx]['open']
+
+        yesterday_high = data.iloc[current_idx - 1]['high']
+        yesterday_low = data.iloc[current_idx - 1]['low']
+        today_open = data.iloc[current_idx]['open']
+
+        return today_open + (yesterday_high - yesterday_low) * self.k_value
+
+    def _calculate_target_price(self, data: pd.DataFrame, current_idx: int) -> float:
+        """
+        기존 고정 K값 방식 돌파가 계산 (테스트용 wrapper)
+
+        Args:
+            data: OHLCV 데이터
+            current_idx: 현재 인덱스
+
+        Returns:
+            돌파가
+        """
+        if current_idx < 2:
+            return data.iloc[current_idx]['open']
+
+        yesterday_high = data.iloc[current_idx - 1]['high']
+        yesterday_low = data.iloc[current_idx - 1]['low']
+        today_open = data.iloc[current_idx]['open']
+
+        return today_open + (yesterday_high - yesterday_low) * self.k_value
 

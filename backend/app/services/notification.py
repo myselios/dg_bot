@@ -409,36 +409,52 @@ class TelegramNotifier:
         if backtest_result:
             # QuickBacktestResult 객체 또는 딕셔너리 처리
             try:
-                # 객체 속성으로 접근 시도
-                if hasattr(backtest_result, 'win_rate'):
-                    message += f"🎯 <b>승률:</b> {backtest_result.win_rate:.2f}%\n"
-                elif isinstance(backtest_result, dict) and 'win_rate' in backtest_result:
-                    message += f"🎯 <b>승률:</b> {backtest_result['win_rate']:.2f}%\n"
-                
-                if hasattr(backtest_result, 'total_return'):
-                    return_emoji = "📈" if backtest_result.total_return >= 0 else "📉"
-                    message += f"{return_emoji} <b>수익률:</b> {backtest_result.total_return:.2f}%\n"
-                elif isinstance(backtest_result, dict) and 'total_return' in backtest_result:
-                    return_emoji = "📈" if backtest_result['total_return'] >= 0 else "📉"
-                    message += f"{return_emoji} <b>수익률:</b> {backtest_result['total_return']:.2f}%\n"
-                
-                if hasattr(backtest_result, 'sharpe_ratio'):
-                    message += f"📐 <b>샤프 비율:</b> {backtest_result.sharpe_ratio:.2f}\n"
-                elif isinstance(backtest_result, dict) and 'sharpe_ratio' in backtest_result:
-                    message += f"📐 <b>샤프 비율:</b> {backtest_result['sharpe_ratio']:.2f}\n"
-                
-                if hasattr(backtest_result, 'max_drawdown'):
-                    message += f"📉 <b>최대 낙폭:</b> {backtest_result.max_drawdown:.2f}%\n"
-                elif isinstance(backtest_result, dict) and 'max_drawdown' in backtest_result:
-                    message += f"📉 <b>최대 낙폭:</b> {backtest_result['max_drawdown']:.2f}%\n"
-                
-                if hasattr(backtest_result, 'profit_factor'):
-                    message += f"💰 <b>Profit Factor:</b> {backtest_result.profit_factor:.2f}\n"
-                elif isinstance(backtest_result, dict) and 'profit_factor' in backtest_result:
-                    message += f"💰 <b>Profit Factor:</b> {backtest_result['profit_factor']:.2f}\n"
+                # QuickBacktestResult 객체인 경우 metrics에서 데이터 추출
+                metrics = None
+                if hasattr(backtest_result, 'metrics'):
+                    metrics = backtest_result.metrics
+                elif isinstance(backtest_result, dict) and 'metrics' in backtest_result:
+                    metrics = backtest_result['metrics']
+                elif isinstance(backtest_result, dict):
+                    # 이미 metrics 형태인 경우
+                    metrics = backtest_result
+
+                if metrics:
+                    # 승률
+                    if 'win_rate' in metrics:
+                        message += f"🎯 <b>승률:</b> {metrics['win_rate']:.2f}%\n"
+
+                    # 수익률
+                    if 'total_return' in metrics:
+                        return_emoji = "📈" if metrics['total_return'] >= 0 else "📉"
+                        message += f"{return_emoji} <b>수익률:</b> {metrics['total_return']:.2f}%\n"
+
+                    # 샤프 비율
+                    if 'sharpe_ratio' in metrics:
+                        message += f"📐 <b>샤프 비율:</b> {metrics['sharpe_ratio']:.2f}\n"
+
+                    # 최대 낙폭
+                    if 'max_drawdown' in metrics:
+                        message += f"📉 <b>최대 낙폭:</b> {metrics['max_drawdown']:.2f}%\n"
+
+                    # 손익비 (Profit Factor)
+                    if 'profit_factor' in metrics:
+                        message += f"💰 <b>손익비:</b> {metrics['profit_factor']:.2f}\n"
+
+                    # 총 거래 수
+                    if 'total_trades' in metrics:
+                        message += f"📊 <b>총 거래:</b> {metrics['total_trades']}회\n"
+
+                    # 필터링 통과 여부
+                    if hasattr(backtest_result, 'passed'):
+                        passed_emoji = "✅" if backtest_result.passed else "❌"
+                        passed_text = "통과" if backtest_result.passed else "미통과"
+                        message += f"{passed_emoji} <b>필터링:</b> {passed_text}\n"
+                else:
+                    message += "ℹ️ 백테스팅 metrics 데이터 없음\n"
             except Exception as e:
                 logger.warning(f"백테스팅 결과 파싱 실패: {e}")
-                message += "ℹ️ 백테스팅 데이터 파싱 오류\n"
+                message += f"ℹ️ 백테스팅 데이터 파싱 오류: {e}\n"
         else:
             message += "ℹ️ 백테스팅 데이터 없음\n"
         

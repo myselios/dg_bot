@@ -1,4 +1,3 @@
-# Grafana 대시보드 프로비저닝 설정
 apiVersion: 1
 
 providers:
@@ -10,7 +9,5 @@ providers:
     updateIntervalSeconds: 10
     allowUiUpdates: true
     options:
-      path: /etc/grafana/provisioning/dashboards
-
-
-
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: true

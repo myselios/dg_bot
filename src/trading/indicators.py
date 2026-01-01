@@ -121,7 +121,43 @@ class TechnicalIndicators:
             'middle': middle_band,
             'lower': lower_band
         }
-    
+
+    @staticmethod
+    def calculate_bb_width(data: pd.DataFrame, period: int = 20) -> float:
+        """
+        볼린저 밴드 폭 계산
+
+        BB Width = (Upper Band - Lower Band) / Middle Band × 100
+
+        - BB Width < 4%: 수축 중 (진입 비추천)
+        - BB Width >= 4%: 확장 중 (진입 가능)
+
+        Args:
+            data: DataFrame
+            period: 기간 (기본값: 20)
+
+        Returns:
+            볼린저 밴드 폭 (%)
+        """
+        if len(data) < period:
+            return 0.0
+
+        close = data['close']
+
+        # 볼린저 밴드 계산
+        middle_band = close.rolling(window=period).mean()
+        std = close.rolling(window=period).std()
+        upper_band = middle_band + (std * 2)
+        lower_band = middle_band - (std * 2)
+
+        # BB Width 계산
+        bb_width = ((upper_band - lower_band) / middle_band * 100).iloc[-1]
+
+        if pd.isna(bb_width):
+            return 0.0
+
+        return float(bb_width)
+
     @staticmethod
     def calculate_atr(
         df: pd.DataFrame,
@@ -358,6 +394,11 @@ class TechnicalIndicators:
             indicators['bb_upper'] = float(bb['upper'].iloc[-1])
             indicators['bb_middle'] = float(bb['middle'].iloc[-1])
             indicators['bb_lower'] = float(bb['lower'].iloc[-1])
+
+            # 볼린저 밴드 폭 계산
+            bb_width_pct = TechnicalIndicators.calculate_bb_width(df)
+            if bb_width_pct is not None:
+                indicators['bb_width_pct'] = float(bb_width_pct)
         
         # ATR
         atr = TechnicalIndicators.calculate_atr(df)

@@ -74,6 +74,9 @@ logs/
 # Backtest data (선택적 - 필요시 주석 해제)
 # backtest_data/
 
+# Risk state data
+data/risk_state.json
+
 # Test coverage reports
 htmlcov/
 .coverage

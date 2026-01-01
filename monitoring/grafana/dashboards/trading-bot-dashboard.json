@@ -18,7 +18,6 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": null,
   "links": [],
   "liveNow": false,
   "panels": [
@@ -399,7 +398,7 @@
             "uid": "postgres"
           },
           "format": "table",
-          "rawSql": "SELECT profit_rate as value FROM portfolio_snapshots ORDER BY created_at DESC LIMIT 1",
+          "rawSql": "SELECT COALESCE((total_value_krw - 1000000) / 1000000 * 100, 0) as value FROM portfolio_snapshots ORDER BY created_at DESC LIMIT 1",
           "refId": "A"
         }
       ],
@@ -457,7 +456,7 @@
             "uid": "postgres"
           },
           "format": "table",
-          "rawSql": "SELECT total_asset_value as value FROM portfolio_snapshots ORDER BY created_at DESC LIMIT 1",
+          "rawSql": "SELECT total_value_krw as value FROM portfolio_snapshots ORDER BY created_at DESC LIMIT 1",
           "refId": "A"
         }
       ],
@@ -603,7 +602,7 @@
             "uid": "postgres"
           },
           "format": "time_series",
-          "rawSql": "SELECT created_at as time, total_asset_value as \"총 자산\" FROM portfolio_snapshots WHERE $__timeFilter(created_at) ORDER BY created_at",
+          "rawSql": "SELECT created_at as time, total_value_krw as \"총 자산\" FROM portfolio_snapshots WHERE $__timeFilter(created_at) ORDER BY created_at",
           "refId": "A"
         }
       ],
@@ -690,7 +689,7 @@
             "uid": "postgres"
           },
           "format": "time_series",
-          "rawSql": "SELECT created_at as time, profit_rate as \"수익률 (%)\" FROM portfolio_snapshots WHERE $__timeFilter(created_at) ORDER BY created_at",
+          "rawSql": "SELECT created_at as time, COALESCE((total_value_krw - 1000000) / 1000000 * 100, 0) as \"수익률 (%)\" FROM portfolio_snapshots WHERE $__timeFilter(created_at) ORDER BY created_at",
           "refId": "A"
         }
       ],
@@ -777,7 +776,7 @@
             "uid": "postgres"
           },
           "format": "table",
-          "rawSql": "SELECT created_at as \"시간\", symbol as \"심볼\", side as \"구분\", executed_quantity as \"수량\", executed_price as \"가격\", total_krw as \"총액(KRW)\" FROM trades ORDER BY created_at DESC LIMIT 20",
+          "rawSql": "SELECT created_at as \"시간\", symbol as \"심볼\", side as \"구분\", amount as \"수량\", price as \"가격\", total as \"총액(KRW)\" FROM trades WHERE status = 'completed' ORDER BY created_at DESC LIMIT 20",
           "refId": "A"
         }
       ],
