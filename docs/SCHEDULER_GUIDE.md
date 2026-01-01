@@ -4,9 +4,8 @@
 
 **작성일**: 2025-12-28
 **최종 업데이트**: 2026-01-01
-**버전**: 2.1.0
-**상태**: ✅ 구현 완료 및 테스트 검증 완료
-**테스트 통과율**: 100% (16/16 테스트)
+**버전**: 3.0.0
+**상태**: ✅ 구현 완료 (파이프라인 아키텍처 적용)
 
 ---
 
@@ -14,11 +13,12 @@
 
 1. [개요](#-개요)
 2. [시스템 아키텍처](#-시스템-아키텍처)
-3. [구현 내용](#-구현-내용)
-4. [실행 방법](#-실행-방법)
-5. [테스트 결과](#-테스트-결과)
+3. [파이프라인 스테이지](#-파이프라인-스테이지)
+4. [구현 내용](#-구현-내용)
+5. [실행 방법](#-실행-방법)
 6. [모니터링](#-모니터링)
-7. [문제 해결](#-문제-해결)
+7. [설정](#-설정)
+8. [문제 해결](#-문제-해결)
 
 ---
 
@@ -30,24 +30,30 @@ AI 자동매매 시스템을 **1시간 주기**로 자동 실행하여 완전 �
 
 **주요 특징:**
 - ⏰ **1시간 주기 실행** - APScheduler 기반 정확한 스케줄링
+- 🏭 **파이프라인 아키텍처** - 4단계 스테이지 기반 모듈화된 거래 사이클
 - 🛡️ **리스크 관리 통합** - 손절/익절, Circuit Breaker, 거래 빈도 제어
-- 🔍 **2단계 AI 검증** - RSI/ATR/ADX 기반 의사결정 검증
+- 🔍 **AI 분석 및 검증** - GPT-4 기반 시장 분석 및 의사결정
 - 🔄 **자동 복구** - 에러 발생 시 자동 재시도
 - 📱 **4단계 구조화 알림** - Telegram으로 상세한 거래 정보 전송
-- 📊 **메트릭 수집** - Prometheus 통합
+- 📊 **메트릭 수집** - Prometheus 통합 + PostgreSQL 저장
 - 🐳 **Docker 지원** - 컨테이너 환경 완벽 지원
 - 🛡️ **안전한 종료** - Graceful Shutdown 처리
+- 📈 **일일 리포트** - 매일 오전 9시 자동 전송
 
 ### 달성된 목표
 
 - ✅ 1시간마다 자동 거래 실행
+- ✅ 파이프라인 아키텍처 기반 거래 사이클
 - ✅ 에러 자동 복구 및 재시도
 - ✅ 실행 상태 모니터링 및 로깅
 - ✅ 수동 시작/중지 기능
 - ✅ 안전한 종료 처리
 - ✅ 동시 실행 방지
-- ✅ Telegram 알림 통합
+- ✅ Telegram 알림 통합 (4단계)
 - ✅ Prometheus 메트릭 기록
+- ✅ PostgreSQL DB 저장 (AI 결정, 거래 내역)
+- ✅ 일일 리포트 자동 전송
+- ✅ Sentry 에러 추적 통합
 
 ---
 
@@ -56,83 +62,170 @@ AI 자동매매 시스템을 **1시간 주기**로 자동 실행하여 완전 �
 ### 전체 구조
 
 ```
-┌────────────────────────────────────────────┐
-│      scheduler_main.py (24/7 실행)         │
-│                                            │
-│  ┌──────────────────────────────────────┐ │
-│  │        APScheduler                    │ │
-│  │  (Asia/Seoul Timezone)                │ │
-│  └──────────────┬───────────────────────┘ │
-│                 │                          │
-│     ┌───────────▼───────────┐             │
-│     │   매 1시간마다         │             │
-│     │   (IntervalTrigger)   │             │
-│     └───────────┬───────────┘             │
-└─────────────────┼────────────────────────┘
-                  │
-      ┌───────────▼───────────┐
-      │    trading_job()      │
-      │  (비동기 작업)         │
-      └───────────┬───────────┘
-                  │
-      ┌───────────▼────────────────┐
-      │  execute_trading_cycle()   │
-      │  (main.py에서 가져옴)       │
-      └───────────┬────────────────┘
-                  │
-    ┌─────────────┼─────────────┐
-    │             │             │
-┌───▼────┐  ┌────▼────┐  ┌────▼─────┐
-│ Data   │  │   AI    │  │ Trading  │
-│Collector│  │ Service │  │ Service  │
-└────────┘  └─────────┘  └──────────┘
-    │             │             │
-    └─────────────┼─────────────┘
-                  │
-         ┌────────▼─────────┐
-         │  Upbit Exchange  │
-         └──────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│       scheduler_main.py (24/7 실행)                         │
+│                                                            │
+│  ┌──────────────────────────────────────────────────────┐ │
+│  │        APScheduler (Asia/Seoul Timezone)              │ │
+│  │  - trading_job: 매 1시간 (IntervalTrigger)            │ │
+│  │  - portfolio_snapshot_job: 매 1시간                   │ │
+│  │  - daily_report_job: 매일 09:00 (CronTrigger)         │ │
+│  └──────────────────┬───────────────────────────────────┘ │
+└─────────────────────┼────────────────────────────────────┘
+                      │
+      ┌───────────────▼───────────────┐
+      │      trading_job()            │
+      │   (scheduler.py에서 정의)      │
+      └───────────────┬───────────────┘
+                      │
+      ┌───────────────▼───────────────┐
+      │   execute_trading_cycle()     │
+      │     (main.py에서 정의)         │
+      └───────────────┬───────────────┘
+                      │
+    ┌─────────────────▼─────────────────┐
+    │    TradingPipeline (4 Stages)     │
+    │                                   │
+    │  ┌─────────────────────────────┐  │
+    │  │ 1. RiskCheckStage           │  │
+    │  │    - 손절/익절 확인          │  │
+    │  │    - Circuit Breaker        │  │
+    │  │    - 거래 빈도 제어          │  │
+    │  └──────────────┬──────────────┘  │
+    │                 │                  │
+    │  ┌──────────────▼──────────────┐  │
+    │  │ 2. DataCollectionStage      │  │
+    │  │    - 차트 데이터 (ETH + BTC) │  │
+    │  │    - 오더북 분석             │  │
+    │  │    - 기술적 지표 계산        │  │
+    │  │    - 포지션 정보             │  │
+    │  └──────────────┬──────────────┘  │
+    │                 │                  │
+    │  ┌──────────────▼──────────────┐  │
+    │  │ 3. AnalysisStage            │  │
+    │  │    - 시장 상관관계 분석      │  │
+    │  │    - 백테스팅 필터           │  │
+    │  │    - AI 분석 (GPT-4)        │  │
+    │  │    - AI 검증 (RSI/ATR/ADX)  │  │
+    │  └──────────────┬──────────────┘  │
+    │                 │                  │
+    │  ┌──────────────▼──────────────┐  │
+    │  │ 4. ExecutionStage           │  │
+    │  │    - 유동성 분석             │  │
+    │  │    - 거래 실행               │  │
+    │  │    - 결과 처리               │  │
+    │  └─────────────────────────────┘  │
+    └───────────────────────────────────┘
+                      │
+         ┌────────────▼─────────────┐
+         │    Upbit Exchange API    │
+         └──────────────────────────┘
 ```
 
 ### 데이터 흐름
 
 ```
-1. 스케줄러 시작
-   └─> APScheduler 초기화
-       └─> trading_job 등록 (60분 주기)
+1. 스케줄러 시작 (scheduler_main.py)
+   └─> 환경변수 검증 (UPBIT, DATABASE_URL, OPENAI_API_KEY)
+   └─> 데이터베이스 초기화
+   └─> APScheduler 초기화 & 작업 등록
+       ├─> trading_job (60분 주기, 즉시 실행)
+       ├─> portfolio_snapshot_job (60분 주기)
+       └─> daily_report_job (매일 09:00)
 
-2. 정각마다 실행
-   └─> trading_job() 호출
-       └─> 📱 1단계 알림: 사이클 시작
-       └─> 서비스 초기화 (UpbitClient, DataCollector, etc.)
-       └─> execute_trading_cycle() 실행
-           └─> 🛡️ 리스크 체크 (최우선)
-               ├─> 손절/익절 확인
+2. 매 1시간마다 trading_job() 실행
+   └─> 📱 1단계 알림: 사이클 시작
+   └─> 서비스 초기화 (UpbitClient, DataCollector, etc.)
+   └─> 시장 데이터 수집 (현재가, RSI, MA 등)
+   └─> execute_trading_cycle() 실행
+       └─> TradingPipeline.execute()
+           └─> Stage 1: RiskCheckStage
+               ├─> 손절/익절 체크
                ├─> Circuit Breaker 확인
                └─> 거래 빈도 확인
-           └─> 📊 백테스트 필터 (Rule-based)
-           └─> 📱 2단계 알림: 백테스트 및 시장 분석
-           └─> 📈 차트 데이터 수집 (ETH + BTC)
-           └─> 🤖 AI 분석 (GPT-4)
-           └─> 🔍 AI 검증 (2단계)
-               ├─> RSI 모순 체크
-               ├─> ATR 변동성 체크
-               ├─> Fakeout 감지 (ADX + volume)
-               └─> 시장 환경 체크
-           └─> 📱 3단계 알림: AI 의사결정
-           └─> 💱 거래 실행 (매수/매도 시)
-               └─> 유동성 분석
-       └─> 📱 4단계 알림: 포트폴리오 현황
-       └─> 결과 처리
-           └─> Prometheus 메트릭 기록
-           └─> 로그 저장
+           └─> Stage 2: DataCollectionStage
+               ├─> 차트 데이터 수집 (ETH + BTC)
+               ├─> 오더북 분석
+               └─> 기술적 지표 계산
+           └─> Stage 3: AnalysisStage
+               ├─> 시장 상관관계 분석
+               ├─> 백테스팅 필터 (Rule-based)
+               ├─> AI 분석 (GPT-4)
+               └─> AI 검증 (RSI/ATR/ADX)
+           └─> Stage 4: ExecutionStage
+               ├─> 유동성 분석
+               └─> 거래 실행
 
-3. 에러 발생 시
+3. 결과 처리 (trading_job)
+   └─> Prometheus 메트릭 기록
+   └─> PostgreSQL DB 저장
+       ├─> AIDecision 테이블 (모든 결정)
+       └─> Trade 테이블 (매수/매도 시)
+   └─> 📱 2단계 알림: 백테스팅 및 시장 분석
+   └─> 📱 3단계 알림: AI 의사결정 상세
+   └─> 📱 4단계 알림: 포트폴리오 현황
+
+4. 에러 발생 시
    └─> 예외 처리
+       └─> Sentry 에러 전송
        └─> Telegram 에러 알림
        └─> 실패 메트릭 기록
-       └─> 다음 실행 대기 (복구)
+       └─> 다음 실행 대기 (자동 복구)
 ```
+
+---
+
+## 🏭 파이프라인 스테이지
+
+### Stage 1: RiskCheckStage
+
+리스크 관리를 최우선으로 체크합니다.
+
+```python
+# 파라미터 (기본값)
+stop_loss_pct=-5.0        # 손절 비율
+take_profit_pct=10.0      # 익절 비율
+daily_loss_limit_pct=-10.0  # 일일 최대 손실
+min_trade_interval_hours=4  # 최소 거래 간격
+```
+
+**체크 항목:**
+- 포지션 손절/익절 도달 여부
+- Circuit Breaker 상태 (일일 손실 한도)
+- 거래 빈도 제한
+
+### Stage 2: DataCollectionStage
+
+거래 결정에 필요한 데이터를 수집합니다.
+
+**수집 데이터:**
+- 차트 데이터 (ETH, BTC 60일 일봉)
+- 오더북 정보 및 요약
+- 기술적 지표 (RSI, MACD, MA, BB 등)
+- 현재 포지션 정보
+- Fear & Greed Index
+
+### Stage 3: AnalysisStage
+
+수집된 데이터를 분석합니다.
+
+**분석 항목:**
+- 시장 상관관계 분석 (ETH-BTC)
+- Flash Crash 감지
+- RSI Divergence 분석
+- 백테스팅 필터 (Rule-based)
+- AI 분석 (GPT-4)
+- AI 검증 (RSI/ATR/ADX 기반)
+
+### Stage 4: ExecutionStage
+
+분석 결과를 바탕으로 거래를 실행합니다.
+
+**실행 로직:**
+- 유동성 분석
+- 슬리피지 계산
+- 주문 실행 (매수/매도)
+- 결과 처리
 
 ---
 
@@ -141,30 +234,44 @@ AI 자동매매 시스템을 **1시간 주기**로 자동 실행하여 완전 �
 ### 파일 구조
 
 ```
-bitcoin/
+dg_bot/
 ├── scheduler_main.py              # ⭐ 스케줄러 메인 진입점
-│   ├── APScheduler 설정
-│   ├── SIGINT/SIGTERM 처리
-│   └── 무한 루프 유지
+│   ├── GracefulKiller (SIGINT/SIGTERM 처리)
+│   ├── validate_environment_variables()
+│   ├── main() - 스케줄러 루프
+│   └── Sentry 초기화
 │
-├── main.py                        # ✅ 리팩토링 완료
-│   ├── async def main()           # 비동기 변환
-│   └── async def execute_trading_cycle()  # 거래 로직 분리
+├── main.py                        # ✅ 거래 사이클 정의
+│   ├── execute_trading_cycle()    # 파이프라인 기반 거래 사이클
+│   ├── main()                     # 단독 실행용
+│   └── print_final_balance()
+│
+├── src/trading/pipeline/          # ✅ 파이프라인 모듈
+│   ├── __init__.py               # 모듈 exports
+│   ├── base_stage.py             # PipelineContext, StageResult, BasePipelineStage
+│   ├── trading_pipeline.py       # TradingPipeline, create_spot_trading_pipeline()
+│   ├── risk_check_stage.py       # RiskCheckStage
+│   ├── data_collection_stage.py  # DataCollectionStage
+│   ├── analysis_stage.py         # AnalysisStage
+│   └── execution_stage.py        # ExecutionStage
 │
 ├── backend/app/core/
-│   ├── scheduler.py               # ✅ 스케줄러 핵심 로직
-│   │   ├── async def trading_job()         # 트레이딩 작업
-│   │   ├── async def portfolio_snapshot_job()
+│   ├── scheduler.py              # ✅ APScheduler 설정 및 작업 정의
+│   │   ├── trading_job()         # 트레이딩 작업 (1시간)
+│   │   ├── portfolio_snapshot_job()
+│   │   ├── daily_report_job()    # 일일 리포트 (09:00)
 │   │   ├── start_scheduler()
 │   │   ├── stop_scheduler()
+│   │   ├── pause_job() / resume_job()
 │   │   └── get_jobs()
 │   │
-│   └── config.py                  # ✅ 설정 업데이트
-│       └── SCHEDULER_INTERVAL_MINUTES = 60
+│   └── config.py                 # ✅ 설정
+│       ├── SCHEDULER_INTERVAL_MINUTES = 60
+│       └── SCHEDULER_ENABLED = True
 │
-├── start-scheduler.ps1            # Windows 실행 스크립트
-├── start-scheduler.sh             # Linux/Mac 실행 스크립트
-└── rebuild-scheduler.bat          # Docker 재빌드 스크립트
+├── start-scheduler.ps1           # Windows 실행 스크립트
+├── start-scheduler.sh            # Linux/Mac 실행 스크립트
+└── rebuild-scheduler.bat         # Docker 재빌드 스크립트
 ```
 
 ### 핵심 코드
@@ -178,51 +285,146 @@ main.py 로직을 1시간마다 자동 실행합니다.
 """
 import asyncio
 import signal
-from backend.app.core.scheduler import start_scheduler, stop_scheduler
+from backend.app.core.scheduler import start_scheduler, stop_scheduler, get_jobs
+from backend.app.services.notification import notify_bot_status
+from backend.app.services.metrics import set_bot_running
+
+class GracefulKiller:
+    """Graceful Shutdown 핸들러"""
+    kill_now = False
+
+    def __init__(self):
+        signal.signal(signal.SIGINT, self.exit_gracefully)
+        signal.signal(signal.SIGTERM, self.exit_gracefully)
+
+    def exit_gracefully(self, signum, frame):
+        self.kill_now = True
 
 async def main():
+    killer = GracefulKiller()
+
+    # 환경변수 검증 후 진행
+    # 데이터베이스 초기화
+    await init_db()
+
+    # 봇 상태 업데이트 & Telegram 알림
+    set_bot_running(True)
+    await notify_bot_status(status="started", message="스케줄러가 시작되었습니다.")
+
     # 스케줄러 시작
     start_scheduler()
-    
-    # 무한 루프 유지
-    while True:
-        await asyncio.sleep(3600)  # 1시간마다 체크
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    # 무한 루프 (10초마다 상태 체크)
+    while not killer.kill_now:
+        await asyncio.sleep(10)
+
+    # 종료 처리
+    set_bot_running(False)
+    await notify_bot_status(status="stopped", message="사용자가 스케줄러를 중지했습니다.")
+    stop_scheduler()
+
+def validate_environment_variables():
+    """필수 환경변수 검증"""
+    required_vars = {
+        'UPBIT_ACCESS_KEY': 'Upbit API 액세스 키',
+        'UPBIT_SECRET_KEY': 'Upbit API 시크릿 키',
+        'DATABASE_URL': '데이터베이스 연결 URL',
+        'OPENAI_API_KEY': 'OpenAI API 키'
+    }
+    # 누락된 변수 체크 후 False 반환 시 종료
 ```
 
 #### 2. backend/app/core/scheduler.py
 
 ```python
+# APScheduler 설정
+scheduler = AsyncIOScheduler(
+    timezone="Asia/Seoul",
+    job_defaults={
+        "coalesce": True,       # 누락된 작업 병합
+        "max_instances": 1,     # 동시 실행 방지
+        "misfire_grace_time": 60,  # 지연 허용 시간 (초)
+    }
+)
+
 async def trading_job():
     """주기적 트레이딩 작업 (1시간마다)"""
-    try:
-        # 서비스 초기화
-        upbit_client = UpbitClient()
-        data_collector = DataCollector()
-        trading_service = TradingService(upbit_client)
-        ai_service = AIService()
-        
-        # 거래 사이클 실행
-        result = await execute_trading_cycle(
-            ticker, upbit_client, data_collector,
-            trading_service, ai_service
-        )
-        
-        # 결과 처리 (알림, 메트릭)
-        if result['status'] == 'success':
-            # Telegram 알림
-            await notify_trade(...)
-            # 메트릭 기록
-            record_ai_decision(...)
-            
-    except Exception as e:
-        logger.error(f"에러 발생: {e}")
-        await notify_error(...)
+    # 1. 서비스 초기화
+    ticker = TradingConfig.TICKER
+    upbit_client = UpbitClient()
+    data_collector = DataCollector()
+    trading_service = TradingService(upbit_client)
+    ai_service = AIService()
+
+    # 📱 1) 사이클 시작 알림
+    await notify_cycle_start(symbol=ticker, status="started")
+
+    # 2. 시장 데이터 수집 (텔레그램 로그용)
+    market_data = collect_market_data()
+
+    # 3. 거래 사이클 실행 (파이프라인)
+    result = await execute_trading_cycle(
+        ticker, upbit_client, data_collector,
+        trading_service, ai_service
+    )
+
+    # 4. 결과 처리
+    if result['status'] == 'success':
+        # Prometheus 메트릭 기록
+        record_ai_decision(symbol=ticker, decision=result['decision'], confidence=...)
+
+        # PostgreSQL에 AI 판단 저장
+        db_ai_decision = AIDecision(**ai_decision_data.model_dump())
+        await db.commit()
+
+        # PostgreSQL에 거래 기록 저장 (매수/매도 시)
+        if result['decision'] in ['buy', 'sell']:
+            await create_trade(trade_data, db)
+
+        # 📱 2) 백테스팅 및 신호 분석 알림
+        await notify_backtest_and_signals(...)
+
+        # 📱 3) AI 의사결정 상세 알림
+        await notify_ai_decision(...)
+
+        # 📱 4) 포트폴리오 현황 알림
+        await notify_portfolio_status(...)
+
+async def daily_report_job():
+    """일일 리포트 작업 (매일 오전 9시)"""
+    await notify_daily_report(
+        total_trades=24,
+        profit_loss=profit_loss,
+        profit_rate=profit_rate,
+        current_value=current_value
+    )
+
+def add_jobs():
+    """스케줄러에 작업 추가"""
+    # 1. 트레이딩 작업 (1시간마다, 즉시 실행)
+    scheduler.add_job(
+        trading_job,
+        trigger=IntervalTrigger(minutes=60, start_date=now),
+        id="trading_job",
+        name="주기적 트레이딩 작업 (1시간)",
+    )
+
+    # 2. 포트폴리오 스냅샷 (1시간마다)
+    scheduler.add_job(
+        portfolio_snapshot_job,
+        trigger=IntervalTrigger(hours=1, start_date=now),
+        id="portfolio_snapshot_job",
+    )
+
+    # 3. 일일 리포트 (매일 09:00)
+    scheduler.add_job(
+        daily_report_job,
+        trigger=CronTrigger(hour=9, minute=0, timezone="Asia/Seoul"),
+        id="daily_report_job",
+    )
 ```
 
-#### 3. main.py
+#### 3. main.py (파이프라인 기반)
 
 ```python
 async def execute_trading_cycle(
@@ -230,27 +432,50 @@ async def execute_trading_cycle(
     upbit_client: UpbitClient,
     data_collector: DataCollector,
     trading_service: TradingService,
-    ai_service: AIService
+    ai_service: AIService,
+    trading_type: str = 'spot'
 ) -> Dict[str, Any]:
-    """한 번의 거래 사이클 실행"""
-    # 차트 데이터 수집
-    chart_data = await data_collector.get_chart_data(ticker)
-    
-    # AI 분석
-    ai_result = await ai_service.analyze(chart_data)
-    
-    # 거래 실행
-    if ai_result['decision'] == 'buy':
-        result = await trading_service.buy(...)
-    elif ai_result['decision'] == 'sell':
-        result = await trading_service.sell(...)
-    
-    return {
-        'status': 'success',
-        'decision': ai_result['decision'],
-        'confidence': ai_result['confidence'],
-        'reason': ai_result['reason']
-    }
+    """
+    한 번의 거래 사이클 실행 (파이프라인 아키텍처)
+
+    파이프라인 스테이지:
+    1. RiskCheckStage: 리스크 체크 (손절/익절, Circuit Breaker, 거래 빈도)
+    2. DataCollectionStage: 데이터 수집 (차트, 오더북, 기술적 지표)
+    3. AnalysisStage: 분석 (시장 분석, 백테스팅, AI 분석, 검증)
+    4. ExecutionStage: 거래 실행 (매수/매도/보류)
+
+    Returns:
+        {
+            'status': 'success' | 'failed' | 'blocked' | 'skipped',
+            'decision': 'buy' | 'sell' | 'hold',
+            'confidence': float,
+            'reason': str,
+            'validation': str,
+            'risk_checks': Dict,
+            'pipeline_status': 'completed' | 'failed'
+        }
+    """
+    # 파이프라인 생성
+    pipeline = create_spot_trading_pipeline(
+        stop_loss_pct=-5.0,
+        take_profit_pct=10.0,
+        daily_loss_limit_pct=-10.0,
+        min_trade_interval_hours=4
+    )
+
+    # 컨텍스트 생성
+    context = PipelineContext(
+        ticker=ticker,
+        trading_type=trading_type,
+        upbit_client=upbit_client,
+        data_collector=data_collector,
+        trading_service=trading_service,
+        ai_service=ai_service
+    )
+
+    # 파이프라인 실행
+    result = await pipeline.execute(context)
+    return result
 ```
 
 ---
@@ -262,7 +487,13 @@ async def execute_trading_cycle(
 #### Windows (PowerShell)
 
 ```powershell
+# 가상환경 활성화
+.\venv\Scripts\Activate.ps1
+
 # 스케줄러 시작
+python scheduler_main.py
+
+# 또는 스크립트 사용
 .\start-scheduler.ps1
 
 # 로그 확인 (별도 터미널)
@@ -272,7 +503,13 @@ Get-Content logs\scheduler\scheduler.log -Wait
 #### Linux/Mac
 
 ```bash
+# 가상환경 활성화
+source venv/bin/activate
+
 # 스케줄러 시작
+python scheduler_main.py
+
+# 또는 스크립트 사용
 ./start-scheduler.sh
 
 # 로그 확인 (별도 터미널)
@@ -284,18 +521,24 @@ tail -f logs/scheduler/scheduler.log
 ============================================================
 🤖 AI 자동 트레이딩 스케줄러
 ============================================================
-시작 시각: 2025-12-28 01:19:08
+시작 시각: 2026-01-01 01:19:08
 실행 주기: 1시간 (60분)
 중지 방법: Ctrl + C
 ============================================================
 
+✅ 데이터베이스 초기화 완료
+✅ Telegram 시작 알림 전송 완료
 ✅ 스케줄러 시작됨
+🚀 트레이딩 작업 즉시 실행 중...
+✅ 트레이딩 작업이 즉시 실행되도록 예약됨
 
-등록된 작업 목록 (2개):
+등록된 작업 목록 (3개):
   - trading_job: 주기적 트레이딩 작업 (1시간)
-    다음 실행: 2025-12-28T02:19:08+00:00
+    다음 실행: 2026-01-01T01:19:08+09:00
   - portfolio_snapshot_job: 포트폴리오 스냅샷 저장
-    다음 실행: 2025-12-28T02:19:08+00:00
+    다음 실행: 2026-01-01T01:19:08+09:00
+  - daily_report_job: 일일 리포트 전송
+    다음 실행: 2026-01-01T09:00:00+09:00
 
 ⏰ 스케줄러가 실행 중입니다... (Ctrl+C로 종료)
 ```
@@ -361,63 +604,6 @@ docker-compose up -d scheduler
 
 ---
 
-## 📊 테스트 결과
-
-### 단위 테스트
-
-```bash
-# 스케줄러 테스트만 실행
-python -m pytest tests/backend/app/core/test_scheduler.py -v
-```
-
-**결과:**
-```
-테스트 파일: tests/backend/app/core/test_scheduler.py
-총 테스트: 16개
-통과: 16개 (100%)
-실패: 0개
-소요 시간: 0.56초
-```
-
-#### 테스트 커버리지
-
-| 테스트 카테고리      | 테스트 수 | 통과율 |
-| -------------------- | --------- | ------ |
-| 스케줄러 설정        | 3         | 100%   |
-| 트레이딩 작업        | 4         | 100%   |
-| 포트폴리오 스냅샷    | 1         | 100%   |
-| 스케줄러 생명주기    | 4         | 100%   |
-| 작업 관리            | 2         | 100%   |
-| 통합 기능            | 2         | 100%   |
-
-### 통합 테스트
-
-```bash
-# 전체 테스트 실행
-python -m pytest tests/ -v --cov=src --cov=backend
-```
-
-**결과:**
-```
-총 테스트: 283개
-통과: 278개 (98.2%)
-실패: 5개 (스케줄러 무관)
-코드 커버리지: 48%
-소요 시간: 18.96초
-```
-
-### 검증된 기능
-
-- ✅ **1시간 주기 실행** - 정확한 스케줄링 동작
-- ✅ **거래 사이클** - buy/sell/hold 결정 및 실행
-- ✅ **에러 처리** - 예외 발생 시 안전하게 복구
-- ✅ **알림 전송** - Telegram 실시간 알림
-- ✅ **메트릭 기록** - Prometheus 메트릭 수집
-- ✅ **동시 실행 방지** - max_instances=1 설정
-- ✅ **안전한 종료** - Graceful Shutdown
-
----
-
 ## 📈 모니터링
 
 ### 로그 확인
@@ -460,14 +646,20 @@ scheduler_job_failure_total{job_name="trading_job"}
 scheduler_job_duration_seconds{job_name="trading_job"}
 
 # AI 결정 메트릭
-ai_decision_total{symbol="KRW-BTC", decision="buy|sell|hold"}
+ai_decision_total{symbol="KRW-ETH", decision="buy|sell|hold"}
+
+# 거래 메트릭 (매수/매도 성공 시)
+trade_total{symbol="KRW-ETH", side="buy|sell"}
+
+# 봇 실행 상태
+bot_running{status="true|false"}
 ```
 
 **Prometheus 접속**: http://localhost:9090
 
 ### Grafana 대시보드
 
-**접속**: http://localhost:3001  
+**접속**: http://localhost:3001
 **계정**: admin / admin
 
 **주요 패널:**
@@ -475,6 +667,20 @@ ai_decision_total{symbol="KRW-BTC", decision="buy|sell|hold"}
 - 성공/실패 비율
 - 평균 실행 시간
 - AI 결정 분포 (buy/sell/hold)
+- 포트폴리오 가치 변화
+
+### PostgreSQL 저장 데이터
+
+```sql
+-- AI 판단 로그 조회
+SELECT * FROM ai_decisions ORDER BY created_at DESC LIMIT 10;
+
+-- 거래 내역 조회
+SELECT * FROM trades ORDER BY created_at DESC LIMIT 10;
+
+-- 포트폴리오 스냅샷
+SELECT * FROM portfolio_snapshots ORDER BY created_at DESC LIMIT 10;
+```
 
 ---
 
@@ -487,6 +693,7 @@ ai_decision_total{symbol="KRW-BTC", decision="buy|sell|hold"}
 UPBIT_ACCESS_KEY=your_upbit_access_key
 UPBIT_SECRET_KEY=your_upbit_secret_key
 OPENAI_API_KEY=sk-your_openai_api_key
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/trading_bot
 
 # 스케줄러 설정
 SCHEDULER_ENABLED=true
@@ -497,9 +704,25 @@ TELEGRAM_ENABLED=true
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 TELEGRAM_CHAT_ID=123456789
 
+# Sentry 에러 추적 (선택)
+SENTRY_ENABLED=true
+SENTRY_DSN=https://xxx@sentry.io/xxx
+SENTRY_ENVIRONMENT=production
+
 # 거래 설정
-TRADING_SYMBOL=KRW-BTC
-TRADING_AMOUNT=50000  # 1회 거래 금액 (원)
+TRADING_SYMBOL=KRW-ETH
+TRADING_MIN_ORDER_AMOUNT=5000  # 최소 주문 금액 (원)
+TRADING_MAX_POSITION_RATIO=0.95  # 최대 포지션 비율
+
+# 데이터베이스 설정 (Docker용)
+POSTGRES_SERVER=postgres
+POSTGRES_PORT=5432
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=trading_bot
+
+# 모니터링
+PROMETHEUS_ENABLED=true
 ```
 
 ### 실행 주기 변경
@@ -517,6 +740,19 @@ SCHEDULER_INTERVAL_MINUTES=120
 SCHEDULER_INTERVAL_MINUTES=360
 ```
 
+### 리스크 관리 파라미터
+
+`main.py`의 `create_spot_trading_pipeline()` 호출 시 수정:
+
+```python
+pipeline = create_spot_trading_pipeline(
+    stop_loss_pct=-5.0,           # 손절 비율 (-5%)
+    take_profit_pct=10.0,         # 익절 비율 (+10%)
+    daily_loss_limit_pct=-10.0,   # 일일 최대 손실 (-10%)
+    min_trade_interval_hours=4     # 최소 거래 간격 (4시간)
+)
+```
+
 ---
 
 ## ❓ 문제 해결
@@ -525,10 +761,16 @@ SCHEDULER_INTERVAL_MINUTES=360
 
 **확인 사항:**
 1. `.env` 파일이 존재하는지 확인
-2. Python 가상환경이 활성화되어 있는지 확인
-3. 필수 패키지가 설치되어 있는지 확인
+2. 필수 환경변수 설정 확인
+3. Python 가상환경이 활성화되어 있는지 확인
+4. 필수 패키지가 설치되어 있는지 확인
 
 ```bash
+# 환경변수 누락 시 에러 메시지
+❌ 필수 환경변수가 누락되었습니다
+  - UPBIT_ACCESS_KEY: Upbit API 액세스 키
+  - DATABASE_URL: 데이터베이스 연결 URL
+
 # 의존성 재설치
 pip install -r requirements.txt
 pip install -r requirements-api.txt
@@ -560,26 +802,49 @@ docker-compose up -d scheduler
 ```bash
 # 스케줄러 로그에서 확인
 docker-compose logs scheduler | grep "등록된 작업"
+
+# 다음 실행 시간 확인
+docker-compose logs scheduler | grep "다음 실행"
 ```
 
 ### Q4. Telegram 알림이 오지 않아요
 
 **확인 사항:**
 1. `.env` 파일의 Telegram 설정 확인
-2. Bot Token이 올바른지 확인
-3. Chat ID가 올바른지 확인
+2. `TELEGRAM_ENABLED=true` 확인
+3. Bot Token이 올바른지 확인
+4. Chat ID가 올바른지 확인
 
 ```bash
 # Telegram 설정 테스트
-python -c "from backend.app.services.notification import notify_bot_status; import asyncio; asyncio.run(notify_bot_status('started', 'Test message'))"
+python -c "
+from backend.app.services.notification import notify_bot_status
+import asyncio
+asyncio.run(notify_bot_status('started', 'Test message'))
+"
 ```
 
-### Q5. 메모리 사용량이 높아요
+### Q5. 파이프라인 스테이지에서 에러가 발생해요
+
+**확인 사항:**
+1. 로그에서 어떤 스테이지에서 에러가 발생했는지 확인
+2. Sentry 대시보드에서 상세 에러 정보 확인
+
+```bash
+# 스테이지별 에러 확인
+docker-compose logs scheduler | grep "스테이지"
+
+# 예시 에러 메시지
+❌ RiskCheckStage 스테이지 실패: 손절 라인 도달
+⏭️ DataCollectionStage 스테이지 스킵 (pre_execute 실패)
+```
+
+### Q6. 메모리 사용량이 높아요
 
 **해결 방법:**
 1. 로그 파일 정리
 2. 오래된 Docker 이미지 삭제
-3. 백테스트 데이터 정리
+3. PostgreSQL 데이터 정리
 
 ```bash
 # 로그 정리
@@ -587,6 +852,11 @@ rm -rf logs/scheduler/*.log
 
 # Docker 정리
 docker system prune -a
+
+# 오래된 AI 결정 삭제 (30일 이상)
+docker exec -it dg_bot-postgres-1 psql -U postgres -d trading_bot -c "
+DELETE FROM ai_decisions WHERE created_at < NOW() - INTERVAL '30 days';
+"
 ```
 
 ---
@@ -597,6 +867,7 @@ docker system prune -a
 - **[사용자 가이드](./USER_GUIDE.md)** - 전체 시스템 사용법
 - **[모니터링 구현 계획](./MONITORING_IMPLEMENTATION_PLAN.md)** - 모니터링 시스템
 - **[시스템 아키텍처](./ARCHITECTURE.md)** - 전체 시스템 구조
+- **[리팩토링 리포트](./REFACTORING_REPORT_2026-01-01.md)** - 파이프라인 아키텍처 도입
 
 ---
 
@@ -609,9 +880,6 @@ docker system prune -a
 
 ---
 
-**작성자**: AI Assistant  
-**최종 업데이트**: 2025-12-28  
-**상태**: ✅ 구현 완료 및 검증 완료
-
-
-
+**작성자**: AI Assistant
+**최종 업데이트**: 2026-01-01
+**상태**: ✅ 구현 완료 (파이프라인 아키텍처 적용)

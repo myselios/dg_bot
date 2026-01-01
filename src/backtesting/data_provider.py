@@ -4,7 +4,8 @@
 """
 import pyupbit
 import pandas as pd
-from typing import Optional
+import numpy as np
+from typing import Optional, Tuple, List
 from datetime import datetime, timedelta
 from pathlib import Path
 from ..utils.logger import Logger
@@ -198,11 +199,154 @@ class HistoricalDataProvider:
             
             total_days = (combined_df.index[-1] - combined_df.index[0]).days
             Logger.print_info(f"전체 데이터 로드 완료: {len(combined_df)}개 (기간: {combined_df.index[0].date()} ~ {combined_df.index[-1].date()}, 총 {total_days}일)")
-            
+
             return combined_df
-            
+
         except Exception as e:
             Logger.print_warning(f"캐시 로드 실패: {str(e)}")
             return None
+
+    @staticmethod
+    def validate_ohlcv_data(
+        df: pd.DataFrame,
+        fix_errors: bool = True,
+        log_warnings: bool = True
+    ) -> Tuple[pd.DataFrame, List[str]]:
+        """
+        OHLCV 데이터 무결성 검증 및 수정
+
+        Args:
+            df: OHLCV 데이터프레임
+            fix_errors: True면 오류를 자동 수정, False면 검증만 수행
+            log_warnings: True면 경고 로깅
+
+        Returns:
+            (수정된 데이터프레임, 발견된 오류 목록)
+
+        검증 항목:
+            1. OHLC 논리 검증 (High >= max(Open, Close), Low <= min(Open, Close))
+            2. 결측치 검사
+            3. 음수 값 검사
+            4. 시간 순서 검증
+            5. 시간 갭 검사
+        """
+        errors = []
+        validated_df = df.copy()
+
+        # 필수 컬럼 확인
+        required_columns = ['open', 'high', 'low', 'close', 'volume']
+        missing_cols = [col for col in required_columns if col not in validated_df.columns]
+        if missing_cols:
+            errors.append(f"필수 컬럼 누락: {missing_cols}")
+            return validated_df, errors
+
+        # 1. OHLC 논리 검증
+        # High가 Open, Close 중 최대값보다 작은 경우
+        invalid_high = validated_df[validated_df['high'] < validated_df[['open', 'close']].max(axis=1)]
+        if len(invalid_high) > 0:
+            errors.append(f"High < max(Open, Close): {len(invalid_high)}건")
+            if fix_errors:
+                validated_df.loc[invalid_high.index, 'high'] = validated_df.loc[invalid_high.index, ['open', 'close', 'high']].max(axis=1)
+
+        # Low가 Open, Close 중 최소값보다 큰 경우
+        invalid_low = validated_df[validated_df['low'] > validated_df[['open', 'close']].min(axis=1)]
+        if len(invalid_low) > 0:
+            errors.append(f"Low > min(Open, Close): {len(invalid_low)}건")
+            if fix_errors:
+                validated_df.loc[invalid_low.index, 'low'] = validated_df.loc[invalid_low.index, ['open', 'close', 'low']].min(axis=1)
+
+        # High < Low인 경우 (치명적 오류)
+        invalid_range = validated_df[validated_df['high'] < validated_df['low']]
+        if len(invalid_range) > 0:
+            errors.append(f"High < Low (치명적): {len(invalid_range)}건")
+            if fix_errors:
+                # High와 Low 교환
+                high_vals = validated_df.loc[invalid_range.index, 'high'].copy()
+                validated_df.loc[invalid_range.index, 'high'] = validated_df.loc[invalid_range.index, 'low']
+                validated_df.loc[invalid_range.index, 'low'] = high_vals
+
+        # 2. 결측치 검사
+        nulls = validated_df[required_columns].isnull().sum()
+        null_cols = nulls[nulls > 0]
+        if len(null_cols) > 0:
+            errors.append(f"결측치 발견: {null_cols.to_dict()}")
+            if fix_errors:
+                # 전방 채움 후 후방 채움
+                validated_df[required_columns] = validated_df[required_columns].ffill().bfill()
+
+        # 3. 음수 값 검사 (가격은 음수일 수 없음)
+        for col in ['open', 'high', 'low', 'close']:
+            negative = validated_df[validated_df[col] < 0]
+            if len(negative) > 0:
+                errors.append(f"{col} 음수값: {len(negative)}건")
+                if fix_errors:
+                    validated_df.loc[negative.index, col] = validated_df.loc[negative.index, col].abs()
+
+        # 거래량 음수 검사
+        negative_vol = validated_df[validated_df['volume'] < 0]
+        if len(negative_vol) > 0:
+            errors.append(f"volume 음수값: {len(negative_vol)}건")
+            if fix_errors:
+                validated_df.loc[negative_vol.index, 'volume'] = 0
+
+        # 4. 시간 순서 검증
+        if not validated_df.index.is_monotonic_increasing:
+            errors.append("시간 순서 오류 (비단조증가)")
+            if fix_errors:
+                validated_df = validated_df.sort_index()
+
+        # 5. 시간 갭 검사 (일봉 기준 3일 이상 갭 경고)
+        if len(validated_df) > 1 and isinstance(validated_df.index, pd.DatetimeIndex):
+            time_diffs = validated_df.index.to_series().diff()
+            # 일봉 기준 3일 이상 갭
+            large_gaps = time_diffs[time_diffs > pd.Timedelta(days=3)]
+            if len(large_gaps) > 0:
+                gap_info = [(str(idx.date()), str(gap)) for idx, gap in large_gaps.items()]
+                errors.append(f"시간 갭 경고 (3일 초과): {len(large_gaps)}건")
+                if log_warnings:
+                    for idx, gap in gap_info[:5]:  # 최대 5개만 로깅
+                        Logger.print_warning(f"시간 갭: {idx}에서 {gap}")
+
+        # 결과 로깅
+        if log_warnings and errors:
+            Logger.print_warning(f"데이터 검증 결과: {len(errors)}개 이슈 발견")
+            for error in errors:
+                Logger.print_warning(f"  - {error}")
+        elif log_warnings:
+            Logger.print_info("데이터 검증 완료: 이슈 없음")
+
+        return validated_df, errors
+
+    def load_and_validate(
+        self,
+        ticker: str,
+        days: int = 365,
+        interval: str = "day",
+        use_cache: bool = True,
+        fix_errors: bool = True
+    ) -> Optional[pd.DataFrame]:
+        """
+        데이터 로드 및 무결성 검증 통합 메서드
+
+        Args:
+            ticker: 거래 종목
+            days: 조회할 일수
+            interval: 시간 간격
+            use_cache: 캐시 사용 여부
+            fix_errors: 오류 자동 수정 여부
+
+        Returns:
+            검증된 데이터프레임 또는 None
+        """
+        # 데이터 로드
+        df = self.load_historical_data(ticker, days, interval, use_cache)
+
+        if df is None or df.empty:
+            return None
+
+        # 데이터 검증 및 수정
+        validated_df, errors = self.validate_ohlcv_data(df, fix_errors=fix_errors)
+
+        return validated_df
     
 

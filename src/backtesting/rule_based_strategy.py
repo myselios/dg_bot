@@ -48,20 +48,24 @@ DEFAULT_USE_DYNAMIC_K = False  # 기본값: 고정 K 사용
 class RuleBasedBreakoutStrategy(Strategy):
     """
     변동성 돌파 전략 - 4단계 관문 룰 기반 (최신 퀀트 트렌드 반영)
-    
+
     최신 트렌드 반영:
     - Gate 0: 추세 필터 (Trend Filter) - 이동평균선 필터로 하락장 가짜 돌파(데드캣 바운스) 차단
     - Gate 1: 응축(Squeeze) 확인 - 볼린저 밴드 폭 축소 또는 ADX < 20
     - Gate 2: 돌파(Breakout) 발생 - 20일 고점 갱신 또는 래리 윌리엄스 방식
       * 동적 K값 지원: 노이즈 비율에 따라 K값 자동 조정 (use_dynamic_k=True)
     - Gate 3: 거래량(Volume) 확인 - 평균의 1.5배 이상 또는 OBV 정배열 확인
-    
+
     주요 특징:
     - 하락장에서의 가짜 돌파 차단으로 승률 향상
     - 노이즈가 많은 장세에서 진입장벽 자동 조정
     - 5가지 매도 조건 (스탑로스, Fakeout, 타겟가, ADX, 타임아웃)
+
+    성능 최적화:
+    - prepare_indicators()로 지표 사전 계산 (O(N²) → O(N))
+    - 캐싱된 지표 활용으로 백테스팅 속도 대폭 향상
     """
-    
+
     def __init__(
         self,
         ticker: str,
@@ -85,48 +89,115 @@ class RuleBasedBreakoutStrategy(Strategy):
         self.trend_filter_enabled = trend_filter_enabled
         self.trend_ma_period = max(trend_ma_period, MIN_TREND_MA_PERIOD)  # 최소값 보장
         self.use_dynamic_k = use_dynamic_k
-        
+
         # 포지션 추적 (매도 신호 생성을 위해)
         self.current_position = None  # {'entry_price', 'stop_loss', 'take_profit', 'entry_bar_index'}
+
+        # [최적화] 캐싱된 지표 저장소
+        self._cached_indicators: Optional[pd.DataFrame] = None
+        self._indicators_prepared = False
+
+    def prepare_indicators(self, data: pd.DataFrame) -> None:
+        """
+        지표 사전 계산 (Vectorization) - O(N²) → O(N) 최적화
+
+        백테스트 시작 전에 한 번만 호출되어 전체 데이터에 대해 지표를 계산합니다.
+
+        Args:
+            data: 전체 과거 데이터
+        """
+        # 원본 데이터 복사 (한 번만)
+        df = data.copy()
+
+        # 1. 볼린저 밴드 및 폭(Bandwidth) 계산
+        df['ma20'] = df['close'].rolling(window=20).mean()
+        df['std20'] = df['close'].rolling(window=20).std()
+        df['bb_upper'] = df['ma20'] + (df['std20'] * 2)
+        df['bb_lower'] = df['ma20'] - (df['std20'] * 2)
+        df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['ma20'].replace(0, np.nan)
+
+        # 2. 거래량 이동평균
+        df['vol_ma20'] = df['volume'].rolling(window=20).mean()
+
+        # 3. 추세 필터용 이동평균
+        df['trend_ma'] = df['close'].rolling(window=self.trend_ma_period).mean()
+
+        # 4. ATR 계산
+        df['atr'] = TechnicalIndicators.calculate_atr(df, period=14)
+
+        # 5. ADX 계산
+        df['adx'] = TechnicalIndicators.calculate_adx(df, period=14)
+
+        # 6. OBV 계산
+        df['obv'] = TechnicalIndicators.calculate_obv(df)
+
+        # 7. OBV 이동평균
+        df['obv_ma5'] = df['obv'].rolling(window=5).mean()
+        df['obv_ma20'] = df['obv'].rolling(window=20).mean()
+
+        # 8. 볼린저 밴드 폭의 20일 이동평균 (Gate 1용)
+        df['bb_width_ma20'] = df['bb_width'].rolling(window=20).mean()
+
+        # 9. Donchian Channel 고점 (현재 봉 제외)
+        df['donchian_high'] = df['high'].shift(1).rolling(window=self.donchian_period).max()
+
+        # 10. 동적 K값용 노이즈 비율
+        ranges = df['high'] - df['low']
+        ranges = ranges.replace(0, np.nan)
+        bodies = (df['open'] - df['close']).abs()
+        noise_ratios = 1 - (bodies / ranges)
+        df['noise_ratio_ma20'] = noise_ratios.rolling(window=20).mean()
+        df['dynamic_k'] = df['noise_ratio_ma20'].clip(0.3, 0.7)
+
+        # 캐시 저장
+        self._cached_indicators = df
+        self._indicators_prepared = True
     
     def generate_signal(self, data: pd.DataFrame, portfolio: Optional[Portfolio] = None) -> Optional[Signal]:
         """
         룰 기반 거래 신호 생성 (AI 호출 없음)
-        
+
         Args:
             data: 현재 시점까지의 차트 데이터
             portfolio: 포트폴리오 객체 (옵션, 매도 신호 생성을 위해)
-            
+
         Returns:
             Signal 객체 또는 None
         """
         # 최소 데이터 요구량 체크
         if len(data) < self.donchian_period + 5:
             return None
-        
-        # ---------------------------------------------------------
-        # [최적화] 지표 미리 한 번에 계산 (Vectorization)
-        # 루프 안에서 계산하지 않고 데이터프레임 전체에 대해 먼저 계산
-        # ---------------------------------------------------------
-        df = data.copy()
-        
-        # 1. 볼린저 밴드 및 폭(Bandwidth) 계산
-        df['ma20'] = df['close'].rolling(window=20).mean()
-        df['std20'] = df['close'].rolling(window=20).std()
-        df['upper'] = df['ma20'] + (df['std20'] * 2)
-        df['lower'] = df['ma20'] - (df['std20'] * 2)
-        # 0으로 나누기 방지
-        df['bb_width'] = (df['upper'] - df['lower']) / df['ma20'].replace(0, np.nan)
-        
-        # 2. 거래량 이동평균
-        df['vol_ma20'] = df['volume'].rolling(window=20).mean()
-        
-        # ---------------------------------------------------------
-        # 현재 시점 데이터 추출
-        # ---------------------------------------------------------
-        current_price = df['close'].iloc[-1]
-        current_volume = df['volume'].iloc[-1]
+
         current_bar_index = len(data) - 1
+
+        # ---------------------------------------------------------
+        # [최적화] 캐싱된 지표 사용 (O(N²) → O(N))
+        # prepare_indicators()가 호출되었으면 캐시 사용, 아니면 기존 방식
+        # ---------------------------------------------------------
+        if self._indicators_prepared and self._cached_indicators is not None:
+            # 캐싱된 지표에서 현재 시점 데이터 추출 (인덱싱만 수행 - O(1))
+            current_row = self._cached_indicators.iloc[current_bar_index]
+            current_price = current_row['close']
+            current_volume = current_row['volume']
+
+            # 캐싱된 지표 참조용 df
+            df = self._cached_indicators.iloc[:current_bar_index + 1]
+        else:
+            # 캐시 없음: 기존 방식 (매번 계산 - 느림)
+            df = data.copy()
+
+            # 1. 볼린저 밴드 및 폭(Bandwidth) 계산
+            df['ma20'] = df['close'].rolling(window=20).mean()
+            df['std20'] = df['close'].rolling(window=20).std()
+            df['bb_upper'] = df['ma20'] + (df['std20'] * 2)
+            df['bb_lower'] = df['ma20'] - (df['std20'] * 2)
+            df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['ma20'].replace(0, np.nan)
+
+            # 2. 거래량 이동평균
+            df['vol_ma20'] = df['volume'].rolling(window=20).mean()
+
+            current_price = df['close'].iloc[-1]
+            current_volume = df['volume'].iloc[-1]
         
         # ===================================================
         # 1. 포지션 추적 정보 업데이트 (Source of Truth: Portfolio)
@@ -165,9 +236,12 @@ class RuleBasedBreakoutStrategy(Strategy):
             else:
                 hold_bars = 0  # 진입 시점 모름
             
-            # ATR 계산 (Fakeout 임계값용)
-            indicators = TechnicalIndicators.get_latest_indicators(data)
-            atr = indicators.get('atr', current_price * 0.02)  # fallback 2%
+            # ATR 가져오기 (캐싱된 값 우선 사용)
+            if self._indicators_prepared and self._cached_indicators is not None:
+                atr = self._cached_indicators.iloc[current_bar_index].get('atr', current_price * 0.02)
+            else:
+                indicators = TechnicalIndicators.get_latest_indicators(data)
+                atr = indicators.get('atr', current_price * 0.02)  # fallback 2%
             
             # ---------------------------------------------------
             # 매도 조건 1: 스탑로스 체크 (손실 보호 최우선)
@@ -213,19 +287,35 @@ class RuleBasedBreakoutStrategy(Strategy):
             # ---------------------------------------------------
             # 매도 조건 4: 추세 반전 체크 (ADX)
             # ---------------------------------------------------
-            adx = TechnicalIndicators.calculate_adx(df)
-            if not adx.empty and len(adx) >= 2:
-                current_adx = adx.iloc[-1]
-                prev_adx = adx.iloc[-2]
-                
+            # ADX 가져오기 (캐싱된 값 우선 사용)
+            if self._indicators_prepared and self._cached_indicators is not None and current_bar_index >= 1:
+                current_adx = self._cached_indicators.iloc[current_bar_index].get('adx', 25)
+                prev_adx = self._cached_indicators.iloc[current_bar_index - 1].get('adx', 25)
+
                 # ADX 급격히 하락 = 추세 약화
-                if current_adx < prev_adx * ADX_WEAKENING_THRESHOLD and current_adx < ADX_WEAK_TREND:
-                    self.current_position = None
-                    return Signal(
-                        action='sell',
-                        price=current_price,
-                        reason={'type': 'trend_weakening', 'msg': f'ADX 하락 (추세 약화: {current_adx:.1f})'}
-                    )
+                if not pd.isna(current_adx) and not pd.isna(prev_adx):
+                    if current_adx < prev_adx * ADX_WEAKENING_THRESHOLD and current_adx < ADX_WEAK_TREND:
+                        self.current_position = None
+                        return Signal(
+                            action='sell',
+                            price=current_price,
+                            reason={'type': 'trend_weakening', 'msg': f'ADX 하락 (추세 약화: {current_adx:.1f})'}
+                        )
+            else:
+                # 캐시 없는 경우 기존 방식
+                adx = TechnicalIndicators.calculate_adx(df)
+                if not adx.empty and len(adx) >= 2:
+                    current_adx = adx.iloc[-1]
+                    prev_adx = adx.iloc[-2]
+
+                    # ADX 급격히 하락 = 추세 약화
+                    if current_adx < prev_adx * ADX_WEAKENING_THRESHOLD and current_adx < ADX_WEAK_TREND:
+                        self.current_position = None
+                        return Signal(
+                            action='sell',
+                            price=current_price,
+                            reason={'type': 'trend_weakening', 'msg': f'ADX 하락 (추세 약화: {current_adx:.1f})'}
+                        )
             
             # ---------------------------------------------------
             # 매도 조건 5: 타임아웃 체크 (모멘텀 부족)
@@ -268,9 +358,12 @@ class RuleBasedBreakoutStrategy(Strategy):
             
             # 모든 관문 통과 시 (AND 조건)
             if gate1_passed and gate2_passed and gate3_passed:
-                # ATR 계산 (손절/익절용)
-                indicators = TechnicalIndicators.get_latest_indicators(data)
-                atr = indicators.get('atr', current_price * 0.02)  # fallback 2%
+                # ATR 가져오기 (캐싱된 값 우선 사용)
+                if self._indicators_prepared and self._cached_indicators is not None:
+                    atr = self._cached_indicators.iloc[current_bar_index].get('atr', current_price * 0.02)
+                else:
+                    indicators = TechnicalIndicators.get_latest_indicators(data)
+                    atr = indicators.get('atr', current_price * 0.02)  # fallback 2%
 
                 # 전략적 스탑로스/테이크프로핏 설정
                 # 돌파 매매는 손절을 짧게 잡는 것이 핵심 (돌파 실패 = 즉시 탈출)
@@ -308,13 +401,13 @@ class RuleBasedBreakoutStrategy(Strategy):
         """
         [Gate 0] 추세 필터 (Trend Filter)
         최신 퀀트 트렌드: 하락장에서의 가짜 돌파(데드캣 바운스) 차단
-        
+
         현재 가격이 이동평균선 위에 있을 때만 상승 추세로 간주하여 진입 허용
-        
+
         Args:
             df: 차트 데이터
             current_price: 현재가
-            
+
         Returns:
             True: 상승 추세 (진입 허용)
             False: 하락 추세 (진입 차단)
@@ -322,14 +415,21 @@ class RuleBasedBreakoutStrategy(Strategy):
         if len(df) < self.trend_ma_period:
             # 데이터 부족 시 패스 (기존 동작 유지)
             return True
-        
-        # 이동평균선 계산
+
+        # [최적화] 캐싱된 지표 사용
+        if self._indicators_prepared and self._cached_indicators is not None:
+            ma = df.iloc[-1].get('trend_ma', None)
+            if ma is not None and not pd.isna(ma):
+                return current_price > ma
+            return True  # NaN인 경우 패스
+
+        # 기존 방식: 이동평균선 계산
         ma = df['close'].rolling(window=self.trend_ma_period).mean().iloc[-1]
-        
+
         # 현재 가격이 이동평균선 위에 있어야 상승 추세
         if current_price > ma:
             return True
-        
+
         # 하락 추세: 진입 차단
         return False
     
@@ -337,79 +437,119 @@ class RuleBasedBreakoutStrategy(Strategy):
         """
         노이즈 비율을 반영한 동적 K값 계산
         최신 이론: Noise Ratio = 1 - |Open - Close| / (High - Low)
-        
+
         노이즈가 많으면(꼬리 긴 캔들) K값을 높여서 진입장벽을 높임
         추세가 깔끔하면(몸통 긴 캔들) K값을 낮춰서 빠르게 진입
-        
+
         Args:
             df: 차트 데이터
-            
+
         Returns:
             동적 K값 (0.3 ~ 0.7 범위로 클램핑)
         """
         if len(df) < 20:
             # 데이터 부족 시 기본값 반환
             return self.k_value
-        
-        # 캔들 범위 (High - Low)
+
+        # [최적화] 캐싱된 지표 사용
+        if self._indicators_prepared and self._cached_indicators is not None:
+            dynamic_k = df.iloc[-1].get('dynamic_k', None)
+            if dynamic_k is not None and not pd.isna(dynamic_k):
+                return dynamic_k
+            return self.k_value  # NaN인 경우 기본값
+
+        # 기존 방식: 캔들 범위 (High - Low)
         ranges = df['high'] - df['low']
         ranges = ranges.replace(0, np.nan)  # 0으로 나누기 방지
-        
+
         # 몸통 길이 (|Open - Close|)
         bodies = (df['open'] - df['close']).abs()
-        
+
         # 노이즈 비율 계산
         # 0에 가까우면: 몸통이 긴 깔끔한 캔들 (추세 명확)
         # 1에 가까우면: 꼬리가 긴 십자형 캔들 (노이즈 많음)
         noise_ratios = 1 - (bodies / ranges)
-        
+
         # 최근 20일 평균 노이즈 비율
         avg_noise = noise_ratios.rolling(window=20).mean().iloc[-1]
-        
+
         # NaN 체크
         if pd.isna(avg_noise):
             return self.k_value
-        
+
         # K값 보정: 노이즈 비율 자체를 K로 사용하되, 0.3 ~ 0.7 범위로 클램핑
         # 노이즈가 많으면(avg_noise 높음) K값을 높여서 확실한 돌파만 진입
         # 노이즈가 적으면(avg_noise 낮음) K값을 낮춰서 빠른 진입
         dynamic_k = max(0.3, min(avg_noise, 0.7))
-        
+
         return dynamic_k
     
     def _check_gate1_squeeze(self, df: pd.DataFrame) -> Tuple[bool, str]:
         """
         [관문 1 수정] 응축 확인 (강화된 기준)
         논리 수정: '현재'가 아니라 '돌파 직전(1~3봉 전)'에 응축이 있었는가?
-        
+
         문제점: 돌파가 일어나는 순간은 가격이 급변하므로 볼린저 밴드가 벌어지는(확장) 순간입니다.
         따라서 현재 캔들에서 응축과 돌파를 동시에 체크하는 것은 논리적으로 불가능합니다.
         """
         if len(df) < 20:
             return False, "데이터 부족"
-        
+
+        # [최적화] 캐싱된 지표 사용
+        if self._indicators_prepared and self._cached_indicators is not None:
+            # 캐싱된 bb_width_ma20 사용
+            avg_width = df.iloc[-1].get('bb_width_ma20', None)
+            if avg_width is None or pd.isna(avg_width):
+                avg_width = df['bb_width'].iloc[-20:].mean() if len(df) >= 20 else df['bb_width'].mean()
+
+            # 최근 10일 최소값
+            if len(df) >= 10:
+                recent_min_width = df['bb_width'].iloc[-10:].min()
+                if not pd.isna(recent_min_width) and recent_min_width < avg_width * 0.8:
+                    return True, f"강한 응축 확인 (최소 폭: {recent_min_width:.4f} < 평균의 80%)"
+
+            # 직전 캔들 폭 확인
+            if len(df) >= 3:
+                prev_width = df['bb_width'].iloc[-2]
+                prev_prev_width = df['bb_width'].iloc[-3]
+
+                is_squeezed = (not pd.isna(prev_width) and prev_width < avg_width) or \
+                              (not pd.isna(prev_prev_width) and prev_prev_width < avg_width)
+
+                if is_squeezed:
+                    return True, f"직전 응축 확인 (폭: {prev_width:.4f} < 평균: {avg_width:.4f})"
+
+            # 캐싱된 ADX 사용
+            if len(df) >= 2:
+                prev_adx = df['adx'].iloc[-2] if 'adx' in df.columns else None
+                if prev_adx is not None and not pd.isna(prev_adx) and prev_adx < 25:
+                    return True, f"ADX 횡보 확인 ({prev_adx:.1f} < 25)"
+
+            return False, "응축 없음 (이미 변동성 확대 상태)"
+
+        # 기존 방식 (캐시 없는 경우)
         # 최근 20일 평균 밴드폭
         avg_width = df['bb_width'].rolling(window=20).mean().iloc[-1]
-        
+
         # 더 엄격한 응축 기준: 최근 10일 중 가장 좁은 폭 체크
         if len(df) >= 10:
             recent_min_width = df['bb_width'].tail(10).min()
-            
+
             # 평균의 80% 이하 = 강한 응축
             if recent_min_width < avg_width * 0.8:
                 return True, f"강한 응축 확인 (최소 폭: {recent_min_width:.4f} < 평균의 80%)"
-        
+
         # 직전 캔들(iloc[-2]) 또는 그 전(iloc[-3])의 밴드폭 확인
         # 이유: 돌파 캔들(iloc[-1])에서는 이미 밴드가 벌어졌을 수 있음
         if len(df) >= 3:
             prev_width = df['bb_width'].iloc[-2]
             prev_prev_width = df['bb_width'].iloc[-3]
-            
+
             is_squeezed = (prev_width < avg_width) or (prev_prev_width < avg_width)
-            
+
             if is_squeezed:
                 return True, f"직전 응축 확인 (폭: {prev_width:.4f} < 평균: {avg_width:.4f})"
-        
+
         # 보조 지표: ADX (추세 강도가 약했을 때 = 횡보)
         # 원본 데이터를 사용하여 ADX 계산
         adx = TechnicalIndicators.calculate_adx(df)
@@ -474,11 +614,11 @@ class RuleBasedBreakoutStrategy(Strategy):
         """
         [관문 2 수정] 돌파 확인 (강도 측정 추가 + 동적 K값 지원)
         논리 수정: Look-ahead Bias 제거 (현재 캔들 제외한 과거 고점 비교)
-        
+
         문제점: tail(20)에는 현재 형성 중인 캔들의 고점도 포함될 수 있습니다.
-        현재가가 현재 고점과 같으므로 > 조건이 성립하지 않거나, 
+        현재가가 현재 고점과 같으므로 > 조건이 성립하지 않거나,
         이미 지나간 고점을 보고 들어가는 오류가 생길 수 있습니다.
-        
+
         Args:
             df: 차트 데이터
             current_price: 현재가
@@ -486,33 +626,46 @@ class RuleBasedBreakoutStrategy(Strategy):
         """
         if k_value is None:
             k_value = self.k_value
-        
+
         if len(df) < self.donchian_period + 1:
             return False, "데이터 부족"
-        
-        # 1. Donchian Channel (최근 20일 고점, 오늘 제외!)
-        # iloc[-(period+1):-1] -> 어제부터 20일 전까지
-        past_highs = df['high'].iloc[-(self.donchian_period + 1):-1]
-        highest_high = past_highs.max()
-        
-        if current_price > highest_high:
-            # 돌파 강도 측정 (얼마나 세게 뚫었는가?)
-            breakout_strength = (current_price - highest_high) / highest_high
-            
-            if breakout_strength > 0.01:  # 1% 이상 강하게 돌파
-                return True, f"강한 돌파 ({breakout_strength*100:.2f}% 상승, {current_price:.0f} > {highest_high:.0f})"
-            else:
-                return True, f"약한 돌파 (주의 필요, {breakout_strength*100:.2f}% 상승)"
-            
+
+        # [최적화] 캐싱된 Donchian 고점 사용
+        if self._indicators_prepared and self._cached_indicators is not None and 'donchian_high' in df.columns:
+            highest_high = df.iloc[-1].get('donchian_high', None)
+            if highest_high is not None and not pd.isna(highest_high):
+                if current_price > highest_high:
+                    # 돌파 강도 측정
+                    breakout_strength = (current_price - highest_high) / highest_high
+
+                    if breakout_strength > 0.01:
+                        return True, f"강한 돌파 ({breakout_strength*100:.2f}% 상승, {current_price:.0f} > {highest_high:.0f})"
+                    else:
+                        return True, f"약한 돌파 (주의 필요, {breakout_strength*100:.2f}% 상승)"
+
+        else:
+            # 기존 방식: Donchian Channel (최근 20일 고점, 오늘 제외!)
+            past_highs = df['high'].iloc[-(self.donchian_period + 1):-1]
+            highest_high = past_highs.max()
+
+            if current_price > highest_high:
+                # 돌파 강도 측정 (얼마나 세게 뚫었는가?)
+                breakout_strength = (current_price - highest_high) / highest_high
+
+                if breakout_strength > 0.01:  # 1% 이상 강하게 돌파
+                    return True, f"강한 돌파 ({breakout_strength*100:.2f}% 상승, {current_price:.0f} > {highest_high:.0f})"
+                else:
+                    return True, f"약한 돌파 (주의 필요, {breakout_strength*100:.2f}% 상승)"
+
         # 2. Larry Williams Volatility Breakout (동적/고정 K값 사용)
         if len(df) >= 2:
             prev_close = df['close'].iloc[-2]
             prev_high = df['high'].iloc[-2]
             prev_low = df['low'].iloc[-2]
             prev_range = prev_high - prev_low
-            
+
             breakout_level = prev_close + (prev_range * k_value)
-            
+
             if current_price > breakout_level:
                 k_type = "동적" if self.use_dynamic_k else "고정"
                 return True, f"변동성 돌파 성공 (K={k_value:.2f}, {k_type}, {current_price:.0f} > {breakout_level:.0f})"
@@ -523,53 +676,83 @@ class RuleBasedBreakoutStrategy(Strategy):
         """
         [관문 3] 거래량 확인 (OBV 로직 수정)
         엄밀하게 하려면 어제까지의 평균과 비교
-        
+
         OBV는 누적 지표이므로 현재값 > 평균값 비교는 의미가 없습니다.
         OBV의 추세(기울기)를 확인해야 합니다.
         """
         if len(df) < 21:
             return False, "데이터 부족"
-        
+
         # 어제까지의 평균 거래량 (현재 캔들 제외)
         avg_vol_prev = df['volume'].iloc[-21:-1].mean()
-        
+
         if current_volume > avg_vol_prev * self.volume_multiplier:
             return True, f"거래량 폭발 ({current_volume:.0f} > {avg_vol_prev:.0f} * {self.volume_multiplier})"
-            
-        # OBV 보조 확인 (수정: 기울기로 변경)
+
+        # [최적화] 캐싱된 OBV 지표 사용
+        if self._indicators_prepared and self._cached_indicators is not None and 'obv' in df.columns:
+            current_obv = df['obv'].iloc[-1]
+            obv_ma5 = df['obv_ma5'].iloc[-1] if 'obv_ma5' in df.columns else None
+            obv_ma20 = df['obv_ma20'].iloc[-1] if 'obv_ma20' in df.columns else None
+
+            # OBV가 이동평균선 위에 있고 + 골든크로스
+            if obv_ma5 is not None and obv_ma20 is not None:
+                if not pd.isna(current_obv) and not pd.isna(obv_ma5) and not pd.isna(obv_ma20):
+                    if current_obv > obv_ma20 and obv_ma5 > obv_ma20:
+                        return True, f"OBV 정배열 및 골든크로스 (매수세 유입, OBV: {current_obv:,.0f} > MA20: {obv_ma20:,.0f})"
+
+                    # OBV 기울기 체크
+                    if len(df) >= 6:
+                        obv_slope = df['obv'].iloc[-1] - df['obv'].iloc[-6]
+                        if current_obv > obv_ma20 and obv_slope > 0:
+                            return True, f"OBV 정배열 및 상승 추세 (매집 확인, 변화량: {obv_slope:,.0f})"
+
+            # 가격-OBV 다이버전스 체크
+            if len(df) >= 5:
+                price_trend = df['close'].iloc[-5:].diff().sum()
+                obv_trend = df['obv'].iloc[-5:].diff().sum()
+
+                if price_trend > 0 and obv_trend > 0:
+                    return True, f"가격-OBV 동반 상승 (건강한 추세)"
+                elif price_trend > 0 and obv_trend < 0:
+                    return False, "가격-OBV 다이버전스 (약한 상승, 위험)"
+
+            return False, "거래량 부족"
+
+        # 기존 방식 (캐시 없는 경우)
         obv = TechnicalIndicators.calculate_obv(df)
         if not obv.empty and len(obv) >= 20:
             # 방법 1: OBV 이동평균 크로스 (추천: 가장 신뢰성 높음)
             obv_short = obv.rolling(5).mean().iloc[-1]
             obv_long = obv.rolling(20).mean().iloc[-1]
             current_obv = obv.iloc[-1]
-            
+
             # OBV가 이동평균선 위에 있고 + 골든크로스
             if current_obv > obv_long and obv_short > obv_long:
                 return True, f"OBV 정배열 및 골든크로스 (매수세 유입, OBV: {current_obv:,.0f} > MA20: {obv_long:,.0f})"
-        
+
         # 방법 2: OBV 기울기 (강화: 이동평균선 위에서 상승 추세)
         if not obv.empty and len(obv) >= 20:
             obv_ma20 = obv.rolling(20).mean().iloc[-1]
             current_obv = obv.iloc[-1]
             obv_slope = obv.iloc[-1] - obv.iloc[-6]  # 최근 5일 변화량
-            
+
             # OBV가 이동평균선 위에 있고 + 기울기 양수
             if current_obv > obv_ma20 and obv_slope > 0:
                 return True, f"OBV 정배열 및 상승 추세 (매집 확인, 변화량: {obv_slope:,.0f})"
-        
+
         # 방법 3: OBV와 가격 다이버전스 체크 (고급)
         if not obv.empty and len(obv) >= 5 and len(df) >= 5:
             price_trend = df['close'].iloc[-5:].diff().sum()
             obv_trend = obv.iloc[-5:].diff().sum()
-            
+
             if price_trend > 0 and obv_trend > 0:
                 # 가격 상승 + OBV 상승 = 건강한 상승
                 return True, f"가격-OBV 동반 상승 (건강한 추세)"
             elif price_trend > 0 and obv_trend < 0:
                 # 가격 상승 but OBV 하락 = 약한 상승 (위험)
                 return False, "가격-OBV 다이버전스 (약한 상승, 위험)"
-        
+
         return False, "거래량 부족"
     
     def calculate_position_size(

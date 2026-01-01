@@ -16,6 +16,7 @@ class BacktestResult:
     equity_curve: List[float]
     trades: List
     metrics: dict
+    execution_mode: str = 'close'  # 'close' 또는 'next_open'
 
 
 class Backtester:
@@ -32,7 +33,9 @@ class Backtester:
         commission: float = 0.0005,   # 수수료 (0.05%)
         slippage: float = 0.0001,     # 슬리피지 (0.01%)
         slippage_model: dict = None,  # 슬리피지 모델 (오더북 기반)
-        use_split_orders: bool = False  # 분할 주문 사용 여부
+        use_split_orders: bool = False,  # 분할 주문 사용 여부
+        execute_on_next_open: bool = True,  # True: 다음 봉 시가 체결 (현실적), False: 현재 봉 종가 체결
+        data_interval: str = 'day'    # 데이터 간격 ('day', 'minute60', 'minute15', 등) - 연율화 계산용
     ):
         self.strategy = strategy
         self.data = data
@@ -41,7 +44,9 @@ class Backtester:
         self.commission = commission
         self.slippage = slippage
         self.use_split_orders = use_split_orders
-        
+        self.execute_on_next_open = execute_on_next_open  # Look-Ahead Bias 방지 옵션
+        self.data_interval = data_interval  # 데이터 간격 (성과 지표 연율화용)
+
         # 슬리피지 모델 설정
         if slippage_model is None:
             self.slippage_model = {
@@ -60,45 +65,94 @@ class Backtester:
         self.slippage_statistics = []  # 슬리피지 통계
         
     def run(self) -> BacktestResult:
-        """백테스트 실행"""
+        """
+        백테스트 실행
+
+        execute_on_next_open=True (기본값, 권장):
+            - t시점 종가로 신호 생성 → t+1시점 시가로 체결
+            - Look-Ahead Bias 방지 (현실적인 백테스팅)
+            - 실제 트레이딩과 동일한 조건
+
+        execute_on_next_open=False:
+            - t시점 종가로 신호 생성 → t시점 종가로 체결
+            - Look-Ahead Bias 존재 (과대평가 위험)
+            - 빠른 테스트용으로만 사용
+        """
+        # [최적화] 지표 사전 계산 - O(N²) → O(N)
+        # 전략이 prepare_indicators를 구현했다면 백테스트 시작 전 한 번만 호출
+        if hasattr(self.strategy, 'prepare_indicators'):
+            print("[최적화] 지표 사전 계산 중...", end=" ", flush=True)
+            self.strategy.prepare_indicators(self.data)
+            print("완료")
+
         total_bars = len(self.data)
-        
+        pending_signal = None  # 다음 봉에서 실행할 대기 신호
+
         for i in range(total_bars):
             # 진행 상황 출력 (10% 단위)
             if i % max(1, total_bars // 10) == 0 or i == total_bars - 1:
                 progress = (i + 1) / total_bars * 100
                 print(f"\r[백테스팅 진행] {i+1}/{total_bars} ({progress:.1f}%)", end="", flush=True)
-            
+
             # 1. 현재 시점 데이터 추출
             current_bar = self.data.iloc[:i+1]
-            
-            # 2. 전략 시그널 생성 (portfolio 전달 - 매도 신호 생성을 위해)
+            current_bar_data = current_bar.iloc[-1]
+
+            # 2. 대기 중인 신호가 있으면 현재 봉 시가로 체결 (execute_on_next_open 모드)
+            if self.execute_on_next_open and pending_signal is not None:
+                try:
+                    # 시가로 체결 (Look-Ahead Bias 방지)
+                    self._execute_order(pending_signal, current_bar_data, use_open_price=True)
+                except Exception as e:
+                    print(f"\n⚠️  시점 {i+1}에서 대기 주문 실행 오류: {str(e)}")
+                pending_signal = None  # 처리 완료
+
+            # 3. 전략 시그널 생성 (portfolio 전달 - 매도 신호 생성을 위해)
             try:
                 signal = self.strategy.generate_signal(current_bar, portfolio=self.portfolio)
             except Exception as e:
                 # 에러 발생 시 로깅하고 계속 진행
                 print(f"\n⚠️  시점 {i+1}에서 신호 생성 오류: {str(e)}")
                 signal = None
-            
-            # 3. 주문 실행
+
+            # 4. 주문 처리
             if signal:
-                try:
-                    self._execute_order(signal, current_bar.iloc[-1])
-                except Exception as e:
-                    print(f"\n⚠️  시점 {i+1}에서 주문 실행 오류: {str(e)}")
-            
-            # 4. 포트폴리오 업데이트
-            self.portfolio.update(current_bar.iloc[-1])
+                if self.execute_on_next_open:
+                    # 다음 봉 시가에 체결하기 위해 신호 저장
+                    # 마지막 봉이면 체결 불가 (다음 봉이 없음)
+                    if i < total_bars - 1:
+                        pending_signal = signal
+                    # else: 마지막 봉의 신호는 무시 (체결할 다음 봉이 없음)
+                else:
+                    # 즉시 종가로 체결 (기존 방식, Look-Ahead Bias 있음)
+                    try:
+                        self._execute_order(signal, current_bar_data, use_open_price=False)
+                    except Exception as e:
+                        print(f"\n⚠️  시점 {i+1}에서 주문 실행 오류: {str(e)}")
+
+            # 5. 포트폴리오 업데이트
+            self.portfolio.update(current_bar_data)
             self.equity_curve.append(self.portfolio.total_value)
-        
+
         print()  # 진행 상황 출력 후 줄바꿈
-        
-        # 5. 결과 분석
+
+        # 6. 결과 분석
         return self._analyze_results()
     
-    def _execute_order(self, signal, current_bar: pd.Series):
-        """주문 실행 (슬리피지 및 분할 주문 적용)"""
-        current_price = current_bar['close']
+    def _execute_order(self, signal, current_bar: pd.Series, use_open_price: bool = False):
+        """
+        주문 실행 (슬리피지 및 분할 주문 적용)
+
+        Args:
+            signal: 거래 신호
+            current_bar: 현재 봉 데이터
+            use_open_price: True면 시가로 체결, False면 종가로 체결
+        """
+        # 체결 가격 결정: 시가 또는 종가
+        if use_open_price:
+            current_price = current_bar['open']  # 다음 봉 시가로 체결 (Look-Ahead Bias 방지)
+        else:
+            current_price = current_bar['close']  # 현재 봉 종가로 체결 (기존 방식)
         
         if signal.action == 'buy':
             # 매수 신호
@@ -313,11 +367,12 @@ class Backtester:
     def _analyze_results(self) -> BacktestResult:
         """결과 분석"""
         from .performance import PerformanceAnalyzer
-        
+
         metrics = PerformanceAnalyzer.calculate_metrics(
             equity_curve=self.equity_curve,
             trades=self.portfolio.closed_trades,
-            initial_capital=self.initial_capital
+            initial_capital=self.initial_capital,
+            data_interval=self.data_interval  # 데이터 간격 전달 (연율화 계산용)
         )
         
         # 슬리피지 통계 추가
@@ -336,6 +391,7 @@ class Backtester:
             final_equity=self.equity_curve[-1] if self.equity_curve else self.initial_capital,
             equity_curve=self.equity_curve,
             trades=self.portfolio.closed_trades,
-            metrics=metrics
+            metrics=metrics,
+            execution_mode='next_open' if self.execute_on_next_open else 'close'
         )
 

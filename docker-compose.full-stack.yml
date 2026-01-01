@@ -23,23 +23,6 @@ services:
     networks:
       - trading_network
 
-  # Redis (Optional - for caching)
-  redis:
-    image: redis:7-alpine
-    container_name: trading_bot_redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    restart: unless-stopped
-    networks:
-      - trading_network
-
   # FastAPI Backend API Server
   backend:
     build:
@@ -53,8 +36,6 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_DB=${POSTGRES_DB:-trading_bot}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
       - UPBIT_ACCESS_KEY=${UPBIT_ACCESS_KEY}
       - UPBIT_SECRET_KEY=${UPBIT_SECRET_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -73,8 +54,6 @@ services:
       - ./logs:/app/logs
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -101,8 +80,6 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_DB=${POSTGRES_DB:-trading_bot}
       - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/trading_bot}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
       - UPBIT_ACCESS_KEY=${UPBIT_ACCESS_KEY}
       - UPBIT_SECRET_KEY=${UPBIT_SECRET_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -176,7 +153,6 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
   prometheus_data:
   grafana_data:
 

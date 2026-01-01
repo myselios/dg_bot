@@ -44,8 +44,8 @@ class TestRiskManager:
 
     @pytest.fixture
     def risk_manager(self):
-        """테스트용 리스크 관리자 생성"""
-        return RiskManager()
+        """테스트용 리스크 관리자 생성 (State Persistence 비활성화)"""
+        return RiskManager(persist_state=False)
 
     @pytest.fixture
     def sample_position(self):

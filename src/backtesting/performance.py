@@ -1,7 +1,7 @@
 """
 성과 분석 클래스
 """
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import pandas as pd
 import numpy as np
 from .portfolio import Trade
@@ -9,31 +9,71 @@ from .portfolio import Trade
 
 class PerformanceAnalyzer:
     """성과 분석"""
-    
+
+    # 데이터 간격별 연율화 상수 (1년 기준 봉 개수)
+    ANNUALIZATION_FACTORS = {
+        'day': 365,                    # 일봉: 365일 (코인 24/7)
+        'minute60': 365 * 24,          # 시봉: 8,760시간
+        'minute30': 365 * 24 * 2,      # 30분봉: 17,520개
+        'minute15': 365 * 24 * 4,      # 15분봉: 35,040개
+        'minute5': 365 * 24 * 12,      # 5분봉: 105,120개
+        'minute1': 365 * 24 * 60,      # 1분봉: 525,600개
+        'week': 52,                    # 주봉: 52주
+    }
+
+    @staticmethod
+    def _get_annualization_factor(data_interval: str) -> int:
+        """
+        데이터 간격에 따른 연율화 상수 반환
+
+        Args:
+            data_interval: 데이터 간격 ('day', 'minute60', 'minute15', 등)
+
+        Returns:
+            연율화 상수 (1년 기준 봉 개수)
+        """
+        return PerformanceAnalyzer.ANNUALIZATION_FACTORS.get(data_interval, 365)
+
     @staticmethod
     def calculate_metrics(
         equity_curve: List[float],
         trades: List[Trade],
-        initial_capital: float
+        initial_capital: float,
+        data_interval: str = 'day'  # 데이터 간격 파라미터 추가
     ) -> Dict[str, Any]:
-        """핵심 성과 지표 계산"""
-        
+        """
+        핵심 성과 지표 계산
+
+        Args:
+            equity_curve: 자산 곡선
+            trades: 거래 목록
+            initial_capital: 초기 자본
+            data_interval: 데이터 간격 ('day', 'minute60', 'minute15', 등)
+                          연율화 계산에 사용됨
+
+        Returns:
+            성과 지표 딕셔너리
+        """
+
         if not equity_curve:
             return {}
-        
+
         equity_series = pd.Series(equity_curve)
         returns = equity_series.pct_change().dropna()
-        
+
+        # 연율화 상수 (데이터 간격에 따라 동적 결정)
+        annualization_factor = PerformanceAnalyzer._get_annualization_factor(data_interval)
+
         # 1. 수익 지표
         total_return = (equity_curve[-1] - initial_capital) / initial_capital * 100
-        
-        # 2. 리스크 지표
-        volatility = returns.std() * np.sqrt(365) * 100 if len(returns) > 0 else 0  # 연율화
+
+        # 2. 리스크 지표 (연율화 상수 적용)
+        volatility = returns.std() * np.sqrt(annualization_factor) * 100 if len(returns) > 0 else 0
         max_drawdown = PerformanceAnalyzer._calculate_max_drawdown(equity_series)
         
-        # 3. 위험 조정 수익률
-        sharpe_ratio = PerformanceAnalyzer._calculate_sharpe(returns) if len(returns) > 0 else 0
-        sortino_ratio = PerformanceAnalyzer._calculate_sortino(returns) if len(returns) > 0 else 0
+        # 3. 위험 조정 수익률 (연율화 상수 전달)
+        sharpe_ratio = PerformanceAnalyzer._calculate_sharpe(returns, annualization_factor=annualization_factor) if len(returns) > 0 else 0
+        sortino_ratio = PerformanceAnalyzer._calculate_sortino(returns, annualization_factor=annualization_factor) if len(returns) > 0 else 0
         calmar_ratio = total_return / abs(max_drawdown) if max_drawdown != 0 else 0
         
         # 4. 거래 통계
@@ -70,14 +110,14 @@ class PerformanceAnalyzer:
             'total_return': total_return,
             'total_trades': len(trades),
             'final_equity': equity_curve[-1],
-            
+
             # 리스크 지표
             'volatility': volatility,
             'max_drawdown': max_drawdown,
             'sharpe_ratio': sharpe_ratio,
             'sortino_ratio': sortino_ratio,
             'calmar_ratio': calmar_ratio,
-            
+
             # 거래 통계
             'win_rate': win_rate,
             'winning_trades': len(winning_trades),
@@ -87,10 +127,14 @@ class PerformanceAnalyzer:
             'profit_factor': profit_factor,
             'max_consecutive_wins': max_consecutive_wins,
             'max_consecutive_losses': max_consecutive_losses,
-            
+
             # 기타
             'avg_holding_period_hours': avg_holding_period,
-            'total_commission': sum(t.commission for t in trades)
+            'total_commission': sum(t.commission for t in trades),
+
+            # 메타 정보
+            'data_interval': data_interval,
+            'annualization_factor': annualization_factor
         }
     
     @staticmethod
@@ -105,29 +149,65 @@ class PerformanceAnalyzer:
         return drawdown.min()
     
     @staticmethod
-    def _calculate_sharpe(returns: pd.Series, risk_free_rate: float = 0.02) -> float:
-        """샤프 비율"""
+    def _calculate_sharpe(
+        returns: pd.Series,
+        risk_free_rate: float = 0.02,
+        annualization_factor: int = 365
+    ) -> float:
+        """
+        샤프 비율 계산
+
+        Args:
+            returns: 수익률 시리즈
+            risk_free_rate: 무위험 수익률 (연율, 기본 2%)
+            annualization_factor: 연율화 상수 (데이터 간격에 따라 다름)
+
+        Returns:
+            연율화된 샤프 비율
+        """
         if len(returns) == 0 or returns.std() == 0:
             return 0
-        
-        excess_returns = returns - (risk_free_rate / 365)
+
+        # 무위험 수익률을 데이터 간격에 맞게 조정
+        period_risk_free = risk_free_rate / annualization_factor
+        excess_returns = returns - period_risk_free
+
         if excess_returns.std() == 0:
             return 0
-        return (excess_returns.mean() / excess_returns.std()) * np.sqrt(365)
+
+        # 연율화된 샤프 비율
+        return (excess_returns.mean() / excess_returns.std()) * np.sqrt(annualization_factor)
     
     @staticmethod
-    def _calculate_sortino(returns: pd.Series, risk_free_rate: float = 0.02) -> float:
-        """소르티노 비율 (하방 리스크만 고려)"""
+    def _calculate_sortino(
+        returns: pd.Series,
+        risk_free_rate: float = 0.02,
+        annualization_factor: int = 365
+    ) -> float:
+        """
+        소르티노 비율 계산 (하방 리스크만 고려)
+
+        Args:
+            returns: 수익률 시리즈
+            risk_free_rate: 무위험 수익률 (연율, 기본 2%)
+            annualization_factor: 연율화 상수 (데이터 간격에 따라 다름)
+
+        Returns:
+            연율화된 소르티노 비율
+        """
         if len(returns) == 0:
             return 0
-        
-        excess_returns = returns - (risk_free_rate / 365)
+
+        # 무위험 수익률을 데이터 간격에 맞게 조정
+        period_risk_free = risk_free_rate / annualization_factor
+        excess_returns = returns - period_risk_free
         downside_returns = excess_returns[excess_returns < 0]
-        
+
         if len(downside_returns) == 0 or downside_returns.std() == 0:
             return 0
-        
-        return (excess_returns.mean() / downside_returns.std()) * np.sqrt(365)
+
+        # 연율화된 소르티노 비율
+        return (excess_returns.mean() / downside_returns.std()) * np.sqrt(annualization_factor)
     
     @staticmethod
     def _max_consecutive(boolean_list: List[bool]) -> int:

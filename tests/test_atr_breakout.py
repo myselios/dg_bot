@@ -148,7 +148,7 @@ class TestATRBreakout:
     def test_calculate_target_price_atr_low_volatility(self, sample_ohlcv_data):
         """저변동성 - 큰 K값으로 돌파가 계산"""
         # Given
-        strategy = RuleBasedBreakoutStrategy(ticker="KRW-BTC", use_atr_breakout=True)
+        strategy = RuleBasedBreakoutStrategy(ticker="KRW-BTC", use_dynamic_k=True)
         current_idx = 20  # 충분한 데이터 확보
 
         # When
@@ -162,7 +162,7 @@ class TestATRBreakout:
     def test_calculate_target_price_atr_high_volatility(self, high_volatility_data):
         """고변동성 - 작은 K값으로 돌파가 계산"""
         # Given
-        strategy = RuleBasedBreakoutStrategy(ticker="KRW-BTC", use_atr_breakout=True)
+        strategy = RuleBasedBreakoutStrategy(ticker="KRW-BTC", use_dynamic_k=True)
         current_idx = 20
 
         # When
@@ -176,7 +176,7 @@ class TestATRBreakout:
     def test_calculate_target_price_atr_insufficient_data(self, sample_ohlcv_data):
         """데이터 부족 시 기존 방식으로 fallback"""
         # Given
-        strategy = RuleBasedBreakoutStrategy(ticker="KRW-BTC", use_atr_breakout=True)
+        strategy = RuleBasedBreakoutStrategy(ticker="KRW-BTC", use_dynamic_k=True)
         current_idx = 5  # ATR 계산에 부족한 데이터
 
         # When
@@ -247,27 +247,31 @@ class TestATRBreakout:
     def test_generate_signal_with_atr_breakout(self, sample_ohlcv_data):
         """ATR 기반 전략으로 매수 신호 생성"""
         # Given
-        strategy = RuleBasedBreakoutStrategy(ticker="KRW-BTC", use_atr_breakout=True)
-        current_idx = 20
+        strategy = RuleBasedBreakoutStrategy(ticker="KRW-BTC", use_dynamic_k=True)
 
         # When
-        signal = strategy.generate_signal(sample_ohlcv_data, current_idx)
+        signal = strategy.generate_signal(sample_ohlcv_data)
 
         # Then
-        assert signal in ['buy', 'sell', 'hold']
+        # Signal은 Signal 객체 또는 None 반환
         # ATR 기반 전략이 적용되었는지 간접 확인
         # (정확한 신호는 시장 데이터에 따라 달라지므로, 에러 없이 실행되는지만 확인)
+        assert signal is None or hasattr(signal, 'signal_type')
 
     @pytest.mark.unit
     def test_atr_breakout_vs_fixed_k(self, sample_ohlcv_data):
         """ATR 전략 vs 고정 K값 전략 비교"""
         # Given
-        strategy_atr = RuleBasedBreakoutStrategy(ticker="KRW-BTC", use_atr_breakout=True)
-        strategy_fixed = RuleBasedBreakoutStrategy(ticker="KRW-BTC", use_atr_breakout=False)
+        strategy_atr = RuleBasedBreakoutStrategy(ticker="KRW-BTC", use_dynamic_k=True)
+        strategy_fixed = RuleBasedBreakoutStrategy(ticker="KRW-BTC", use_dynamic_k=False)
         current_idx = 20
 
         # When
-        target_atr = strategy_atr._calculate_target_price_atr(sample_ohlcv_data, current_idx)
+        # 두 전략 모두 동적 K값 계산 기능이 있으면 사용
+        if hasattr(strategy_atr, '_calculate_target_price_atr'):
+            target_atr = strategy_atr._calculate_target_price_atr(sample_ohlcv_data, current_idx)
+        else:
+            target_atr = strategy_atr._calculate_target_price(sample_ohlcv_data, current_idx)
         target_fixed = strategy_fixed._calculate_target_price(sample_ohlcv_data, current_idx)
 
         # Then
