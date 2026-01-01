@@ -1,0 +1,187 @@
+{
+  // Claude Code MCP 서버 설정
+  "claude.mcpServers": {
+    // ========================================
+    // 📊 개발 환경 (Development)
+    // ========================================
+
+    // GitHub - 코드 관리 (Issues, PR, Repository 관리)
+    "github": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "<YOUR_GITHUB_TOKEN>"
+      }
+    },
+
+    // Filesystem - 로컬 파일 작업
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:/Users/user/Documents",
+        "C:/Users/user/OneDrive/문서/git/bitcoin"
+      ]
+    },
+
+    // PostgreSQL - 데이터베이스 작업 (트레이딩 봇 DB)
+    "postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://postgres:postgres@localhost:5432/trading_bot"
+      ]
+    },
+
+    // Git - Git 저장소 관리
+    "git": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-git",
+        "--repository",
+        "C:/Users/user/OneDrive/문서/git/bitcoin"
+      ]
+    },
+
+    // ========================================
+    // 🔍 정보 검색 (Research)
+    // ========================================
+
+    // Brave Search - 웹 검색
+    "brave-search": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-brave-search"
+      ],
+      "env": {
+        "BRAVE_API_KEY": "<YOUR_BRAVE_API_KEY>"
+      }
+    },
+
+    // Tavily - AI 최적화 검색
+    "tavily": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-tavily"
+      ],
+      "env": {
+        "TAVILY_API_KEY": "<YOUR_TAVILY_API_KEY>"
+      }
+    },
+
+    // Context7 - 최신 기술 문서 참조 (API 문서, 프레임워크 가이드)
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@context7/mcp-server"
+      ],
+      "env": {
+        "CONTEXT7_API_KEY": "<YOUR_CONTEXT7_API_KEY>"
+      }
+    },
+
+    // ========================================
+    // 🤖 자동화 (Automation)
+    // ========================================
+
+    // Puppeteer - 브라우저 자동화
+    "puppeteer": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-puppeteer"
+      ]
+    },
+
+    // Playwright - 브라우저 자동화 (Puppeteer 대안)
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp-server"
+      ]
+    },
+
+    // Desktop Commander - OS 명령어 실행 (Windows)
+    "desktop-commander": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "desktop-commander-mcp"
+      ]
+    },
+
+    // ========================================
+    // 📈 트레이딩 봇 전용 도구
+    // ========================================
+
+    // SQLite - 백테스팅 데이터 분석
+    "sqlite": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sqlite",
+        "--db-path",
+        "C:/Users/user/OneDrive/문서/git/bitcoin/backtest_data/results.db"
+      ]
+    },
+
+    // Memory - 대화 컨텍스트 저장 (장기 기억)
+    "memory": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ]
+    },
+
+    // Fetch - HTTP 요청 (Upbit API 테스트, 외부 API 호출)
+    "fetch": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-fetch"
+      ]
+    }
+  },
+
+  // ========================================
+  // 기타 VSCode 설정
+  // ========================================
+
+  "editor.fontSize": 14,
+  "editor.tabSize": 4,
+  "editor.insertSpaces": true,
+  "files.autoSave": "afterDelay",
+  "files.encoding": "utf8",
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+
+  // Python 설정
+  "python.defaultInterpreterPath": "${workspaceFolder}/venv/Scripts/python.exe",
+  "python.terminal.activateEnvironment": true,
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+
+  // Git 설정
+  "git.autofetch": true,
+  "git.confirmSync": false,
+
+  // 파일 제외 (성능 향상)
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/.pytest_cache": true,
+    "**/venv": false,
+    "**/.venv": false,
+    "**/node_modules": true
+  }
+}
