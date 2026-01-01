@@ -1,15 +1,16 @@
 # Grafana 데이터소스 설정
+# Prometheus는 현재 사용하지 않음 (PostgreSQL 사용)
 apiVersion: 1
 
-datasources:
-  - name: Prometheus
-    type: prometheus
-    access: proxy
-    url: http://prometheus:9090
-    isDefault: true
-    jsonData:
-      timeInterval: "15s"
-    editable: true
+# datasources:
+#   - name: Prometheus
+#     type: prometheus
+#     access: proxy
+#     url: http://prometheus:9090
+#     isDefault: false
+#     jsonData:
+#       timeInterval: "15s"
+#     editable: true
 
 
 
