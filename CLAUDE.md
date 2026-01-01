@@ -247,10 +247,35 @@ This project strictly follows TDD principles (see `.cursorrules`):
 
 From `.cursorrules`:
 
-1. **Documentation**: ALL `.md` files MUST go in `docs/` (except root `README.md`)
-2. **Reports**: Analysis/performance reports go in `docs/reports/`
-3. **Scripts**: Development scripts in project root, data scripts in `scripts/`
-4. **Temporary Files**: Delete temporary test scripts after use
+1. **Documentation**: ALL `.md` files MUST go in `docs/` (except root `README.md`, `CLAUDE.md`)
+2. **Scripts**: Development scripts in project root, data scripts in `scripts/`
+3. **Temporary Files**: Delete temporary test scripts after use
+
+### Documentation Structure (IMPORTANT)
+
+문서는 반드시 아래 구조를 따라야 합니다:
+
+```
+docs/
+├── guide/                     # 가이드 문서 (사용법, 설정법)
+│   ├── ARCHITECTURE.md        # 시스템 아키텍처
+│   ├── DOCKER_GUIDE.md        # Docker 실행 가이드
+│   ├── MONITORING_GUIDE.md    # Grafana/Prometheus 모니터링
+│   ├── RISK_MANAGEMENT_CONFIG.md  # 리스크 관리 설정
+│   ├── SCHEDULER_GUIDE.md     # 스케줄러 가이드
+│   ├── TELEGRAM_SETUP_GUIDE.md    # Telegram 알림 설정
+│   └── USER_GUIDE.md          # 사용자 가이드
+├── plans/                     # 계획/체크리스트 문서
+│   └── PLAN_*.md              # 구현 계획, 리팩토링 계획 등
+└── diagrams/                  # 다이어그램 파일
+```
+
+**문서 관리 규칙**:
+- 새 가이드 문서 → `docs/guide/`에 생성
+- 구현 계획, 체크리스트 → `docs/plans/`에 생성
+- 일회성 보고서 (리팩토링 보고서, 변경 로그 등) → 생성하지 않음
+- 모든 문서는 `**작성일**: YYYY-MM-DD` 형식의 날짜 포함 필수
+- 문서 수정 시 날짜 업데이트 필수
 
 ### Windows Encoding (PowerShell)
 
@@ -354,8 +379,10 @@ Use `scripts/backtesting/` for historical data collection.
 
 ## Useful References
 
-- [User Guide](docs/USER_GUIDE.md): Complete user documentation
-- [Scheduler Guide](docs/SCHEDULER_GUIDE.md): Scheduler detailed guide
-- [Docker Guide](docs/DOCKER_GUIDE.md): Docker setup and deployment
-- [Architecture](docs/ARCHITECTURE.md): System architecture details
-- [Trading Flow](docs/TRADING_SEQUENCE_FLOW.md): Complete trading sequence
+- [User Guide](docs/guide/USER_GUIDE.md): Complete user documentation
+- [Scheduler Guide](docs/guide/SCHEDULER_GUIDE.md): Scheduler detailed guide
+- [Docker Guide](docs/guide/DOCKER_GUIDE.md): Docker setup and deployment
+- [Architecture](docs/guide/ARCHITECTURE.md): System architecture details
+- [Risk Management](docs/guide/RISK_MANAGEMENT_CONFIG.md): Risk management configuration
+- [Monitoring Guide](docs/guide/MONITORING_GUIDE.md): Grafana/Prometheus setup
+- [Telegram Setup](docs/guide/TELEGRAM_SETUP_GUIDE.md): Telegram notifications

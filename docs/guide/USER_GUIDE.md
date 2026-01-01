@@ -65,7 +65,7 @@ TELEGRAM_ENABLED=true
 #### 2️⃣ 전체 스택 실행
 
 ```bash
-# 모든 서비스 시작 (PostgreSQL, Redis, Backend, Frontend, Prometheus, Grafana)
+# 모든 서비스 시작 (PostgreSQL, Backend, Scheduler, Prometheus, Grafana)
 docker-compose -f docker-compose.full-stack.yml up -d
 ```
 
@@ -97,25 +97,20 @@ curl http://localhost:8000/api/v1/trades/
 ```yaml
 services:
   postgres      # PostgreSQL 데이터베이스
-  redis         # Redis 캐시 (선택)
   backend       # FastAPI 백엔드
-  frontend      # Next.js 프론트엔드
+  scheduler     # 자동 거래 스케줄러
   prometheus    # 메트릭 수집
   grafana       # 모니터링 대시보드
-  nginx         # 리버스 프록시 (선택)
 ```
 
 ### 포트 매핑
 
 | 서비스      | 포트 | 용도              |
 | ----------- | ---- | ----------------- |
-| Frontend    | 3000 | 대시보드          |
 | Backend API | 8000 | REST API          |
 | Grafana     | 3001 | 모니터링 대시보드 |
 | Prometheus  | 9090 | 메트릭 조회       |
 | PostgreSQL  | 5432 | 데이터베이스      |
-| Redis       | 6379 | 캐시 (선택)       |
-| Nginx       | 80   | 리버스 프록시     |
 
 ### 기본 명령어
 
@@ -165,13 +160,12 @@ curl -X POST http://localhost:8000/api/v1/bot/control \
 
 ```bash
 # Backend만 실행
-docker-compose up -d postgres redis
+docker-compose up -d postgres
 cd backend
 uvicorn app.main:app --reload
 
-# Frontend만 실행
-cd frontend
-npm run dev
+# 스케줄러만 실행
+python scheduler_main.py
 
 # 트레이딩 봇만 실행 (로컬)
 python -m venv venv
