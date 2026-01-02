@@ -2,6 +2,7 @@
 APScheduler 설정 및 관리
 주기적인 트레이딩 작업을 스케줄링합니다.
 """
+import asyncio
 import logging
 import pandas as pd
 from datetime import datetime
@@ -160,18 +161,45 @@ async def trading_job():
             except Exception as e:
                 logger.warning(f"백테스팅 알림 전송 실패: {e}", exc_info=True)
 
-        # 3. 거래 사이클 실행 (하이브리드 파이프라인)
-        result = await execute_trading_cycle(
-            ticker=ticker,
-            upbit_client=upbit_client,
-            data_collector=data_collector,
-            trading_service=trading_service,
-            ai_service=ai_service,
-            trading_type='spot',
-            enable_scanning=True,  # 멀티코인 스캐닝 활성화
-            max_positions=3,
-            on_backtest_complete=on_backtest_complete_callback
-        )
+        # 3. 거래 사이클 실행 (하이브리드 파이프라인) - 10분 타임아웃
+        TRADING_CYCLE_TIMEOUT = 600  # 10분
+
+        try:
+            result = await asyncio.wait_for(
+                execute_trading_cycle(
+                    ticker=ticker,
+                    upbit_client=upbit_client,
+                    data_collector=data_collector,
+                    trading_service=trading_service,
+                    ai_service=ai_service,
+                    trading_type='spot',
+                    enable_scanning=True,  # 멀티코인 스캐닝 활성화
+                    max_positions=3,
+                    on_backtest_complete=on_backtest_complete_callback
+                ),
+                timeout=TRADING_CYCLE_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            error_msg = f"거래 사이클 타임아웃 ({TRADING_CYCLE_TIMEOUT}초)"
+            logger.error(f"⏰ {error_msg}")
+
+            # 타임아웃 에러 알림
+            try:
+                await notify_error(
+                    error_type="Trading Cycle Timeout",
+                    error_message=error_msg,
+                    context={"ticker": ticker, "timeout_seconds": TRADING_CYCLE_TIMEOUT}
+                )
+            except Exception as telegram_error:
+                logger.warning(f"타임아웃 에러 알림 전송 실패: {telegram_error}")
+
+            # 기본 결과 반환
+            result = {
+                'status': 'failed',
+                'decision': 'hold',
+                'reason': error_msg,
+                'error': error_msg
+            }
 
         # 스캔된 코인 정보 추출 (멀티코인 스캐닝 결과)
         selected_coin = result.get('selected_coin', {})

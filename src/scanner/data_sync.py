@@ -8,9 +8,11 @@
 - 기존 코인: 증분 업데이트
 - 데이터 유효성 검증
 - 오래된 데이터 정리 (3년 이상)
+- 타임아웃 처리 (API 무응답 방지)
 """
 import asyncio
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
@@ -50,6 +52,8 @@ class HistoricalDataSync:
     # Upbit API 제한
     MAX_CANDLES_PER_REQUEST = 200  # 한 번에 가져올 수 있는 최대 캔들 수
     API_DELAY_SECONDS = 0.15  # API 호출 간격
+    API_TIMEOUT_SECONDS = 30  # API 호출 타임아웃 (초)
+    SYNC_TIMEOUT_SECONDS = 60  # 단일 코인 동기화 타임아웃 (초)
 
     def __init__(
         self,
@@ -66,6 +70,7 @@ class HistoricalDataSync:
         self.data_dir = Path(data_dir)
         self.default_years = default_years
         self.max_years = max_years
+        self._executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="data_sync")
 
         # 데이터 디렉토리 생성
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -221,17 +226,67 @@ class HistoricalDataSync:
         semaphore = asyncio.Semaphore(max_concurrent)
 
         async def sync_with_semaphore(ticker: str) -> SyncStatus:
+            """타임아웃이 적용된 동기화"""
             async with semaphore:
-                return await self.sync_coin_data(ticker, years, interval)
+                try:
+                    # 개별 코인 동기화에 타임아웃 적용
+                    return await asyncio.wait_for(
+                        self.sync_coin_data(ticker, years, interval),
+                        timeout=self.SYNC_TIMEOUT_SECONDS
+                    )
+                except asyncio.TimeoutError:
+                    symbol = ticker.replace("KRW-", "")
+                    Logger.print_error(f"  [{symbol}] ⏰ 동기화 타임아웃 ({self.SYNC_TIMEOUT_SECONDS}초)")
+                    return SyncStatus(
+                        ticker=ticker,
+                        symbol=symbol,
+                        status='failed',
+                        rows_before=0,
+                        rows_after=0,
+                        rows_added=0,
+                        error_message=f"동기화 타임아웃 ({self.SYNC_TIMEOUT_SECONDS}초)"
+                    )
+                except Exception as e:
+                    symbol = ticker.replace("KRW-", "")
+                    Logger.print_error(f"  [{symbol}] ❌ 동기화 실패: {str(e)}")
+                    return SyncStatus(
+                        ticker=ticker,
+                        symbol=symbol,
+                        status='failed',
+                        rows_before=0,
+                        rows_after=0,
+                        rows_added=0,
+                        error_message=str(e)
+                    )
 
-        # 병렬 처리
+        # 병렬 처리 (전체에도 타임아웃 적용)
         tasks = [sync_with_semaphore(ticker) for ticker in tickers]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            # 전체 동기화 작업에 3분 타임아웃
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=180  # 3분
+            )
+        except asyncio.TimeoutError:
+            Logger.print_error(f"❌ 전체 동기화 타임아웃 (3분)")
+            # 완료되지 않은 작업은 실패로 처리
+            results = []
+            for ticker in tickers:
+                results.append(SyncStatus(
+                    ticker=ticker,
+                    symbol=ticker.replace("KRW-", ""),
+                    status='failed',
+                    rows_before=0,
+                    rows_after=0,
+                    rows_added=0,
+                    error_message="전체 동기화 타임아웃"
+                ))
 
         # 예외 처리
         final_results = []
         for ticker, result in zip(tickers, results):
             if isinstance(result, Exception):
+                Logger.print_error(f"  [{ticker}] 예외 발생: {str(result)}")
                 final_results.append(SyncStatus(
                     ticker=ticker,
                     symbol=ticker.replace("KRW-", ""),
@@ -246,7 +301,8 @@ class HistoricalDataSync:
 
         # 결과 요약
         success_count = sum(1 for r in final_results if r.status == 'success')
-        Logger.print_info(f"\n📊 동기화 완료: 성공 {success_count}/{len(tickers)}")
+        failed_count = sum(1 for r in final_results if r.status == 'failed')
+        Logger.print_info(f"\n📊 동기화 완료: 성공 {success_count}/{len(tickers)}, 실패 {failed_count}")
 
         return final_results
 
@@ -257,45 +313,63 @@ class HistoricalDataSync:
         end_date: datetime,
         interval: str
     ) -> Optional[pd.DataFrame]:
-        """과거 데이터 수집 (페이징 처리)"""
-        loop = asyncio.get_event_loop()
+        """과거 데이터 수집 (페이징 처리, 타임아웃 적용)"""
         all_data = []
-
         current_to = end_date
+        max_retries = 3
+
+        def fetch_ohlcv(t: str, intv: str, cnt: int, to_str: str):
+            """동기 API 호출 (클로저 문제 방지를 위해 명시적 인자 전달)"""
+            return pyupbit.get_ohlcv(t, interval=intv, count=cnt, to=to_str)
 
         while current_to > start_date:
-            try:
-                # pyupbit.get_ohlcv 호출
-                df = await loop.run_in_executor(
-                    None,
-                    lambda: pyupbit.get_ohlcv(
-                        ticker,
-                        interval=interval,
-                        count=self.MAX_CANDLES_PER_REQUEST,
-                        to=current_to.strftime("%Y-%m-%d %H:%M:%S")
+            retry_count = 0
+            df = None
+
+            while retry_count < max_retries:
+                try:
+                    # 타임아웃이 있는 API 호출
+                    to_str = current_to.strftime("%Y-%m-%d %H:%M:%S")
+                    df = await asyncio.wait_for(
+                        asyncio.get_event_loop().run_in_executor(
+                            self._executor,
+                            fetch_ohlcv,
+                            ticker,
+                            interval,
+                            self.MAX_CANDLES_PER_REQUEST,
+                            to_str
+                        ),
+                        timeout=self.API_TIMEOUT_SECONDS
                     )
-                )
+                    break  # 성공 시 루프 탈출
 
-                if df is None or len(df) == 0:
-                    break
+                except asyncio.TimeoutError:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        Logger.print_warning(f"  [{ticker}] API 타임아웃 (재시도 {max_retries}회 실패)")
+                        return None if not all_data else pd.concat(all_data).sort_index()
+                    await asyncio.sleep(1)  # 재시도 전 대기
 
-                # 시작 날짜 이후 데이터만 필터링
-                df = df[df.index >= start_date]
-                all_data.append(df)
+                except Exception as e:
+                    Logger.print_warning(f"  데이터 수집 오류: {str(e)}")
+                    return None if not all_data else pd.concat(all_data).sort_index()
 
-                # 다음 페이지 계산
-                earliest = df.index[0]
-                if earliest <= start_date:
-                    break
-
-                current_to = earliest - timedelta(seconds=1)
-
-                # API 제한 방지
-                await asyncio.sleep(self.API_DELAY_SECONDS)
-
-            except Exception as e:
-                Logger.print_warning(f"  데이터 수집 오류: {str(e)}")
+            if df is None or len(df) == 0:
                 break
+
+            # 시작 날짜 이후 데이터만 필터링
+            df = df[df.index >= start_date]
+            all_data.append(df)
+
+            # 다음 페이지 계산
+            earliest = df.index[0]
+            if earliest <= start_date:
+                break
+
+            current_to = earliest - timedelta(seconds=1)
+
+            # API 제한 방지
+            await asyncio.sleep(self.API_DELAY_SECONDS)
 
         if not all_data:
             return None
