@@ -109,9 +109,9 @@ class CoinScanStage(BasePipelineStage):
 
         return True
 
-    def execute(self, context: PipelineContext) -> StageResult:
+    async def execute(self, context: PipelineContext) -> StageResult:
         """
-        코인 스캔 실행
+        코인 스캔 실행 (비동기)
 
         Args:
             context: 파이프라인 컨텍스트

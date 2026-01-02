@@ -30,7 +30,7 @@ class TradingPipeline:
 
     async def execute(self, context: PipelineContext) -> Dict[str, Any]:
         """
-        파이프라인 실행
+        파이프라인 실행 (비동기)
 
         Args:
             context: 파이프라인 컨텍스트
@@ -47,9 +47,9 @@ class TradingPipeline:
                     Logger.print_warning(f"⏭️ {stage.name} 스테이지 스킵 (pre_execute 실패)")
                     continue
 
-                # 스테이지 실행
+                # 스테이지 실행 (비동기)
                 Logger.print_header(f"▶ {stage.name} 스테이지 실행")
-                result = stage.execute(context)
+                result = await stage.execute(context)
 
                 # 스테이지 실행 후 처리
                 stage.post_execute(context, result)

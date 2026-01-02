@@ -279,7 +279,8 @@ class TestRiskManagerWithPersistence:
         result = risk_manager.check_circuit_breaker()
 
         # Then: 아직 한도 초과 아님 (현재 -9%)
-        assert result['action'] == 'continue'
+        # check_circuit_breaker는 'allowed' 키 반환
+        assert result['allowed'] is True
 
         # 추가 손실 기록
         risk_manager.record_trade(-2.0)
@@ -287,8 +288,8 @@ class TestRiskManagerWithPersistence:
         # 다시 체크
         result = risk_manager.check_circuit_breaker()
         # -11%로 한도 초과
-        assert result['action'] == 'circuit_breaker'
-        assert 'daily_loss_limit' in result['reason'].lower() or '일일' in result['reason']
+        assert result['allowed'] is False
+        assert '일일 손실 한도' in result['reason'] or 'daily_loss_limit' in result['reason'].lower()
 
     def test_state_persists_after_restart_simulation(self):
         """프로그램 재시작 시뮬레이션 테스트"""

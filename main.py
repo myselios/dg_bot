@@ -33,8 +33,11 @@ AI 자동매매 프로그램 메인 진입점
 - PortfolioManager로 포트폴리오 레벨 관리
 """
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, TYPE_CHECKING
 from src.config.settings import TradingConfig
+
+if TYPE_CHECKING:
+    from src.container import Container
 from src.api.upbit_client import UpbitClient
 from src.data.collector import DataCollector
 from src.trading.service import TradingService
@@ -65,7 +68,9 @@ async def execute_trading_cycle(
     liquidity_top_n: int = 20,
     min_volume_krw: float = 10_000_000_000,
     backtest_top_n: int = 5,
-    final_select_n: int = 2
+    final_select_n: int = 2,
+    # 클린 아키텍처 의존성 컨테이너
+    container: 'Container' = None
 ) -> Dict[str, Any]:
     """
     한 번의 거래 사이클 실행 (하이브리드 파이프라인)
@@ -141,6 +146,7 @@ async def execute_trading_cycle(
         context = PipelineContext(
             ticker=ticker,
             trading_type=trading_type,
+            container=container,
             upbit_client=upbit_client,
             data_collector=data_collector,
             trading_service=trading_service,
@@ -246,11 +252,20 @@ async def main():
     # 프로그램 시작
     Logger.print_program_start(ticker)
 
-    # 클라이언트 및 서비스 초기화
+    # 클라이언트 및 서비스 초기화 (레거시)
     upbit_client = UpbitClient()
     data_collector = DataCollector()
     trading_service = TradingService(upbit_client)
     ai_service = AIService()
+
+    # Container 초기화 (클린 아키텍처)
+    # 레거시 서비스를 래핑하여 점진적 마이그레이션 지원
+    from src.container import Container
+    container = Container.create_from_legacy(
+        upbit_client=upbit_client,
+        ai_service=ai_service,
+        data_collector=data_collector
+    )
 
     # 거래 사이클 실행 (하이브리드 파이프라인)
     # enable_scanning=True: 멀티코인 스캐닝 활성화
@@ -263,7 +278,8 @@ async def main():
         ai_service=ai_service,
         trading_type='spot',
         enable_scanning=True,  # 멀티코인 스캐닝 활성화
-        max_positions=3
+        max_positions=3,
+        container=container  # 클린 아키텍처 의존성 컨테이너
     )
 
     # 결과 출력

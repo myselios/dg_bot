@@ -16,7 +16,7 @@ class DummyStage(BasePipelineStage):
         self.action = action
         self.executed = False
 
-    def execute(self, context: PipelineContext) -> StageResult:
+    async def execute(self, context: PipelineContext) -> StageResult:
         self.executed = True
         return StageResult(
             success=True,
@@ -90,14 +90,15 @@ class TestBasePipelineStage:
         stage = DummyStage("TestStage")
         assert stage.name == "TestStage"
 
-    def test_stage_execution(self):
+    @pytest.mark.asyncio
+    async def test_stage_execution(self):
         """스테이지 실행 테스트"""
         stage = DummyStage("TestStage")
         context = PipelineContext(ticker="KRW-ETH")
 
         assert stage.executed is False
 
-        result = stage.execute(context)
+        result = await stage.execute(context)
 
         assert stage.executed is True
         assert result.success is True

@@ -9,8 +9,14 @@
 - 신호 분석
 - AI 분석
 - AI 판단 검증
+
+마이그레이션 전략:
+- Container가 있으면 AnalyzeMarketUseCase 사용 (클린 아키텍처)
+- Container가 없으면 ai_service 사용 (레거시 호환)
 """
-from typing import Dict, Optional
+from decimal import Decimal
+from typing import Dict, Optional, Any
+
 from src.trading.pipeline.base_stage import BasePipelineStage, PipelineContext, StageResult
 from src.trading.indicators import TechnicalIndicators
 from src.trading.signal_analyzer import SignalAnalyzer
@@ -25,14 +31,17 @@ class AnalysisStage(BasePipelineStage):
     분석 스테이지
 
     시장 분석, 기술적 분석, AI 분석을 수행하고 결과를 검증합니다.
+
+    Container가 있으면 AnalyzeMarketUseCase를 사용하고,
+    없으면 레거시 ai_service를 사용합니다 (호환성 유지).
     """
 
     def __init__(self):
         super().__init__(name="Analysis")
 
-    def execute(self, context: PipelineContext) -> StageResult:
+    async def execute(self, context: PipelineContext) -> StageResult:
         """
-        분석 실행
+        분석 실행 (비동기)
 
         Args:
             context: 파이프라인 컨텍스트
@@ -59,7 +68,7 @@ class AnalysisStage(BasePipelineStage):
             self._analyze_signals(context)
 
             # 6. AI 분석
-            ai_result = self._perform_ai_analysis(context)
+            ai_result = await self._perform_ai_analysis(context)
             if not ai_result.success:
                 return ai_result
 
@@ -203,9 +212,15 @@ class AnalysisStage(BasePipelineStage):
             print(f"  • {signal}")
         print(Logger._separator() + "\n")
 
-    def _perform_ai_analysis(self, context: PipelineContext) -> StageResult:
+    def _has_use_case(self, context: PipelineContext) -> bool:
+        """Container와 UseCase 사용 가능 여부 확인"""
+        return context.container is not None
+
+    async def _perform_ai_analysis(self, context: PipelineContext) -> StageResult:
         """
         AI 분석 수행
+
+        Container가 있으면 UseCase 사용, 없으면 레거시 서비스 사용
 
         Args:
             context: 파이프라인 컨텍스트
@@ -213,6 +228,45 @@ class AnalysisStage(BasePipelineStage):
         Returns:
             StageResult: 분석 결과
         """
+        if self._has_use_case(context):
+            return await self._perform_ai_analysis_with_use_case(context)
+        else:
+            return self._perform_ai_analysis_legacy(context)
+
+    async def _perform_ai_analysis_with_use_case(self, context: PipelineContext) -> StageResult:
+        """UseCase를 통한 AI 분석 수행"""
+        use_case = context.container.get_analyze_market_use_case()
+
+        # UseCase 실행
+        trading_decision = await use_case.analyze(context.ticker)
+
+        # TradingDecision → ai_result dict 변환
+        context.ai_result = self._convert_trading_decision_to_dict(trading_decision)
+
+        if context.ai_result is None:
+            Logger.print_error("AI 분석을 수행할 수 없습니다.")
+            return StageResult(
+                success=False,
+                action='stop',
+                message="AI 분석 실패",
+                metadata={'error': 'AI 분석을 수행할 수 없습니다'}
+            )
+
+        # AI 판단 결과 출력
+        Logger.print_decision(
+            context.ai_result["decision"],
+            context.ai_result["confidence"],
+            context.ai_result["reason"]
+        )
+
+        return StageResult(
+            success=True,
+            action='continue',
+            message="AI 분석 완료"
+        )
+
+    def _perform_ai_analysis_legacy(self, context: PipelineContext) -> StageResult:
+        """레거시 서비스를 통한 AI 분석 수행"""
         # 백테스팅 결과 요약
         backtest_summary = {
             'passed': context.backtest_result.passed,
@@ -259,6 +313,53 @@ class AnalysisStage(BasePipelineStage):
             action='continue',
             message="AI 분석 완료"
         )
+
+    def _convert_trading_decision_to_dict(self, trading_decision) -> Dict[str, Any]:
+        """
+        TradingDecision을 레거시 ai_result dict 형식으로 변환
+
+        Args:
+            trading_decision: TradingDecision 객체
+
+        Returns:
+            레거시 형식의 dict
+        """
+        from src.application.dto.analysis import DecisionType
+
+        # DecisionType → 문자열 변환
+        decision_map = {
+            DecisionType.BUY: 'buy',
+            DecisionType.SELL: 'sell',
+            DecisionType.HOLD: 'hold',
+        }
+
+        decision_str = decision_map.get(trading_decision.decision, 'hold')
+
+        # Decimal confidence → 문자열 레벨 변환
+        confidence_level = self._convert_confidence_to_level(trading_decision.confidence)
+
+        return {
+            'decision': decision_str,
+            'confidence': confidence_level,
+            'reason': trading_decision.reasoning,
+        }
+
+    def _convert_confidence_to_level(self, confidence: Decimal) -> str:
+        """
+        Decimal confidence를 문자열 레벨로 변환
+
+        Args:
+            confidence: 0-1 사이의 Decimal 값
+
+        Returns:
+            'high', 'medium', 'low' 중 하나
+        """
+        if confidence >= Decimal("0.7"):
+            return 'high'
+        elif confidence >= Decimal("0.4"):
+            return 'medium'
+        else:
+            return 'low'
 
     def _validate_ai_decision(self, context: PipelineContext) -> StageResult:
         """

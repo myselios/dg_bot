@@ -79,9 +79,9 @@ class HybridRiskCheckStage(BasePipelineStage):
         # 내부 컴포넌트 (지연 초기화)
         self._coin_selector = None
 
-    def execute(self, context: PipelineContext) -> StageResult:
+    async def execute(self, context: PipelineContext) -> StageResult:
         """
-        하이브리드 리스크 체크 실행
+        하이브리드 리스크 체크 실행 (비동기)
 
         흐름:
         1. 포트폴리오 상태 확인

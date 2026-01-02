@@ -89,7 +89,8 @@ class TestAdaptiveRiskCheckStage:
         status.available_capital = 0
         return status
 
-    def test_execute_entry_mode(self, mock_context, mock_portfolio_status_entry):
+    @pytest.mark.asyncio
+    async def test_execute_entry_mode(self, mock_context, mock_portfolio_status_entry):
         """ENTRY 모드 실행 테스트"""
         stage = AdaptiveRiskCheckStage()
 
@@ -99,13 +100,14 @@ class TestAdaptiveRiskCheckStage:
             mock_pm_instance.check_portfolio_risk.return_value = {'allowed': True}
             MockPM.return_value = mock_pm_instance
 
-            result = stage.execute(mock_context)
+            result = await stage.execute(mock_context)
 
             assert result.success is True
             assert result.action == 'continue'
             assert mock_context.trading_mode == 'entry'
 
-    def test_execute_blocked_mode(self, mock_context, mock_portfolio_status_blocked):
+    @pytest.mark.asyncio
+    async def test_execute_blocked_mode(self, mock_context, mock_portfolio_status_blocked):
         """BLOCKED 모드 실행 테스트"""
         stage = AdaptiveRiskCheckStage()
 
@@ -115,13 +117,14 @@ class TestAdaptiveRiskCheckStage:
             mock_pm_instance.check_portfolio_risk.return_value = {'allowed': True}
             MockPM.return_value = mock_pm_instance
 
-            result = stage.execute(mock_context)
+            result = await stage.execute(mock_context)
 
             assert result.success is True
             assert result.action == 'exit'
             assert result.data['status'] == 'blocked'
 
-    def test_execute_portfolio_risk_blocked(self, mock_context, mock_portfolio_status_entry):
+    @pytest.mark.asyncio
+    async def test_execute_portfolio_risk_blocked(self, mock_context, mock_portfolio_status_entry):
         """포트폴리오 리스크 초과 테스트"""
         stage = AdaptiveRiskCheckStage()
 
@@ -134,14 +137,15 @@ class TestAdaptiveRiskCheckStage:
             }
             MockPM.return_value = mock_pm_instance
 
-            result = stage.execute(mock_context)
+            result = await stage.execute(mock_context)
 
             assert result.success is True
             assert result.action == 'exit'
             assert result.data['status'] == 'blocked'
             assert '손실 한도' in result.data['reason']
 
-    def test_execute_management_mode_hold(self, mock_context, mock_portfolio_status_management):
+    @pytest.mark.asyncio
+    async def test_execute_management_mode_hold(self, mock_context, mock_portfolio_status_management):
         """MANAGEMENT 모드 - HOLD 테스트"""
         stage = AdaptiveRiskCheckStage()
 
@@ -165,13 +169,14 @@ class TestAdaptiveRiskCheckStage:
 
                 # 시장 데이터 수집 모킹
                 with patch.object(stage, '_collect_position_market_data', return_value={}):
-                    result = stage.execute(mock_context)
+                    result = await stage.execute(mock_context)
 
                     assert result.success is True
                     # 최대 포지션 도달이면 skip
                     assert result.action in ['skip', 'continue']
 
-    def test_execute_management_mode_exit(self, mock_context, mock_portfolio_status_management):
+    @pytest.mark.asyncio
+    async def test_execute_management_mode_exit(self, mock_context, mock_portfolio_status_management):
         """MANAGEMENT 모드 - 청산 테스트"""
         stage = AdaptiveRiskCheckStage()
 
@@ -196,13 +201,14 @@ class TestAdaptiveRiskCheckStage:
                 # 시장 데이터 수집 모킹
                 with patch.object(stage, '_collect_position_market_data', return_value={}):
                     with patch.object(stage, '_execute_exit', return_value={'success': True}):
-                        result = stage.execute(mock_context)
+                        result = await stage.execute(mock_context)
 
                         assert result.success is True
                         assert result.action == 'exit'
                         assert result.data['decision'] == 'sell'
 
-    def test_execute_insufficient_capital(self, mock_context):
+    @pytest.mark.asyncio
+    async def test_execute_insufficient_capital(self, mock_context):
         """자본 부족 테스트"""
         stage = AdaptiveRiskCheckStage()
 
@@ -218,7 +224,7 @@ class TestAdaptiveRiskCheckStage:
             mock_pm_instance.check_portfolio_risk.return_value = {'allowed': True}
             MockPM.return_value = mock_pm_instance
 
-            result = stage.execute(mock_context)
+            result = await stage.execute(mock_context)
 
             assert result.success is True
             assert result.action == 'skip'
@@ -258,14 +264,15 @@ class TestAdaptiveRiskCheckStage:
         assert result.success is True
         assert result.action == 'skip'
 
-    def test_execute_error_handling(self, mock_context):
+    @pytest.mark.asyncio
+    async def test_execute_error_handling(self, mock_context):
         """에러 처리 테스트"""
         stage = AdaptiveRiskCheckStage()
 
         with patch('src.trading.pipeline.adaptive_stage.PortfolioManager') as MockPM:
             MockPM.side_effect = Exception("테스트 오류")
 
-            result = stage.execute(mock_context)
+            result = await stage.execute(mock_context)
 
             assert result.success is False
             # 에러 정보는 metadata에 저장

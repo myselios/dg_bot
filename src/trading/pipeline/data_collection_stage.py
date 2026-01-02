@@ -26,9 +26,9 @@ class DataCollectionStage(BasePipelineStage):
     def __init__(self):
         super().__init__(name="DataCollection")
 
-    def execute(self, context: PipelineContext) -> StageResult:
+    async def execute(self, context: PipelineContext) -> StageResult:
         """
-        데이터 수집 실행
+        데이터 수집 실행 (비동기)
 
         Args:
             context: 파이프라인 컨텍스트

@@ -53,9 +53,9 @@ class AdaptiveRiskCheckStage(BasePipelineStage):
         self.min_trade_interval_hours = min_trade_interval_hours
         self.max_positions = max_positions
 
-    def execute(self, context: PipelineContext) -> StageResult:
+    async def execute(self, context: PipelineContext) -> StageResult:
         """
-        적응형 리스크 체크 실행
+        적응형 리스크 체크 실행 (비동기)
 
         Args:
             context: 파이프라인 컨텍스트

@@ -109,7 +109,8 @@ class TestHybridRiskCheckStageBlockedMode:
         status.available_capital = 0
         return status
 
-    def test_blocked_mode_returns_exit(self, mock_context, mock_portfolio_status_blocked):
+    @pytest.mark.asyncio
+    async def test_blocked_mode_returns_exit(self, mock_context, mock_portfolio_status_blocked):
         """서킷브레이커 발동 시 exit 반환"""
         from src.trading.pipeline.hybrid_stage import HybridRiskCheckStage
 
@@ -121,14 +122,15 @@ class TestHybridRiskCheckStageBlockedMode:
             mock_pm_instance.check_portfolio_risk.return_value = {'allowed': True}
             MockPM.return_value = mock_pm_instance
 
-            result = stage.execute(mock_context)
+            result = await stage.execute(mock_context)
 
             assert result.success is True
             assert result.action == 'exit'
             assert result.data['status'] == 'blocked'
             assert result.data['decision'] == 'hold'
 
-    def test_portfolio_risk_exceeded_returns_exit(self, mock_context):
+    @pytest.mark.asyncio
+    async def test_portfolio_risk_exceeded_returns_exit(self, mock_context):
         """포트폴리오 리스크 초과 시 exit 반환"""
         from src.trading.pipeline.hybrid_stage import HybridRiskCheckStage
 
@@ -147,7 +149,7 @@ class TestHybridRiskCheckStageBlockedMode:
             }
             MockPM.return_value = mock_pm_instance
 
-            result = stage.execute(mock_context)
+            result = await stage.execute(mock_context)
 
             assert result.success is True
             assert result.action == 'exit'
@@ -208,7 +210,8 @@ class TestHybridRiskCheckStageManagementMode:
         status.available_capital = 500000
         return status
 
-    def test_management_mode_handles_positions(self, mock_context, mock_portfolio_status_management):
+    @pytest.mark.asyncio
+    async def test_management_mode_handles_positions(self, mock_context, mock_portfolio_status_management):
         """포지션 관리 분기 테스트"""
         from src.trading.pipeline.hybrid_stage import HybridRiskCheckStage
         from src.ai.position_analyzer import PositionAction, PositionActionType
@@ -232,13 +235,14 @@ class TestHybridRiskCheckStageManagementMode:
                 MockPA.return_value = mock_pa_instance
 
                 with patch.object(stage, '_collect_position_market_data', return_value={}):
-                    result = stage.execute(mock_context)
+                    result = await stage.execute(mock_context)
 
                     assert result.success is True
                     # 최대 포지션 도달 + HOLD → skip
                     assert result.action == 'skip'
 
-    def test_position_management_executes_before_scan(
+    @pytest.mark.asyncio
+    async def test_position_management_executes_before_scan(
         self, mock_context, mock_portfolio_status_management_with_slots
     ):
         """관리가 스캔보다 우선 실행되는지 테스트"""
@@ -270,7 +274,7 @@ class TestHybridRiskCheckStageManagementMode:
 
                 with patch.object(stage, '_collect_position_market_data', return_value={}):
                     with patch.object(stage, '_execute_coin_scan') as mock_scan:
-                        def track_scan(*args, **kwargs):
+                        async def track_scan(*args, **kwargs):
                             execution_order.append('coin_scan')
                             return StageResult(
                                 success=True,
@@ -279,7 +283,7 @@ class TestHybridRiskCheckStageManagementMode:
                             )
                         mock_scan.side_effect = track_scan
 
-                        result = stage.execute(mock_context)
+                        result = await stage.execute(mock_context)
 
                         # 포지션 관리가 먼저 실행되어야 함
                         assert 'position_management' in execution_order
@@ -311,7 +315,8 @@ class TestHybridRiskCheckStageEntryMode:
         status.available_capital = 1000000
         return status
 
-    def test_entry_mode_triggers_scan_when_enabled(self, mock_context, mock_portfolio_status_entry):
+    @pytest.mark.asyncio
+    async def test_entry_mode_triggers_scan_when_enabled(self, mock_context, mock_portfolio_status_entry):
         """ENTRY 모드에서 스캔 트리거 테스트 (스캔 활성화)"""
         from src.trading.pipeline.hybrid_stage import HybridRiskCheckStage
 
@@ -323,6 +328,7 @@ class TestHybridRiskCheckStageEntryMode:
             mock_pm_instance.check_portfolio_risk.return_value = {'allowed': True}
             MockPM.return_value = mock_pm_instance
 
+            # _execute_coin_scan은 동기 메서드이므로 MagicMock 사용
             with patch.object(stage, '_execute_coin_scan') as mock_scan:
                 mock_scan.return_value = StageResult(
                     success=True,
@@ -331,13 +337,14 @@ class TestHybridRiskCheckStageEntryMode:
                     data={'selected_coin': {'ticker': 'KRW-XRP', 'symbol': 'XRP'}}
                 )
 
-                result = stage.execute(mock_context)
+                result = await stage.execute(mock_context)
 
                 # 스캔이 호출되어야 함
                 mock_scan.assert_called_once()
                 assert result.success is True
 
-    def test_entry_mode_uses_fixed_ticker_when_scan_disabled(
+    @pytest.mark.asyncio
+    async def test_entry_mode_uses_fixed_ticker_when_scan_disabled(
         self, mock_context, mock_portfolio_status_entry
     ):
         """스캔 비활성화 시 고정 티커 사용 테스트"""
@@ -354,7 +361,7 @@ class TestHybridRiskCheckStageEntryMode:
             mock_pm_instance.check_portfolio_risk.return_value = {'allowed': True}
             MockPM.return_value = mock_pm_instance
 
-            result = stage.execute(mock_context)
+            result = await stage.execute(mock_context)
 
             assert result.success is True
             assert result.action == 'continue'
@@ -362,7 +369,8 @@ class TestHybridRiskCheckStageEntryMode:
             assert mock_context.ticker == "KRW-BTC"
             assert mock_context.trading_mode == 'entry'
 
-    def test_dynamic_ticker_update_after_scan(self, mock_context, mock_portfolio_status_entry):
+    @pytest.mark.asyncio
+    async def test_dynamic_ticker_update_after_scan(self, mock_context, mock_portfolio_status_entry):
         """스캔 후 ticker 업데이트 검증"""
         from src.trading.pipeline.hybrid_stage import HybridRiskCheckStage
 
@@ -374,7 +382,7 @@ class TestHybridRiskCheckStageEntryMode:
             mock_pm_instance.check_portfolio_risk.return_value = {'allowed': True}
             MockPM.return_value = mock_pm_instance
 
-            # 스캔이 다른 코인을 선택했다고 가정
+            # _execute_coin_scan은 동기 메서드이므로 동기 함수로 side_effect 설정
             with patch.object(stage, '_execute_coin_scan') as mock_scan:
                 def update_ticker(context):
                     context.ticker = "KRW-XRP"  # 동적으로 변경
@@ -386,12 +394,13 @@ class TestHybridRiskCheckStageEntryMode:
                     )
                 mock_scan.side_effect = update_ticker
 
-                result = stage.execute(mock_context)
+                result = await stage.execute(mock_context)
 
                 assert mock_context.ticker == "KRW-XRP"
                 assert result.success is True
 
-    def test_scan_no_result_uses_fallback(self, mock_context, mock_portfolio_status_entry):
+    @pytest.mark.asyncio
+    async def test_scan_no_result_uses_fallback(self, mock_context, mock_portfolio_status_entry):
         """스캔 결과 없을 때 fallback 티커 사용"""
         from src.trading.pipeline.hybrid_stage import HybridRiskCheckStage
 
@@ -406,6 +415,7 @@ class TestHybridRiskCheckStageEntryMode:
             mock_pm_instance.check_portfolio_risk.return_value = {'allowed': True}
             MockPM.return_value = mock_pm_instance
 
+            # _execute_coin_scan은 동기 메서드이므로 MagicMock 사용
             with patch.object(stage, '_execute_coin_scan') as mock_scan:
                 # 스캔 결과 없음
                 mock_scan.return_value = StageResult(
@@ -415,7 +425,7 @@ class TestHybridRiskCheckStageEntryMode:
                     data={'selected_coin': None}
                 )
 
-                result = stage.execute(mock_context)
+                result = await stage.execute(mock_context)
 
                 # skip 반환되어야 함 (스캔 결과 없음)
                 assert result.action == 'skip'
@@ -432,7 +442,8 @@ class TestHybridRiskCheckStageInsufficientCapital:
         context.ticker = "KRW-ETH"
         return context
 
-    def test_insufficient_capital_returns_skip(self, mock_context):
+    @pytest.mark.asyncio
+    async def test_insufficient_capital_returns_skip(self, mock_context):
         """자본 부족 시 skip 반환"""
         from src.trading.pipeline.hybrid_stage import HybridRiskCheckStage
 
@@ -450,7 +461,7 @@ class TestHybridRiskCheckStageInsufficientCapital:
             mock_pm_instance.check_portfolio_risk.return_value = {'allowed': True}
             MockPM.return_value = mock_pm_instance
 
-            result = stage.execute(mock_context)
+            result = await stage.execute(mock_context)
 
             assert result.success is True
             assert result.action == 'skip'
@@ -468,7 +479,8 @@ class TestHybridRiskCheckStageErrorHandling:
         context.ticker = "KRW-ETH"
         return context
 
-    def test_execute_error_handling(self, mock_context):
+    @pytest.mark.asyncio
+    async def test_execute_error_handling(self, mock_context):
         """에러 처리 테스트"""
         from src.trading.pipeline.hybrid_stage import HybridRiskCheckStage
 
@@ -477,12 +489,13 @@ class TestHybridRiskCheckStageErrorHandling:
         with patch('src.trading.pipeline.hybrid_stage.PortfolioManager') as MockPM:
             MockPM.side_effect = Exception("테스트 오류")
 
-            result = stage.execute(mock_context)
+            result = await stage.execute(mock_context)
 
             assert result.success is False
             assert 'error' in result.metadata
 
-    def test_scan_error_falls_back_gracefully(self, mock_context):
+    @pytest.mark.asyncio
+    async def test_scan_error_falls_back_gracefully(self, mock_context):
         """스캔 오류 시 graceful fallback"""
         from src.trading.pipeline.hybrid_stage import HybridRiskCheckStage
 
@@ -507,7 +520,7 @@ class TestHybridRiskCheckStageErrorHandling:
                 mock_scan.side_effect = Exception("스캔 오류")
 
                 # 스캔 오류 시에도 fallback으로 진행 가능해야 함
-                result = stage.execute(mock_context)
+                result = await stage.execute(mock_context)
 
                 # fallback 티커 사용
                 assert mock_context.ticker == "KRW-ETH"

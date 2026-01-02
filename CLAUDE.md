@@ -105,15 +105,19 @@ The bot operates on a **dual-mode architecture**:
 1. **Standalone Mode** (`main.py`): Single execution of trading cycle
 2. **Scheduler Mode** (`scheduler_main.py`): Automated 1-hour interval execution
 
-**Key Flow**:
+**Key Flow** (Clean Architecture - 2026-01-02 마이그레이션 완료):
 ```
-scheduler_main.py
-  → backend/app/core/scheduler.py (APScheduler configuration)
-    → trading_job() calls main.execute_trading_cycle()
-      → QuickBacktestFilter (rule-based filtering, no AI)
-      → SignalAnalyzer (technical analysis)
-      → AIService (GPT-4 decision making)
-      → TradingService (order execution)
+scheduler_main.py / main.py
+  → Container.create_from_legacy() (DI Container 초기화)
+    → TradingPipeline.execute() (async 파이프라인)
+      → DataCollectionStage (데이터 수집)
+      → HybridRiskCheckStage (리스크 체크)
+      → AnalysisStage (분석)
+          ├── Container 있음 → AnalyzeMarketUseCase (클린 아키텍처)
+          └── Container 없음 → AIService (레거시 호환)
+      → ExecutionStage (거래 실행)
+          ├── Container 있음 → ExecuteTradeUseCase (클린 아키텍처)
+          └── Container 없음 → TradingService (레거시 호환)
       → Database recording (via backend models)
       → Telegram notifications
 ```
@@ -203,16 +207,43 @@ dg_bot/
 
 ### Key Components
 
-**AIService** (`src/ai/service.py`):
+#### Clean Architecture (권장)
+
+**Container** (`src/container.py`):
+- DI Container for dependency injection
+- Factory methods: `create_from_legacy()`, `create_for_testing()`
+- Provides UseCase instances with injected dependencies
+
+**ExecuteTradeUseCase** (`src/application/use_cases/execute_trade.py`):
+- 거래 실행 비즈니스 로직
+- Money 값 객체로 정확한 금액 처리
+- ExchangePort를 통한 주문 실행
+- Methods: `execute_buy()`, `execute_sell()`, `execute_sell_all()`
+
+**AnalyzeMarketUseCase** (`src/application/use_cases/analyze_market.py`):
+- AI 분석 비즈니스 로직
+- TradingDecision DTO 반환
+- AIPort를 통한 AI 서비스 호출
+- Methods: `analyze()`
+
+**TradingPipeline** (`src/trading/pipeline/trading_pipeline.py`):
+- Async 파이프라인으로 스테이지 순차 실행
+- Container가 있으면 UseCase 사용, 없으면 레거시 서비스 사용
+- Methods: `execute()`
+
+#### Legacy (하위 호환성 - DEPRECATED)
+
+**AIService** (`src/ai/service.py`) - DEPRECATED:
 - Uses OpenAI GPT-4 for trading decisions
-- Analyzes technical indicators, market trends, and chart patterns
-- Returns decision with confidence score and reasoning
+- ⚠️ Container.get_analyze_market_use_case() 사용 권장
 - Methods: `analyze()`, `prepare_analysis_data()`
 
-**TradingService** (`src/trading/service.py`):
+**TradingService** (`src/trading/service.py`) - DEPRECATED:
 - Executes buy/sell orders via Upbit API
-- Handles fee calculation, slippage, split orders
+- ⚠️ Container.get_execute_trade_use_case() 사용 권장
 - Methods: `buy()`, `sell()`, `calculate_fee()`, `calculate_slippage()`
+
+#### Shared Components
 
 **QuickBacktestFilter** (`src/backtesting/quick_filter.py`):
 - Fast rule-based filtering WITHOUT AI calls

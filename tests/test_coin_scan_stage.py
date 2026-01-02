@@ -130,7 +130,8 @@ class TestCoinScanStage:
 
         assert result is False
 
-    def test_execute_success(self, mock_context, mock_scan_result_success):
+    @pytest.mark.asyncio
+    async def test_execute_success(self, mock_context, mock_scan_result_success):
         """정상 실행 테스트"""
         stage = CoinScanStage()
 
@@ -138,19 +139,14 @@ class TestCoinScanStage:
         mock_selector.select_coins = AsyncMock(return_value=mock_scan_result_success)
 
         with patch.object(stage, '_get_coin_selector', return_value=mock_selector):
-            with patch('asyncio.get_event_loop') as mock_loop:
-                mock_event_loop = MagicMock()
-                mock_event_loop.is_running.return_value = False
-                mock_event_loop.run_until_complete.return_value = mock_scan_result_success
-                mock_loop.return_value = mock_event_loop
+            result = await stage.execute(mock_context)
 
-                result = stage.execute(mock_context)
+            assert result.success is True
+            assert result.action == 'continue'
+            assert mock_context.ticker == "KRW-ETH"
 
-                assert result.success is True
-                assert result.action == 'continue'
-                assert mock_context.ticker == "KRW-ETH"
-
-    def test_execute_no_coins_found(self, mock_context, mock_scan_result_empty):
+    @pytest.mark.asyncio
+    async def test_execute_no_coins_found(self, mock_context, mock_scan_result_empty):
         """코인 없음 테스트"""
         stage = CoinScanStage()
 
@@ -158,26 +154,21 @@ class TestCoinScanStage:
         mock_selector.select_coins = AsyncMock(return_value=mock_scan_result_empty)
 
         with patch.object(stage, '_get_coin_selector', return_value=mock_selector):
-            with patch('asyncio.get_event_loop') as mock_loop:
-                mock_event_loop = MagicMock()
-                mock_event_loop.is_running.return_value = False
-                mock_event_loop.run_until_complete.return_value = mock_scan_result_empty
-                mock_loop.return_value = mock_event_loop
+            result = await stage.execute(mock_context)
 
-                result = stage.execute(mock_context)
+            assert result.success is True
+            assert result.action == 'skip'
+            assert '진입 적합 코인 없음' in result.data['reason']
 
-                assert result.success is True
-                assert result.action == 'skip'
-                assert '진입 적합 코인 없음' in result.data['reason']
-
-    def test_execute_error_handling(self, mock_context):
+    @pytest.mark.asyncio
+    async def test_execute_error_handling(self, mock_context):
         """에러 처리 테스트"""
         stage = CoinScanStage()
 
         with patch.object(stage, '_get_coin_selector') as mock_get_selector:
             mock_get_selector.side_effect = Exception("테스트 오류")
 
-            result = stage.execute(mock_context)
+            result = await stage.execute(mock_context)
 
             assert result.success is False
 
@@ -251,10 +242,14 @@ class TestCreateMultiCoinTradingPipeline:
     def test_create_pipeline_default(self):
         """기본 파이프라인 생성 테스트"""
         # 실제 파이프라인 생성 (내부 import 사용)
+        # Note: create_multi_coin_trading_pipeline은 deprecated이며
+        # create_hybrid_trading_pipeline(enable_scanning=True)로 위임됨
+        # HybridRiskCheckStage가 AdaptiveRiskCheck와 CoinScan을 통합
         pipeline = create_multi_coin_trading_pipeline()
 
         assert pipeline is not None
-        assert len(pipeline.stages) == 5
+        # 스테이지: HybridRiskCheck -> DataCollection -> Analysis -> Execution
+        assert len(pipeline.stages) == 4
 
     def test_create_pipeline_custom_params(self):
         """커스텀 파라미터로 파이프라인 생성"""
@@ -267,7 +262,8 @@ class TestCreateMultiCoinTradingPipeline:
         )
 
         assert pipeline is not None
-        assert len(pipeline.stages) == 5
+        # 스테이지: HybridRiskCheck -> DataCollection -> Analysis -> Execution
+        assert len(pipeline.stages) == 4
 
     def test_pipeline_stage_names(self):
         """파이프라인 스테이지 이름 확인"""
@@ -275,6 +271,7 @@ class TestCreateMultiCoinTradingPipeline:
 
         stage_names = [s.name for s in pipeline.stages]
 
-        # 순서: Adaptive -> CoinScan -> DataCollection -> Analysis -> Execution
-        assert 'AdaptiveRiskCheck' in stage_names
-        assert 'CoinScan' in stage_names
+        # 순서: HybridRiskCheck -> DataCollection -> Analysis -> Execution
+        # (HybridRiskCheckStage가 AdaptiveRiskCheck와 CoinScan을 통합)
+        assert 'HybridRiskCheck' in stage_names
+        assert 'DataCollection' in stage_names

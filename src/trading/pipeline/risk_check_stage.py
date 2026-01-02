@@ -41,9 +41,9 @@ class RiskCheckStage(BasePipelineStage):
         self.daily_loss_limit_pct = daily_loss_limit_pct
         self.min_trade_interval_hours = min_trade_interval_hours
 
-    def execute(self, context: PipelineContext) -> StageResult:
+    async def execute(self, context: PipelineContext) -> StageResult:
         """
-        리스크 체크 실행
+        리스크 체크 실행 (비동기)
 
         Args:
             context: 파이프라인 컨텍스트

@@ -422,7 +422,7 @@ class TestCriticalIssues:
 
         # 파이프라인 아키텍처에서는 QuickBacktestFilter가 AnalysisStage 내부에서 사용됨
         # 파이프라인 전체를 mock하여 테스트
-        with patch('main.create_adaptive_trading_pipeline') as mock_pipeline:
+        with patch('main.create_hybrid_trading_pipeline') as mock_pipeline:
             # 백테스팅 실패 시 파이프라인이 반환할 결과 모의
             mock_result = {
                 'status': 'success',
@@ -469,7 +469,7 @@ class TestCriticalIssues:
         from main import execute_trading_cycle
 
         # 파이프라인 전체를 mock하여 테스트
-        with patch('main.create_adaptive_trading_pipeline') as mock_pipeline:
+        with patch('main.create_hybrid_trading_pipeline') as mock_pipeline:
             # 차트 데이터 실패 시 파이프라인이 반환할 결과 모의
             mock_result = {
                 'status': 'failed',

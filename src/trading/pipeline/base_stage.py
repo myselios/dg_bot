@@ -3,10 +3,20 @@
 
 각 스테이지는 입력을 받아 처리하고 다음 스테이지로 전달할 출력을 생성합니다.
 이 구조는 선물/현물 거래 확장을 용이하게 합니다.
+
+NOTE: 모든 스테이지는 async/await 패턴을 사용합니다.
+      UseCase들이 async이므로 파이프라인도 async로 통일합니다.
+
+MIGRATION NOTE (2026-01-02):
+    Container 기반 클린 아키텍처로 마이그레이션 완료.
+    - 스테이지들은 Container가 있으면 UseCase를 사용
+    - Container가 없으면 레거시 서비스들을 사용 (하위 호환성)
+    - trading_service, ai_service 필드는 deprecated - 향후 제거 예정
 """
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
+import warnings
 
 
 @dataclass
@@ -20,11 +30,18 @@ class PipelineContext:
     ticker: str
     trading_type: str = 'spot'  # 'spot' or 'futures'
 
-    # 서비스 인스턴스
-    upbit_client: Any = None
-    data_collector: Any = None
-    trading_service: Any = None
-    ai_service: Any = None
+    # 의존성 컨테이너 (클린 아키텍처 - 권장)
+    # Container를 통해 UseCase에 접근합니다.
+    # 예: context.container.get_execute_trade_use_case()
+    container: Any = None
+
+    # 레거시 서비스 인스턴스 (DEPRECATED - 향후 제거 예정)
+    # Container와 UseCase 사용을 권장합니다.
+    # 마이그레이션 완료 후 이 필드들은 제거됩니다.
+    upbit_client: Any = None  # DEPRECATED: Container.get_exchange_port() 사용
+    data_collector: Any = None  # DEPRECATED: Container.get_market_data_port() 사용
+    trading_service: Any = None  # DEPRECATED: Container.get_execute_trade_use_case() 사용
+    ai_service: Any = None  # DEPRECATED: Container.get_analyze_market_use_case() 사용
 
     # 수집된 데이터
     chart_data: Optional[Dict] = None
@@ -103,9 +120,9 @@ class BasePipelineStage(ABC):
         self.name = name
 
     @abstractmethod
-    def execute(self, context: PipelineContext) -> StageResult:
+    async def execute(self, context: PipelineContext) -> StageResult:
         """
-        스테이지 실행
+        스테이지 실행 (비동기)
 
         Args:
             context: 파이프라인 컨텍스트

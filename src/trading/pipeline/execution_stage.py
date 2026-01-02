@@ -5,11 +5,19 @@ AI 분석 결과를 기반으로 실제 거래를 실행합니다.
 - 매수/매도/보류 결정 실행
 - 거래 시간 및 손익 기록
 - 거래 결과 반환
+
+마이그레이션 전략:
+- Container가 있으면 ExecuteTradeUseCase 사용 (클린 아키텍처)
+- Container가 없으면 trading_service 사용 (레거시 호환)
 """
 from datetime import datetime
+from decimal import Decimal
+from typing import Dict, Any, Optional
+
 from src.trading.pipeline.base_stage import BasePipelineStage, PipelineContext, StageResult
 from src.position.service import PositionService
 from src.utils.logger import Logger
+from src.config.settings import TradingConfig
 
 
 class ExecutionStage(BasePipelineStage):
@@ -17,14 +25,17 @@ class ExecutionStage(BasePipelineStage):
     거래 실행 스테이지
 
     AI 분석 결과를 기반으로 실제 매수/매도/보류를 실행합니다.
+
+    Container가 있으면 ExecuteTradeUseCase를 사용하고,
+    없으면 레거시 trading_service를 사용합니다 (호환성 유지).
     """
 
     def __init__(self):
         super().__init__(name="Execution")
 
-    def execute(self, context: PipelineContext) -> StageResult:
+    async def execute(self, context: PipelineContext) -> StageResult:
         """
-        거래 실행
+        거래 실행 (비동기)
 
         Args:
             context: 파이프라인 컨텍스트
@@ -40,9 +51,9 @@ class ExecutionStage(BasePipelineStage):
             decision = context.ai_result.get("decision", "hold")
 
             if decision == "buy":
-                self._execute_buy(context)
+                await self._execute_buy(context)
             elif decision == "sell":
-                self._execute_sell(context)
+                await self._execute_sell(context)
             elif decision == "hold":
                 self._execute_hold(context)
             else:
@@ -72,32 +83,97 @@ class ExecutionStage(BasePipelineStage):
         print(f"보유 현금: {krw_balance:,.0f}원")
         print(f"보유 {context.ticker}: {coin_balance:.8f}\n")
 
-    def _execute_buy(self, context: PipelineContext) -> None:
+    def _has_use_case(self, context: PipelineContext) -> bool:
+        """Container와 UseCase 사용 가능 여부 확인"""
+        return context.container is not None
+
+    async def _execute_buy(self, context: PipelineContext) -> None:
         """
         매수 실행
+
+        Container가 있으면 UseCase 사용, 없으면 레거시 서비스 사용
 
         Args:
             context: 파이프라인 컨텍스트
         """
-        context.trade_result = context.trading_service.execute_buy(context.ticker)
+        if self._has_use_case(context):
+            await self._execute_buy_with_use_case(context)
+        else:
+            self._execute_buy_legacy(context)
 
         # 거래 시간 기록
         if context.risk_manager:
             context.risk_manager.last_trade_time = datetime.now()
             context.risk_manager.daily_trade_count += 1
 
-    def _execute_sell(self, context: PipelineContext) -> None:
+    async def _execute_buy_with_use_case(self, context: PipelineContext) -> None:
+        """UseCase를 통한 매수 실행"""
+        from src.domain.value_objects.money import Money, Currency
+
+        use_case = context.container.get_execute_trade_use_case()
+
+        # 매수 금액 결정 (설정값 또는 보유 현금의 일부)
+        krw_balance = context.upbit_client.get_balance("KRW")
+        buy_amount = self._calculate_buy_amount(krw_balance)
+
+        # Money 객체로 변환
+        amount = Money(Decimal(str(buy_amount)), Currency.KRW)
+
+        # UseCase 실행
+        response = await use_case.execute_buy(context.ticker, amount)
+
+        # OrderResponse를 레거시 dict 형식으로 변환
+        context.trade_result = self._convert_order_response_to_dict(response)
+
+    def _execute_buy_legacy(self, context: PipelineContext) -> None:
+        """레거시 서비스를 통한 매수 실행"""
+        context.trade_result = context.trading_service.execute_buy(context.ticker)
+
+    def _calculate_buy_amount(self, krw_balance: float) -> float:
+        """매수 금액 계산"""
+        # TradingConfig에서 매수 비율 또는 고정 금액 사용
+        buy_ratio = getattr(TradingConfig, 'BUY_RATIO', 0.95)
+        min_order = getattr(TradingConfig, 'MIN_ORDER_AMOUNT', 5000)
+
+        buy_amount = krw_balance * buy_ratio
+
+        # 최소 주문 금액 확인
+        if buy_amount < min_order:
+            return 0
+
+        return buy_amount
+
+    async def _execute_sell(self, context: PipelineContext) -> None:
         """
         매도 실행
+
+        Container가 있으면 UseCase 사용, 없으면 레거시 서비스 사용
 
         Args:
             context: 파이프라인 컨텍스트
         """
-        context.trade_result = context.trading_service.execute_sell(context.ticker)
+        if self._has_use_case(context):
+            await self._execute_sell_with_use_case(context)
+        else:
+            self._execute_sell_legacy(context)
 
         # 손익 기록
         if context.risk_manager and context.position_info:
             self._record_pnl(context)
+
+    async def _execute_sell_with_use_case(self, context: PipelineContext) -> None:
+        """UseCase를 통한 매도 실행"""
+        use_case = context.container.get_execute_trade_use_case()
+
+        # 전량 매도
+        response = await use_case.execute_sell_all(context.ticker)
+
+        # OrderResponse를 레거시 dict 형식으로 변환
+        context.trade_result = self._convert_order_response_to_dict(response)
+
+    def _execute_sell_legacy(self, context: PipelineContext) -> None:
+        """레거시 서비스를 통한 매도 실행"""
+        context.trade_result = context.trading_service.execute_sell(context.ticker)
 
     def _execute_hold(self, context: PipelineContext) -> None:
         """
@@ -106,7 +182,37 @@ class ExecutionStage(BasePipelineStage):
         Args:
             context: 파이프라인 컨텍스트
         """
-        context.trading_service.execute_hold()
+        if context.trading_service:
+            context.trading_service.execute_hold()
+
+    def _convert_order_response_to_dict(self, response) -> Dict[str, Any]:
+        """
+        OrderResponse를 레거시 dict 형식으로 변환
+
+        Args:
+            response: OrderResponse 객체
+
+        Returns:
+            레거시 형식의 dict
+        """
+        result = {
+            'success': response.success,
+            'trade_id': response.order_id,
+        }
+
+        if response.success:
+            # 성공 시 추가 정보
+            if response.executed_price:
+                result['price'] = float(response.executed_price.amount)
+            if response.executed_volume:
+                result['volume'] = float(response.executed_volume)
+            if response.fee:
+                result['fee'] = float(response.fee.amount)
+        else:
+            # 실패 시 에러 정보
+            result['error'] = response.error_message or 'Unknown error'
+
+        return result
 
     def _record_pnl(self, context: PipelineContext) -> None:
         """
