@@ -389,3 +389,428 @@ class TestBackwardCompatibility:
         assert context.upbit_client is not None
         assert context.chart_data is None
         assert context.ai_result is None
+
+
+# ============================================================================
+# Test: TradingPipeline Callback Processing (NEW)
+# ============================================================================
+
+class TestTradingPipelineCallbackProcessing:
+    """TradingPipeline 콜백 처리 테스트"""
+
+    @pytest.mark.asyncio
+    async def test_callback_executed_when_pending_data_exists(self, pipeline_context):
+        """pending_backtest_callback_data가 있을 때 콜백이 실행되는지 확인"""
+        from src.trading.pipeline.trading_pipeline import TradingPipeline
+        from src.trading.pipeline.base_stage import BasePipelineStage
+
+        callback_called = []
+        callback_data_received = []
+
+        # 비동기 콜백 함수
+        async def on_backtest_complete(data):
+            callback_called.append(True)
+            callback_data_received.append(data)
+
+        # 콜백 데이터를 설정하는 스테이지
+        class CallbackSettingStage(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                context.pending_backtest_callback_data = {
+                    'ticker': 'KRW-ETH',
+                    'backtest_result': {'passed': True, 'metrics': {}},
+                    'scan_summary': {'liquidity_scanned': 20, 'backtest_passed': 5}
+                }
+                return StageResult(success=True, action='continue')
+
+        pipeline_context.on_backtest_complete = on_backtest_complete
+
+        stages = [CallbackSettingStage("CallbackSetter")]
+        pipeline = TradingPipeline(stages=stages)
+
+        await pipeline.execute(pipeline_context)
+
+        assert len(callback_called) == 1, "콜백이 한 번 호출되어야 합니다"
+        assert callback_data_received[0]['ticker'] == 'KRW-ETH'
+        assert callback_data_received[0]['scan_summary']['liquidity_scanned'] == 20
+
+    @pytest.mark.asyncio
+    async def test_callback_not_executed_when_no_pending_data(self, pipeline_context):
+        """pending_backtest_callback_data가 없을 때 콜백이 실행되지 않는지 확인"""
+        from src.trading.pipeline.trading_pipeline import TradingPipeline
+        from src.trading.pipeline.base_stage import BasePipelineStage
+
+        callback_called = []
+
+        async def on_backtest_complete(data):
+            callback_called.append(True)
+
+        class NoCallbackStage(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                # pending_backtest_callback_data를 설정하지 않음
+                return StageResult(success=True, action='continue')
+
+        pipeline_context.on_backtest_complete = on_backtest_complete
+
+        stages = [NoCallbackStage("NoCallback")]
+        pipeline = TradingPipeline(stages=stages)
+
+        await pipeline.execute(pipeline_context)
+
+        assert len(callback_called) == 0, "콜백이 호출되지 않아야 합니다"
+
+    @pytest.mark.asyncio
+    async def test_callback_on_exit_action(self, pipeline_context):
+        """exit 액션에서도 콜백이 실행되는지 확인"""
+        from src.trading.pipeline.trading_pipeline import TradingPipeline
+        from src.trading.pipeline.base_stage import BasePipelineStage
+
+        callback_called = []
+
+        async def on_backtest_complete(data):
+            callback_called.append(True)
+
+        class ExitWithCallbackStage(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                context.pending_backtest_callback_data = {
+                    'ticker': 'KRW-BTC',
+                    'backtest_result': {'passed': False}
+                }
+                return StageResult(success=True, action='exit')
+
+        pipeline_context.on_backtest_complete = on_backtest_complete
+
+        stages = [ExitWithCallbackStage("ExitWithCallback")]
+        pipeline = TradingPipeline(stages=stages)
+
+        result = await pipeline.execute(pipeline_context)
+
+        assert len(callback_called) >= 1, "exit 전에 콜백이 실행되어야 합니다"
+        assert result['pipeline_status'] == 'completed'
+
+    @pytest.mark.asyncio
+    async def test_callback_on_skip_action(self, pipeline_context):
+        """skip 액션에서도 콜백이 실행되는지 확인"""
+        from src.trading.pipeline.trading_pipeline import TradingPipeline
+        from src.trading.pipeline.base_stage import BasePipelineStage
+
+        callback_called = []
+
+        async def on_backtest_complete(data):
+            callback_called.append(True)
+
+        class SkipWithCallbackStage(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                context.pending_backtest_callback_data = {
+                    'ticker': 'KRW-XRP',
+                    'backtest_result': {'passed': False}
+                }
+                return StageResult(success=True, action='skip')
+
+        pipeline_context.on_backtest_complete = on_backtest_complete
+
+        stages = [SkipWithCallbackStage("SkipWithCallback")]
+        pipeline = TradingPipeline(stages=stages)
+
+        await pipeline.execute(pipeline_context)
+
+        assert len(callback_called) >= 1, "skip 전에 콜백이 실행되어야 합니다"
+
+    @pytest.mark.asyncio
+    async def test_callback_cleared_after_execution(self, pipeline_context):
+        """콜백 실행 후 pending_data가 초기화되는지 확인"""
+        from src.trading.pipeline.trading_pipeline import TradingPipeline
+        from src.trading.pipeline.base_stage import BasePipelineStage
+
+        execution_counts = {'stage1': 0, 'stage2': 0}
+        callback_counts = []
+
+        async def on_backtest_complete(data):
+            callback_counts.append(data.get('stage', 'unknown'))
+
+        class Stage1(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                execution_counts['stage1'] += 1
+                context.pending_backtest_callback_data = {
+                    'stage': 'stage1',
+                    'ticker': 'KRW-ETH'
+                }
+                return StageResult(success=True, action='continue')
+
+        class Stage2(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                execution_counts['stage2'] += 1
+                # Stage1의 콜백이 처리된 후이므로 pending_data는 None이어야 함
+                assert context.pending_backtest_callback_data is None, \
+                    "Stage1 콜백 처리 후 pending_data는 None이어야 합니다"
+                return StageResult(success=True, action='continue')
+
+        pipeline_context.on_backtest_complete = on_backtest_complete
+
+        stages = [Stage1("Stage1"), Stage2("Stage2")]
+        pipeline = TradingPipeline(stages=stages)
+
+        await pipeline.execute(pipeline_context)
+
+        assert execution_counts['stage1'] == 1
+        assert execution_counts['stage2'] == 1
+        assert len(callback_counts) == 1
+        assert callback_counts[0] == 'stage1'
+
+    @pytest.mark.asyncio
+    async def test_sync_callback_also_works(self, pipeline_context):
+        """동기 콜백도 동작하는지 확인"""
+        from src.trading.pipeline.trading_pipeline import TradingPipeline
+        from src.trading.pipeline.base_stage import BasePipelineStage
+
+        callback_called = []
+
+        # 동기 콜백 함수 (async가 아님)
+        def on_backtest_complete_sync(data):
+            callback_called.append(data['ticker'])
+
+        class SyncCallbackStage(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                context.pending_backtest_callback_data = {
+                    'ticker': 'KRW-SOL',
+                    'backtest_result': {'passed': True}
+                }
+                return StageResult(success=True, action='continue')
+
+        pipeline_context.on_backtest_complete = on_backtest_complete_sync
+
+        stages = [SyncCallbackStage("SyncCallback")]
+        pipeline = TradingPipeline(stages=stages)
+
+        await pipeline.execute(pipeline_context)
+
+        assert 'KRW-SOL' in callback_called, "동기 콜백도 동작해야 합니다"
+
+    @pytest.mark.asyncio
+    async def test_callback_error_does_not_stop_pipeline(self, pipeline_context):
+        """콜백 에러가 파이프라인을 중단시키지 않는지 확인"""
+        from src.trading.pipeline.trading_pipeline import TradingPipeline
+        from src.trading.pipeline.base_stage import BasePipelineStage
+
+        stage_executed = []
+
+        async def failing_callback(data):
+            raise ValueError("콜백에서 에러 발생!")
+
+        class StageBeforeError(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                context.pending_backtest_callback_data = {'ticker': 'KRW-ETH'}
+                return StageResult(success=True, action='continue')
+
+        class StageAfterError(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                stage_executed.append(self.name)
+                return StageResult(success=True, action='continue')
+
+        pipeline_context.on_backtest_complete = failing_callback
+
+        stages = [StageBeforeError("BeforeError"), StageAfterError("AfterError")]
+        pipeline = TradingPipeline(stages=stages)
+
+        # 파이프라인이 에러 없이 완료되어야 함
+        result = await pipeline.execute(pipeline_context)
+
+        assert 'AfterError' in stage_executed, "콜백 에러 후에도 다음 스테이지가 실행되어야 합니다"
+        assert result['pipeline_status'] == 'completed'
+
+
+# ============================================================================
+# Test: TradingPipeline Error Handling (NEW)
+# ============================================================================
+
+class TestTradingPipelineErrorHandling:
+    """TradingPipeline 에러 처리 테스트"""
+
+    @pytest.mark.asyncio
+    async def test_stage_exception_creates_error_response(self, pipeline_context):
+        """스테이지 예외 발생 시 에러 응답 생성 확인"""
+        from src.trading.pipeline.trading_pipeline import TradingPipeline
+        from src.trading.pipeline.base_stage import BasePipelineStage
+
+        class FailingStage(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                raise RuntimeError("스테이지에서 예외 발생!")
+
+        stages = [FailingStage("Failing")]
+        pipeline = TradingPipeline(stages=stages)
+
+        result = await pipeline.execute(pipeline_context)
+
+        assert result['pipeline_status'] == 'failed'
+        assert result['status'] == 'failed'
+        assert result['decision'] == 'hold'
+        assert 'error' in result
+
+    @pytest.mark.asyncio
+    async def test_stage_failure_returns_error_response(self, pipeline_context):
+        """스테이지 실패(success=False) 시 에러 응답 확인"""
+        from src.trading.pipeline.trading_pipeline import TradingPipeline
+        from src.trading.pipeline.base_stage import BasePipelineStage
+
+        class FailingResultStage(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                return StageResult(
+                    success=False,
+                    action='stop',
+                    message='데이터 수집 실패',
+                    metadata={'error': 'API timeout'}
+                )
+
+        stages = [FailingResultStage("FailingResult")]
+        pipeline = TradingPipeline(stages=stages)
+
+        result = await pipeline.execute(pipeline_context)
+
+        assert result['pipeline_status'] == 'failed'
+        assert result['error'] == 'API timeout'
+        assert result['reason'] == '데이터 수집 실패'
+
+    @pytest.mark.asyncio
+    async def test_stop_action_returns_error_response(self, pipeline_context):
+        """stop 액션 시 에러 응답 확인"""
+        from src.trading.pipeline.trading_pipeline import TradingPipeline
+        from src.trading.pipeline.base_stage import BasePipelineStage
+
+        class StopStage(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                return StageResult(
+                    success=True,  # success=True이지만 action='stop'
+                    action='stop',
+                    message='리스크 한도 초과',
+                    metadata={'error': '일일 손실 한도 초과'}
+                )
+
+        stages = [StopStage("Stop")]
+        pipeline = TradingPipeline(stages=stages)
+
+        result = await pipeline.execute(pipeline_context)
+
+        assert result['pipeline_status'] == 'failed'
+
+    @pytest.mark.asyncio
+    async def test_exception_after_callback_still_handles_callback(self, pipeline_context):
+        """예외 발생 전에 콜백이 처리되는지 확인"""
+        from src.trading.pipeline.trading_pipeline import TradingPipeline
+        from src.trading.pipeline.base_stage import BasePipelineStage
+
+        callback_data_received = []
+
+        async def on_backtest_complete(data):
+            callback_data_received.append(data)
+
+        class CallbackThenFailStage(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                context.pending_backtest_callback_data = {'ticker': 'KRW-ETH'}
+                return StageResult(success=True, action='continue')
+
+        class ExceptionStage(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                raise RuntimeError("두 번째 스테이지 예외!")
+
+        pipeline_context.on_backtest_complete = on_backtest_complete
+
+        stages = [CallbackThenFailStage("CallbackFirst"), ExceptionStage("Exception")]
+        pipeline = TradingPipeline(stages=stages)
+
+        result = await pipeline.execute(pipeline_context)
+
+        # 콜백은 실행되어야 함
+        assert len(callback_data_received) == 1
+        assert callback_data_received[0]['ticker'] == 'KRW-ETH'
+        # 파이프라인은 실패해야 함
+        assert result['pipeline_status'] == 'failed'
+
+
+# ============================================================================
+# Test: TradingPipeline State Management (NEW)
+# ============================================================================
+
+class TestTradingPipelineStateManagement:
+    """TradingPipeline 상태 관리 테스트"""
+
+    @pytest.mark.asyncio
+    async def test_context_data_persists_across_stages(self, pipeline_context):
+        """컨텍스트 데이터가 스테이지 간 유지되는지 확인"""
+        from src.trading.pipeline.trading_pipeline import TradingPipeline
+        from src.trading.pipeline.base_stage import BasePipelineStage
+
+        class SetDataStage(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                context.chart_data = {'day': [{'close': 50000}]}
+                context.technical_indicators = {'rsi': 45}
+                return StageResult(success=True, action='continue')
+
+        class CheckDataStage(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                assert context.chart_data is not None
+                assert context.chart_data['day'][0]['close'] == 50000
+                assert context.technical_indicators['rsi'] == 45
+                return StageResult(success=True, action='continue')
+
+        stages = [SetDataStage("SetData"), CheckDataStage("CheckData")]
+        pipeline = TradingPipeline(stages=stages)
+
+        result = await pipeline.execute(pipeline_context)
+
+        assert result['pipeline_status'] == 'completed'
+
+    @pytest.mark.asyncio
+    async def test_pre_execute_can_skip_stage(self, pipeline_context):
+        """pre_execute가 False를 반환하면 스테이지가 스킵되는지 확인"""
+        from src.trading.pipeline.trading_pipeline import TradingPipeline
+        from src.trading.pipeline.base_stage import BasePipelineStage
+
+        skipped_stage_executed = []
+
+        class SkippableStage(BasePipelineStage):
+            def pre_execute(self, context: PipelineContext) -> bool:
+                return False  # 스킵
+
+            async def execute(self, context: PipelineContext) -> StageResult:
+                skipped_stage_executed.append(True)
+                return StageResult(success=True, action='continue')
+
+        class NormalStage(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                return StageResult(success=True, action='continue')
+
+        stages = [SkippableStage("Skippable"), NormalStage("Normal")]
+        pipeline = TradingPipeline(stages=stages)
+
+        result = await pipeline.execute(pipeline_context)
+
+        assert len(skipped_stage_executed) == 0, "pre_execute=False인 스테이지는 실행되지 않아야 합니다"
+        assert result['pipeline_status'] == 'completed'
+
+    @pytest.mark.asyncio
+    async def test_post_execute_called_after_stage(self, pipeline_context):
+        """post_execute가 스테이지 실행 후 호출되는지 확인"""
+        from src.trading.pipeline.trading_pipeline import TradingPipeline
+        from src.trading.pipeline.base_stage import BasePipelineStage
+
+        post_execute_results = []
+
+        class PostExecuteStage(BasePipelineStage):
+            async def execute(self, context: PipelineContext) -> StageResult:
+                return StageResult(success=True, action='continue', data={'test': 'data'})
+
+            def post_execute(self, context: PipelineContext, result: StageResult) -> None:
+                post_execute_results.append({
+                    'stage': self.name,
+                    'result_action': result.action,
+                    'result_data': result.data
+                })
+
+        stages = [PostExecuteStage("PostExecute")]
+        pipeline = TradingPipeline(stages=stages)
+
+        await pipeline.execute(pipeline_context)
+
+        assert len(post_execute_results) == 1
+        assert post_execute_results[0]['stage'] == 'PostExecute'
+        assert post_execute_results[0]['result_action'] == 'continue'
+        assert post_execute_results[0]['result_data'] == {'test': 'data'}
