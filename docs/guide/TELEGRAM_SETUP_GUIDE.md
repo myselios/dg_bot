@@ -608,6 +608,13 @@ TELEGRAM_ENABLED=false
 
 ---
 
+## 🔄 변경 이력
+
+### v4.1.0 (2026-01-02)
+- Clean Architecture 마이그레이션 완료
+
+---
+
 **작성일**: 2026-01-02
-**버전**: 2.1.0
+**버전**: 4.1.0
 **관련 문서**: [모니터링 가이드](./MONITORING_GUIDE.md), [사용자 가이드](./USER_GUIDE.md)

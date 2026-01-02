@@ -1050,7 +1050,39 @@ python -m pytest tests/ --cov=src --cov-report=html
 
 ## 🔄 변경 이력
 
-### v4.0.0 (2026-01-02) - 멀티코인 스캐닝 시스템 🆕
+### v4.1.0 (2026-01-02) - Clean Architecture 파이프라인 마이그레이션 🆕
+
+**주요 변경사항**:
+
+1. **파이프라인 비동기화**
+   - 모든 파이프라인 스테이지를 async/await 패턴으로 전환
+   - `BasePipelineStage.execute()` → `async def execute()`
+   - UseCase들과 일관된 비동기 처리
+
+2. **Container 기반 DI 도입**
+   - `main.py`에서 `Container.create_from_legacy()` 초기화
+   - `PipelineContext`에 `container` 필드 추가
+   - 레거시 서비스와 UseCase 브릿지 연결
+
+3. **ExecutionStage UseCase 마이그레이션**
+   - Container 있으면 `ExecuteTradeUseCase` 사용
+   - `Money` 값 객체로 정확한 금액 처리
+   - `OrderResponse` → 레거시 dict 변환
+
+4. **AnalysisStage UseCase 마이그레이션**
+   - Container 있으면 `AnalyzeMarketUseCase` 사용
+   - `TradingDecision` → `ai_result` dict 변환
+   - 기존 분석 로직 (시장 상관관계, 플래시 크래시 등) 보존
+
+5. **레거시 코드 Deprecated 처리**
+   - `trading_service`, `ai_service` 필드에 DEPRECATED 표시
+   - 향후 완전 제거 예정
+
+**테스트**: 918개 통과, 0개 실패
+
+---
+
+### v4.0.0 (2026-01-02) - 멀티코인 스캐닝 시스템
 
 **주요 변경사항**:
 

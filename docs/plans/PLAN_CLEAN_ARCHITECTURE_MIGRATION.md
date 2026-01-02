@@ -299,17 +299,95 @@ Phase 5: 레거시 코드 정리 및 제거
 
 | Phase | Status | Started | Completed |
 |-------|--------|---------|-----------|
-| Phase 1: 파이프라인 비동기화 | ⏳ Pending | - | - |
-| Phase 2: Container 도입 | ⏳ Pending | - | - |
-| Phase 3: ExecutionStage 마이그레이션 | ⏳ Pending | - | - |
-| Phase 4: AnalysisStage 마이그레이션 | ⏳ Pending | - | - |
-| Phase 5: 레거시 정리 | ⏳ Pending | - | - |
+| Phase 1: 파이프라인 비동기화 | ✅ Completed | 2026-01-02 | 2026-01-02 |
+| Phase 2: Container 도입 | ✅ Completed | 2026-01-02 | 2026-01-02 |
+| Phase 3: ExecutionStage 마이그레이션 | ✅ Completed | 2026-01-02 | 2026-01-02 |
+| Phase 4: AnalysisStage 마이그레이션 | ✅ Completed | 2026-01-02 | 2026-01-02 |
+| Phase 5: 레거시 정리 | ✅ Completed | 2026-01-02 | 2026-01-02 |
 
 ---
 
 ## 7. Notes & Learnings
 
-*(각 Phase 완료 후 기록)*
+### Phase 1 (2026-01-02)
+- 모든 파이프라인 스테이지를 async로 성공적으로 전환
+- 테스트 Docker 이미지 최적화 (`Dockerfile.test`)로 테스트 시간 단축
+- 30개 기존 테스트가 async 변경으로 실패 → 모두 수정 완료
+- **결과**: 887개 테스트 통과, 0개 실패
+- **주요 변경 파일**:
+  - `src/trading/pipeline/base_stage.py`
+  - `src/trading/pipeline/trading_pipeline.py`
+  - `src/trading/pipeline/execution_stage.py`
+  - `src/trading/pipeline/analysis_stage.py`
+  - `src/trading/pipeline/data_collection_stage.py`
+  - `src/trading/pipeline/hybrid_stage.py`
+  - `src/trading/pipeline/adaptive_stage.py`
+  - `src/trading/pipeline/risk_check_stage.py`
+  - `src/trading/pipeline/coin_scan_stage.py`
+
+### Phase 2 (2026-01-02)
+- `PipelineContext`에 `container` 필드 추가
+- `execute_trading_cycle()`에 `container` 인자 추가
+- `main()`에서 `Container.create_from_legacy()` 호출하여 레거시 서비스 래핑
+- 호환성 유지: `container` 없이도 기존 코드 동작
+- **결과**: 899개 테스트 통과, 0개 실패
+- **주요 변경 파일**:
+  - `main.py` - Container 초기화 추가
+  - `src/trading/pipeline/base_stage.py` - PipelineContext에 container 필드 추가
+  - `tests/unit/container/test_main_container.py` - 12개 테스트 추가
+
+### Phase 3 (2026-01-02)
+- `ExecutionStage`가 Container 있으면 `ExecuteTradeUseCase` 사용
+- Container 없으면 레거시 `trading_service` 사용 (호환성 유지)
+- `Money` 값 객체로 매수 금액 전달
+- `OrderResponse`를 레거시 dict 형식으로 변환
+- 전량 매도 시 `execute_sell_all()` 사용
+- **결과**: 907개 테스트 통과, 0개 실패
+- **주요 변경 파일**:
+  - `src/trading/pipeline/execution_stage.py` - UseCase 마이그레이션
+  - `tests/unit/pipeline/test_execution_stage_usecase.py` - 8개 테스트 추가
+
+### Phase 4 (2026-01-02)
+- `AnalysisStage`가 Container 있으면 `AnalyzeMarketUseCase` 사용
+- Container 없으면 레거시 `ai_service` 사용 (호환성 유지)
+- `TradingDecision` → `ai_result` dict 변환 로직 추가
+- `DecisionType` Enum → 문자열 변환 (`buy`, `sell`, `hold`)
+- `Decimal confidence` → 문자열 레벨 변환 (`high`, `medium`, `low`)
+- 기존 분석 로직 보존 (시장 상관관계, 플래시 크래시, RSI 다이버전스, 백테스팅 필터, 신호 분석)
+- **결과**: 918개 테스트 통과, 0개 실패
+- **주요 변경 파일**:
+  - `src/trading/pipeline/analysis_stage.py` - UseCase 마이그레이션
+  - `tests/unit/pipeline/test_analysis_stage_usecase.py` - 11개 테스트 추가
+
+### Phase 5 (2026-01-02)
+- `PipelineContext` 레거시 필드들에 DEPRECATED 주석 추가
+- `base_stage.py`에 마이그레이션 노트 추가
+- `CLAUDE.md` 문서 업데이트:
+  - Key Flow에 클린 아키텍처 경로 반영
+  - Key Components에 UseCase들 추가
+  - 레거시 서비스들 DEPRECATED 표시
+- **결과**: 918개 테스트 통과, 0개 실패
+- **주요 변경 파일**:
+  - `src/trading/pipeline/base_stage.py` - DEPRECATED 주석 추가
+  - `CLAUDE.md` - 아키텍처 문서 업데이트
+
+---
+
+## 🎉 Migration Complete!
+
+Clean Architecture 마이그레이션이 성공적으로 완료되었습니다.
+
+**요약**:
+- 모든 파이프라인 스테이지가 async로 전환
+- Container를 통한 DI 패턴 도입
+- ExecutionStage, AnalysisStage가 UseCase 사용
+- 레거시 코드 하위 호환성 유지
+- 918개 테스트 전체 통과
+
+**다음 단계** (선택적):
+1. 레거시 서비스 직접 호출 코드 점진적 제거
+2. DataCollectionStage UseCase 마이그레이션
+3. 레거시 필드들 완전 제거 (breaking change)
 
 ---
 
