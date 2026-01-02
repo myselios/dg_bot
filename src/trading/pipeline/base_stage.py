@@ -74,6 +74,12 @@ class PipelineContext:
     # 메타데이터
     metadata: Dict[str, Any] = None
 
+    # 콜백 함수들
+    on_backtest_complete: Optional[callable] = None  # 백테스팅 완료 후 호출
+
+    # 콜백 데이터 (스테이지에서 설정, 파이프라인에서 처리)
+    pending_backtest_callback_data: Optional[Dict[str, Any]] = None
+
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}

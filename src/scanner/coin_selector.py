@@ -55,6 +55,7 @@ class ScanResult:
     candidates: List[CoinCandidate]       # 최종 후보
     selected_coins: List[CoinCandidate]   # 선택된 코인
     total_duration_seconds: float         # 전체 소요 시간
+    all_backtest_results: Optional[List] = None  # 모든 백테스팅 결과 (통과 여부 무관)
 
 
 class CoinSelector:
@@ -186,7 +187,8 @@ class CoinSelector:
                 backtest_passed=0,
                 ai_analyzed=0,
                 candidates=[],
-                selected_coins=[]
+                selected_coins=[],
+                all_backtest_results=backtest_results  # 모든 결과 포함
             )
 
         self.multi_backtest.print_results(passed_backtests)
@@ -245,7 +247,8 @@ class CoinSelector:
             backtest_passed=len(passed_backtests),
             ai_analyzed=ai_analyzed,
             candidates=candidates,
-            selected_coins=selected_coins
+            selected_coins=selected_coins,
+            all_backtest_results=backtest_results  # 모든 결과 포함
         )
 
         # 최종 결과 출력
@@ -428,7 +431,8 @@ class CoinSelector:
         backtest_passed: int,
         ai_analyzed: int,
         candidates: List[CoinCandidate],
-        selected_coins: List[CoinCandidate]
+        selected_coins: List[CoinCandidate],
+        all_backtest_results: Optional[List] = None
     ) -> ScanResult:
         """결과 생성"""
         return ScanResult(
@@ -438,7 +442,8 @@ class CoinSelector:
             ai_analyzed=ai_analyzed,
             candidates=candidates,
             selected_coins=selected_coins,
-            total_duration_seconds=(datetime.now() - start_time).total_seconds()
+            total_duration_seconds=(datetime.now() - start_time).total_seconds(),
+            all_backtest_results=all_backtest_results
         )
 
     def _print_final_result(self, result: ScanResult) -> None:

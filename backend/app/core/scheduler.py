@@ -72,18 +72,18 @@ async def trading_job():
         ai_service = AIService()
         
         logger.info(f"✅ 서비스 초기화 완료 (심볼: {ticker})")
-        
-        # 📱 1) 봇 상태 변경 알림
+
+        # 📱 1) 사이클 시작 알림 (스캐닝 시작 전)
         try:
             await notify_cycle_start(
-                symbol=ticker,
+                symbol="멀티코인",
                 status="started",
-                message="트레이딩 사이클을 시작합니다"
+                message="멀티코인 스캐닝 및 트레이딩 사이클을 시작합니다"
             )
             logger.info("✅ 사이클 시작 알림 전송 완료")
         except Exception as telegram_error:
             logger.warning(f"사이클 시작 알림 전송 실패: {telegram_error}")
-        
+
         # 2. 시장 데이터 수집 (텔레그램 로그용)
         market_data = {}
         try:
@@ -131,7 +131,35 @@ async def trading_job():
         except Exception as market_error:
             logger.warning(f"시장 데이터 수집 실패: {market_error}")
             # market_data는 이미 {} 로 초기화되어 있음
-        
+
+        # 📱 백테스팅 완료 콜백 정의 (AI 분석 전에 호출됨)
+        async def on_backtest_complete_callback(backtest_data: dict):
+            """백테스팅 완료 후 텔레그램 알림 전송"""
+            try:
+                bt_ticker = backtest_data.get('ticker', ticker)
+                bt_result = backtest_data.get('backtest_result', {})
+                flash_crash = backtest_data.get('flash_crash')
+                rsi_divergence = backtest_data.get('rsi_divergence')
+                scan_summary = backtest_data.get('scan_summary', {})
+
+                # 스캔 요약 로깅
+                logger.info(f"📊 백테스팅 콜백 데이터:")
+                logger.info(f"  - 티커: {bt_ticker}")
+                logger.info(f"  - 스캔: {scan_summary.get('liquidity_scanned', 0)}개 → 통과: {scan_summary.get('backtest_passed', 0)}개")
+                logger.info(f"  - 최고점수: {scan_summary.get('best_score', 0)}")
+                logger.info(f"  - metrics: {bt_result.get('metrics', {})}")
+
+                await notify_backtest_and_signals(
+                    symbol=bt_ticker,
+                    backtest_result=bt_result,
+                    market_data=market_data,
+                    flash_crash=flash_crash,
+                    rsi_divergence=rsi_divergence,
+                )
+                logger.info("✅ 백테스팅 결과 알림 전송 완료 (AI 분석 전)")
+            except Exception as e:
+                logger.warning(f"백테스팅 알림 전송 실패: {e}", exc_info=True)
+
         # 3. 거래 사이클 실행 (하이브리드 파이프라인)
         result = await execute_trading_cycle(
             ticker=ticker,
@@ -141,7 +169,8 @@ async def trading_job():
             ai_service=ai_service,
             trading_type='spot',
             enable_scanning=True,  # 멀티코인 스캐닝 활성화
-            max_positions=3
+            max_positions=3,
+            on_backtest_complete=on_backtest_complete_callback
         )
 
         # 스캔된 코인 정보 추출 (멀티코인 스캐닝 결과)
@@ -154,6 +183,9 @@ async def trading_job():
             logger.info(f"🎯 스캔 선택 코인: {actual_symbol} (점수: {selected_coin.get('score', 'N/A')})")
         else:
             logger.info(f"📌 고정 티커 사용: {ticker}")
+
+        # 📱 사이클 시작 알림은 이미 스캐닝 시작 전에 전송됨
+        # 백테스팅 결과 알림은 on_backtest_complete_callback에서 전송됨
 
         # 4. 결과 처리
         if result['status'] == 'success':
@@ -285,34 +317,9 @@ async def trading_job():
             
             # 실행 시간 계산
             duration = time() - job_start_time
-            
-            # 📱 2) 백테스팅 및 신호 분석 알림 - 실제 선택된 코인 사용
-            try:
-                # main.py에서 flash_crash, rsi_divergence 정보 가져오기
-                flash_crash = result.get('flash_crash', None)
-                rsi_divergence = result.get('rsi_divergence', None)
-                backtest_result = result.get('backtest_result', {})
-                scan_summary = result.get('scan_summary', {})
 
-                # 디버깅: 데이터 확인
-                logger.info(f"🔍 백테스팅 데이터 확인:")
-                logger.info(f"  - 선택된 코인: {actual_symbol}")
-                logger.info(f"  - 스캔 요약: {scan_summary}")
-                logger.info(f"  - backtest_result 타입: {type(backtest_result)}")
-                logger.info(f"  - flash_crash: {flash_crash}")
-                logger.info(f"  - rsi_divergence: {rsi_divergence}")
+            # 📱 2) 백테스팅 알림은 콜백에서 AI 분석 전에 이미 전송됨 (on_backtest_complete_callback)
 
-                await notify_backtest_and_signals(
-                    symbol=actual_ticker,  # 실제 선택된 코인 사용
-                    backtest_result=backtest_result,
-                    market_data=market_data,
-                    flash_crash=flash_crash,
-                    rsi_divergence=rsi_divergence,
-                )
-                logger.info("✅ 백테스팅 및 신호 분석 알림 전송 완료")
-            except Exception as telegram_error:
-                logger.warning(f"백테스팅 알림 전송 실패: {telegram_error}", exc_info=True)
-            
             # 📱 3) AI 의사결정 상세 알림 (전체 텍스트) - 실제 선택된 코인 사용
             try:
                 await notify_ai_decision(

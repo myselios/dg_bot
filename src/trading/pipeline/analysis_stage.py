@@ -178,6 +178,20 @@ class AnalysisStage(BasePipelineStage):
 
         Logger.print_success("✅ 백테스팅 필터링 조건 통과 - AI 심화 분석 진행")
 
+        # 백테스팅 완료 콜백 데이터를 컨텍스트에 저장 (파이프라인에서 await 처리)
+        context.pending_backtest_callback_data = {
+            'ticker': context.ticker,
+            'backtest_result': {
+                'passed': context.backtest_result.passed,
+                'metrics': context.backtest_result.metrics,
+                'filter_results': context.backtest_result.filter_results,
+                'reason': context.backtest_result.reason
+            },
+            'flash_crash': context.flash_crash,
+            'rsi_divergence': context.rsi_divergence,
+            'technical_indicators': context.technical_indicators
+        }
+
         return StageResult(
             success=True,
             action='continue',

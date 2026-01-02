@@ -70,7 +70,9 @@ async def execute_trading_cycle(
     backtest_top_n: int = 5,
     final_select_n: int = 2,
     # 클린 아키텍처 의존성 컨테이너
-    container: 'Container' = None
+    container: 'Container' = None,
+    # 콜백 함수 (백테스팅 완료 후 호출)
+    on_backtest_complete: callable = None
 ) -> Dict[str, Any]:
     """
     한 번의 거래 사이클 실행 (하이브리드 파이프라인)
@@ -150,7 +152,8 @@ async def execute_trading_cycle(
             upbit_client=upbit_client,
             data_collector=data_collector,
             trading_service=trading_service,
-            ai_service=ai_service
+            ai_service=ai_service,
+            on_backtest_complete=on_backtest_complete
         )
 
         # 파이프라인 실행

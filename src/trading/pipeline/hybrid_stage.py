@@ -375,6 +375,41 @@ class HybridRiskCheckStage(BasePipelineStage):
         # 결과 처리
         if not scan_result or not scan_result.selected_coins:
             Logger.print_warning("선택된 코인 없음")
+
+            # 백테스팅 콜백 호출 (선택된 코인이 없어도 스캔 결과 전송)
+            # NOTE: 콜백 데이터를 StageResult에 저장하여 상위 레벨에서 await 처리
+            best_bt_result = None
+            best_metrics = {}
+
+            # 모든 백테스팅 결과에서 최고 점수 코인 찾기
+            if scan_result and hasattr(scan_result, 'all_backtest_results') and scan_result.all_backtest_results:
+                for bt_result in scan_result.all_backtest_results:
+                    if best_bt_result is None or bt_result.score > best_bt_result.score:
+                        best_bt_result = bt_result
+                if best_bt_result:
+                    best_metrics = best_bt_result.metrics or {}
+
+            backtest_callback_data = {
+                'ticker': best_bt_result.ticker if best_bt_result else self.fallback_ticker,
+                'backtest_result': {
+                    'passed': False,
+                    'metrics': best_metrics,
+                    'filter_results': best_bt_result.filter_results if best_bt_result else {},
+                    'reason': f'스캔 결과 진입 적합 코인 없음 (최고 점수: {best_bt_result.score:.1f}점)' if best_bt_result else '스캔 결과 진입 적합 코인 없음'
+                },
+                'scan_summary': {
+                    'liquidity_scanned': getattr(scan_result, 'liquidity_scanned', 0) if scan_result else 0,
+                    'backtest_passed': getattr(scan_result, 'backtest_passed', 0) if scan_result else 0,
+                    'selected': 0,
+                    'best_score': best_bt_result.score if best_bt_result else 0
+                },
+                'flash_crash': None,
+                'rsi_divergence': None,
+                'technical_indicators': None
+            }
+            # 콜백 데이터를 컨텍스트에 저장 (파이프라인에서 await 처리)
+            context.pending_backtest_callback_data = backtest_callback_data
+
             return StageResult(
                 success=True,
                 action='skip',

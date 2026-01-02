@@ -54,6 +54,20 @@ class TradingPipeline:
                 # 스테이지 실행 후 처리
                 stage.post_execute(context, result)
 
+                # 백테스팅 콜백 처리 (스테이지에서 설정한 경우)
+                if context.pending_backtest_callback_data and context.on_backtest_complete:
+                    try:
+                        callback_data = context.pending_backtest_callback_data
+                        context.pending_backtest_callback_data = None  # 처리 후 초기화
+                        callback_result = context.on_backtest_complete(callback_data)
+                        # 코루틴이면 await으로 완료 대기
+                        import asyncio
+                        if asyncio.iscoroutine(callback_result):
+                            await callback_result
+                        Logger.print_success("✅ 백테스팅 콜백 전송 완료")
+                    except Exception as cb_error:
+                        Logger.print_warning(f"⚠️ 백테스팅 콜백 실패: {cb_error}")
+
                 # 결과 처리
                 if not result.success:
                     Logger.print_error(f"❌ {stage.name} 스테이지 실패: {result.message}")
@@ -62,10 +76,14 @@ class TradingPipeline:
                 # 액션에 따른 처리
                 if result.action == 'exit':
                     Logger.print_success(f"✅ {stage.name} 스테이지에서 파이프라인 종료")
+                    # 종료 전 미처리된 콜백 처리
+                    await self._process_pending_callback(context)
                     return self._create_success_response(result, context)
 
                 elif result.action == 'skip':
                     Logger.print_warning(f"⏭️ {stage.name} 스테이지에서 거래 스킵")
+                    # 스킵 전 미처리된 콜백 처리
+                    await self._process_pending_callback(context)
                     return self._create_success_response(result, context)
 
                 elif result.action == 'stop':
@@ -86,6 +104,26 @@ class TradingPipeline:
         # 모든 스테이지 완료
         Logger.print_success("🎉 트레이딩 파이프라인 완료")
         return self._create_final_response(context)
+
+    async def _process_pending_callback(self, context: PipelineContext) -> None:
+        """
+        미처리된 백테스팅 콜백 처리
+
+        Args:
+            context: 파이프라인 컨텍스트
+        """
+        if context.pending_backtest_callback_data and context.on_backtest_complete:
+            try:
+                callback_data = context.pending_backtest_callback_data
+                context.pending_backtest_callback_data = None  # 처리 후 초기화
+                callback_result = context.on_backtest_complete(callback_data)
+                # 코루틴이면 await으로 완료 대기
+                import asyncio
+                if asyncio.iscoroutine(callback_result):
+                    await callback_result
+                Logger.print_success("✅ 백테스팅 콜백 전송 완료 (파이프라인 종료 시)")
+            except Exception as cb_error:
+                Logger.print_warning(f"⚠️ 백테스팅 콜백 실패: {cb_error}")
 
     def _create_success_response(
         self,
@@ -148,7 +186,7 @@ class TradingPipeline:
         current_price = context.upbit_client.get_current_price(context.ticker)
         coin_balance = context.upbit_client.get_balance(context.ticker)
 
-        return {
+        response = {
             'status': 'success',
             'decision': context.ai_result.get('decision', 'hold') if context.ai_result else 'hold',
             'confidence': context.ai_result.get('confidence', 'medium') if context.ai_result else 'medium',
@@ -158,6 +196,16 @@ class TradingPipeline:
             'total': current_price * coin_balance if current_price and coin_balance else 0,
             'pipeline_status': 'completed'
         }
+
+        # 선택된 코인 정보 포함 (멀티코인 스캐닝 결과)
+        if hasattr(context, 'selected_coin') and context.selected_coin:
+            response['selected_coin'] = {
+                'ticker': context.selected_coin.ticker,
+                'symbol': context.selected_coin.symbol,
+                'score': context.selected_coin.final_score,
+            }
+
+        return response
 
 
 def create_hybrid_trading_pipeline(
