@@ -1,7 +1,7 @@
 sequenceDiagram
     participant Scheduler as 스케줄러<br/>(scheduler_main.py)
     participant BackendScheduler as Backend Scheduler<br/>(core/scheduler.py)
-    participant Main as main.py<br/>(execute_trading_cycle)
+    participant Main as main.py<br/>(거래 사이클)
     participant Pipeline as TradingPipeline<br/>(파이프라인 오케스트레이터)
     participant Stages as Pipeline Stages<br/>(스테이지들)
     participant Upbit as Upbit API<br/>(거래소)
@@ -9,10 +9,17 @@ sequenceDiagram
     participant Telegram as Telegram<br/>(알림)
     participant Metrics as Prometheus<br/>(메트릭)
 
-    Scheduler->>BackendScheduler: 1시간마다 trading_job() 실행
-    BackendScheduler->>Main: execute_trading_cycle() 호출
+    Note over Scheduler,BackendScheduler: 듀얼 타임프레임 스케줄러
 
-    Note over Main: 파이프라인 타입 선택:<br/>- 멀티코인 파이프라인<br/>- 적응형 파이프라인<br/>- 기본 파이프라인
+    par 매 1시간: 진입 탐색
+        Scheduler->>BackendScheduler: trading_job() 실행
+        BackendScheduler->>Main: execute_trading_cycle() 호출
+    and 매 15분: 포지션 관리
+        Scheduler->>BackendScheduler: position_management_job() 실행
+        BackendScheduler->>Main: execute_position_management_cycle() 호출
+    end
+
+    Note over Main: 하이브리드 파이프라인 선택:<br/>- create_hybrid_trading_pipeline()<br/>- create_position_management_pipeline()
 
     Main->>Pipeline: create_*_trading_pipeline()
     Main->>Pipeline: pipeline.execute(context)

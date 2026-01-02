@@ -45,10 +45,10 @@ class HybridRiskCheckStage(BasePipelineStage):
 
     # 기본 스캐너 설정
     DEFAULT_SCANNER_CONFIG = {
-        'liquidity_top_n': 20,
-        'min_volume_krw': 10_000_000_000,  # 100억원
-        'backtest_top_n': 5,
-        'final_select_n': 2
+        'liquidity_top_n': 10,  # 유동성 상위 10개 (속도 vs 범위 균형)
+        'min_volume_krw': 10_000_000_000,  # 100억원 (충분한 유동성 보장)
+        'backtest_top_n': 5,   # 백테스팅 통과 상위 5개
+        'final_select_n': 2    # 최종 선택 2개
     }
 
     def __init__(
@@ -389,6 +389,19 @@ class HybridRiskCheckStage(BasePipelineStage):
                 if best_bt_result:
                     best_metrics = best_bt_result.metrics or {}
 
+            # 백테스팅 결과 리스트 생성 (텔레그램용)
+            all_bt_results_for_telegram = []
+            if scan_result and hasattr(scan_result, 'all_backtest_results') and scan_result.all_backtest_results:
+                for bt in scan_result.all_backtest_results[:5]:  # 상위 5개만
+                    all_bt_results_for_telegram.append({
+                        'symbol': bt.symbol,
+                        'score': bt.score,
+                        'grade': bt.grade,
+                        'passed': bt.passed,
+                        'filter_results': bt.filter_results if hasattr(bt, 'filter_results') else {},
+                        'reason': bt.reason if hasattr(bt, 'reason') else ''
+                    })
+
             backtest_callback_data = {
                 'ticker': best_bt_result.ticker if best_bt_result else self.fallback_ticker,
                 'backtest_result': {
@@ -400,9 +413,13 @@ class HybridRiskCheckStage(BasePipelineStage):
                 'scan_summary': {
                     'liquidity_scanned': getattr(scan_result, 'liquidity_scanned', 0) if scan_result else 0,
                     'backtest_passed': getattr(scan_result, 'backtest_passed', 0) if scan_result else 0,
+                    'ai_analyzed': 0,
                     'selected': 0,
-                    'best_score': best_bt_result.score if best_bt_result else 0
+                    'best_score': best_bt_result.score if best_bt_result else 0,
+                    'duration_seconds': getattr(scan_result, 'total_duration_seconds', 0) if scan_result else 0
                 },
+                'selected_coin': None,
+                'all_backtest_results': all_bt_results_for_telegram,
                 'flash_crash': None,
                 'rsi_divergence': None,
                 'technical_indicators': None
@@ -436,6 +453,56 @@ class HybridRiskCheckStage(BasePipelineStage):
         context.ticker = selected_coin.ticker  # 동적 티커 업데이트
 
         Logger.print_success(f"✅ 선택된 코인: {selected_coin.symbol} ({selected_coin.final_score:.1f}점)")
+
+        # 백테스팅 결과 리스트 생성 (텔레그램용)
+        all_bt_results_for_telegram = []
+        if scan_result.all_backtest_results:
+            for bt in scan_result.all_backtest_results[:5]:  # 상위 5개만
+                all_bt_results_for_telegram.append({
+                    'symbol': bt.symbol,
+                    'score': bt.score,
+                    'grade': bt.grade,
+                    'passed': bt.passed,
+                    'filter_results': bt.filter_results if hasattr(bt, 'filter_results') else {},
+                    'reason': bt.reason if hasattr(bt, 'reason') else ''
+                })
+
+        # 선택된 코인의 백테스팅 메트릭
+        selected_metrics = {}
+        if selected_coin.backtest_score:
+            selected_metrics = selected_coin.backtest_score.metrics or {}
+
+        # 백테스팅 콜백 데이터 설정
+        backtest_callback_data = {
+            'ticker': selected_coin.ticker,
+            'backtest_result': {
+                'passed': True,
+                'metrics': selected_metrics,
+                'filter_results': selected_coin.backtest_score.filter_results if selected_coin.backtest_score else {},
+                'reason': f'진입 적합 코인 선택됨 (점수: {selected_coin.final_score:.1f}점)'
+            },
+            'scan_summary': {
+                'liquidity_scanned': scan_result.liquidity_scanned,
+                'backtest_passed': scan_result.backtest_passed,
+                'ai_analyzed': scan_result.ai_analyzed,
+                'selected': len(scan_result.selected_coins),
+                'best_score': selected_coin.final_score,
+                'duration_seconds': scan_result.total_duration_seconds
+            },
+            'selected_coin': {
+                'ticker': selected_coin.ticker,
+                'symbol': selected_coin.symbol,
+                'score': selected_coin.final_score,
+                'grade': selected_coin.final_grade,
+                'reason': selected_coin.selection_reason
+            },
+            'all_backtest_results': all_bt_results_for_telegram,
+            'flash_crash': None,
+            'rsi_divergence': None,
+            'technical_indicators': None
+        }
+        # 콜백 데이터를 컨텍스트에 저장 (파이프라인에서 await 처리)
+        context.pending_backtest_callback_data = backtest_callback_data
 
         return StageResult(
             success=True,
@@ -516,7 +583,7 @@ class HybridRiskCheckStage(BasePipelineStage):
                 data_sync=data_sync,
                 multi_backtest=multi_backtest,
                 entry_analyzer=None,  # AI 분석은 AnalysisStage에서
-                liquidity_top_n=self.scanner_config.get('liquidity_top_n', 20),
+                liquidity_top_n=self.scanner_config.get('liquidity_top_n', 10),
                 min_volume_krw=self.scanner_config.get('min_volume_krw', 10_000_000_000),
                 backtest_top_n=self.scanner_config.get('backtest_top_n', 5),
                 ai_top_n=0,  # 이 스테이지에서는 AI 분석 안함

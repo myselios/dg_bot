@@ -10,6 +10,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from backend.app.core.config import settings
+from src.scanner.sector_mapping import get_coin_sector, get_sector_korean_name
 
 logger = logging.getLogger(__name__)
 
@@ -591,6 +592,102 @@ class TelegramNotifier:
             
             return True
     
+    async def notify_scan_result(
+        self,
+        scan_summary: dict,
+        selected_coin: dict = None,
+        all_backtest_results: list = None,
+    ) -> bool:
+        """
+        멀티코인 스캔 결과 알림
+
+        Args:
+            scan_summary: 스캔 요약 정보
+            selected_coin: 선택된 코인 정보 (없으면 None)
+            all_backtest_results: 모든 백테스팅 결과 (상위 N개)
+        """
+        message = f"""
+🔍 <b>멀티코인 스캔 결과</b>
+
+━━━━━━━━━━━━━━━━━━━━
+<b>📊 스캔 요약</b>
+━━━━━━━━━━━━━━━━━━━━
+📈 <b>유동성 스캔:</b> {scan_summary.get('liquidity_scanned', 0)}개 코인
+🔬 <b>백테스팅 통과:</b> {scan_summary.get('backtest_passed', 0)}개 코인
+🤖 <b>AI 분석:</b> {scan_summary.get('ai_analyzed', 0)}개 코인
+✅ <b>최종 선택:</b> {scan_summary.get('selected', 0)}개 코인
+⏱️ <b>소요 시간:</b> {scan_summary.get('duration_seconds', 0):.1f}초
+"""
+
+        # 선택된 코인 정보
+        if selected_coin:
+            symbol = selected_coin.get('symbol', 'N/A')
+            sector = get_coin_sector(symbol)
+            sector_name = get_sector_korean_name(sector)
+            message += f"""
+━━━━━━━━━━━━━━━━━━━━
+<b>🎯 선택된 코인</b>
+━━━━━━━━━━━━━━━━━━━━
+🪙 <b>심볼:</b> {symbol}
+🏷️ <b>섹터:</b> {sector_name}
+📊 <b>점수:</b> {selected_coin.get('score', 0):.1f}점
+🏆 <b>등급:</b> {selected_coin.get('grade', 'N/A')}
+📝 <b>선택 사유:</b> {escape_html(selected_coin.get('reason', '')[:100])}
+"""
+
+        # 백테스팅 상위 결과 (있는 경우) - 코인별 실패 조건 상세 표시
+        if all_backtest_results and len(all_backtest_results) > 0:
+            message += f"""
+━━━━━━━━━━━━━━━━━━━━
+<b>📋 백테스팅 결과 상세</b>
+━━━━━━━━━━━━━━━━━━━━
+"""
+            # 상위 5개만 표시 (섹터 정보 및 실패 조건 포함)
+            for i, bt_result in enumerate(all_backtest_results[:5], 1):
+                symbol = bt_result.get('symbol', 'N/A')
+                sector = get_coin_sector(symbol)
+                sector_name = get_sector_korean_name(sector)
+                score = bt_result.get('score', 0)
+                passed = bt_result.get('passed', False)
+                passed_emoji = "✅" if passed else "❌"
+
+                message += f"\n<b>{i}. {passed_emoji} {symbol}</b> [{sector_name}] {score:.1f}점\n"
+
+                # 필터 결과 상세 표시
+                filter_results = bt_result.get('filter_results', {})
+                if filter_results:
+                    # 통과한 조건과 실패한 조건 분리
+                    passed_filters = [k for k, v in filter_results.items() if v]
+                    failed_filters = [k for k, v in filter_results.items() if not v]
+
+                    # 필터 이름 한글화
+                    filter_names = {
+                        'return': '수익률',
+                        'win_rate': '승률',
+                        'profit_factor': '손익비',
+                        'sharpe_ratio': 'Sharpe',
+                        'sortino_ratio': 'Sortino',
+                        'calmar_ratio': 'Calmar',
+                        'max_drawdown': '낙폭',
+                        'max_consecutive_losses': '연속손실',
+                        'volatility': '변동성',
+                        'min_trades': '거래수',
+                        'avg_win_loss_ratio': '평균손익비',
+                        'avg_holding_hours': '보유시간'
+                    }
+
+                    if passed:
+                        message += f"   ✅ 모든 조건 통과 ({len(passed_filters)}/12)\n"
+                    else:
+                        # 실패한 조건만 표시
+                        failed_names = [filter_names.get(f, f) for f in failed_filters]
+                        message += f"   ❌ 실패: {', '.join(failed_names)}\n"
+                        message += f"   ✅ 통과: {len(passed_filters)}/12\n"
+
+        message += f"\n🕐 <b>시각:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+        return await self.send_message(message)
+
     async def notify_portfolio_status(
         self,
         symbol: str,
@@ -738,4 +835,15 @@ async def notify_portfolio_status(
     """포트폴리오 현황 알림 (전역 함수)"""
     return await notifier.notify_portfolio_status(
         symbol, portfolio_data, trade_result
+    )
+
+
+async def notify_scan_result(
+    scan_summary: dict,
+    selected_coin: dict = None,
+    all_backtest_results: list = None,
+) -> bool:
+    """멀티코인 스캔 결과 알림 (전역 함수)"""
+    return await notifier.notify_scan_result(
+        scan_summary, selected_coin, all_backtest_results
     )

@@ -343,10 +343,12 @@ class TestCoinSelectorIntegration:
     @pytest.mark.asyncio
     async def test_coin_selection_flow(self, mock_coin_infos, mock_backtest_scores):
         """코인 선택 흐름 통합 테스트"""
+        # 섹터 분산 비활성화: 이 테스트는 유동성 스캔 수가 정확히 3개인지 확인
         selector = CoinSelector(
             liquidity_top_n=20,
             backtest_top_n=5,
-            final_select_n=2
+            final_select_n=2,
+            enable_sector_diversification=False  # 섹터 분산 비활성화
         )
 
         with patch.object(

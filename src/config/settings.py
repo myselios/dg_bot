@@ -211,6 +211,51 @@ class SlippageConfig:
             raise ConfigurationError("MAX_SLIPPAGE_PCT", "최대 슬리피지는 경고 슬리피지보다 커야 합니다")
 
 
+class ScannerConfig:
+    """
+    멀티코인 스캐닝 설정
+
+    ⚠️ 중요: 이 값을 변경할 때 반드시 아래 문서들도 함께 업데이트하세요:
+    - docs/guide/ARCHITECTURE.md
+    - docs/diagrams/08-multi-coin-scanning.mmd
+    - main.py, trading_pipeline.py docstrings
+    - 관련 테스트 파일 (test_coin_scan_stage.py, test_scanner_coin_selector.py)
+
+    변경 시 grep으로 모든 참조를 확인하세요:
+    $ grep -r "liquidity_top_n\|20개\|10개" --include="*.py" --include="*.md" --include="*.mmd"
+    """
+    # 유동성 스캔 상위 N개 코인
+    LIQUIDITY_TOP_N = get_env_int("SCANNER_LIQUIDITY_TOP_N", 10, min_value=5, max_value=50)
+
+    # 최소 거래대금 (원)
+    MIN_VOLUME_KRW = get_env_int("SCANNER_MIN_VOLUME_KRW", 10_000_000_000, min_value=1_000_000_000)  # 100억원
+
+    # 백테스팅 통과 상위 N개
+    BACKTEST_TOP_N = get_env_int("SCANNER_BACKTEST_TOP_N", 5, min_value=1, max_value=20)
+
+    # 최종 선택 N개
+    FINAL_SELECT_N = get_env_int("SCANNER_FINAL_SELECT_N", 2, min_value=1, max_value=10)
+
+    # 섹터 분산 설정
+    ENABLE_SECTOR_DIVERSIFICATION = os.getenv("SCANNER_ENABLE_SECTOR_DIVERSIFICATION", "true").lower() == "true"
+    ONE_PER_SECTOR = os.getenv("SCANNER_ONE_PER_SECTOR", "true").lower() == "true"
+    EXCLUDE_UNKNOWN_SECTOR = os.getenv("SCANNER_EXCLUDE_UNKNOWN_SECTOR", "false").lower() == "true"
+
+    @classmethod
+    def validate(cls):
+        """스캐너 설정 검증"""
+        if cls.LIQUIDITY_TOP_N < cls.BACKTEST_TOP_N:
+            raise ConfigurationError(
+                "LIQUIDITY_TOP_N",
+                f"유동성 스캔 개수({cls.LIQUIDITY_TOP_N})는 백테스팅 통과 개수({cls.BACKTEST_TOP_N})보다 커야 합니다"
+            )
+        if cls.BACKTEST_TOP_N < cls.FINAL_SELECT_N:
+            raise ConfigurationError(
+                "BACKTEST_TOP_N",
+                f"백테스팅 통과 개수({cls.BACKTEST_TOP_N})는 최종 선택 개수({cls.FINAL_SELECT_N})보다 커야 합니다"
+            )
+
+
 # 설정 초기화 시 검증
 def validate_all_configs():
     """모든 설정 검증"""
@@ -221,4 +266,5 @@ def validate_all_configs():
     StrategyConfig.validate()
     TrendFilterConfig.validate()
     SlippageConfig.validate()
+    ScannerConfig.validate()
 

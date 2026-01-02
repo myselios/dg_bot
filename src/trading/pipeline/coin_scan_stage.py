@@ -68,7 +68,7 @@ class CoinScanStage(BasePipelineStage):
 
     def __init__(
         self,
-        liquidity_top_n: int = 20,
+        liquidity_top_n: int = 10,
         min_volume_krw: float = 10_000_000_000,
         backtest_top_n: int = 5,
         final_select_n: int = 2,
@@ -236,7 +236,7 @@ def create_multi_coin_trading_pipeline(
     daily_loss_limit_pct: float = -10.0,
     min_trade_interval_hours: int = 4,
     max_positions: int = 3,
-    liquidity_top_n: int = 20,
+    liquidity_top_n: int = 10,
     min_volume_krw: float = 10_000_000_000,
     backtest_top_n: int = 5,
     final_select_n: int = 2

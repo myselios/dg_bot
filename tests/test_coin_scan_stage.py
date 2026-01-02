@@ -33,7 +33,7 @@ class TestCoinScanStage:
         """기본값 초기화 테스트"""
         stage = CoinScanStage()
 
-        assert stage.liquidity_top_n == 20
+        assert stage.liquidity_top_n == 10
         assert stage.min_volume_krw == 10_000_000_000
         assert stage.backtest_top_n == 5
         assert stage.final_select_n == 2

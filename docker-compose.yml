@@ -93,13 +93,52 @@ services:
       - ./src:/app/src
       - ./backend:/app/backend
       - ./logs:/app/logs
-      - ./backtest_data:/app/backtest_data
+      - ./data:/app/data  # 백테스팅용 historical 데이터 저장
     command: ["python", "scheduler_main.py"]
     depends_on:
       postgres:
         condition: service_healthy
       backend:
         condition: service_started
+    networks:
+      - trading_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Telegram 봇 명령어 서비스 🤖
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trading_bot_telegram
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_SERVER=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-trading_bot}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/trading_bot}
+      - UPBIT_ACCESS_KEY=${UPBIT_ACCESS_KEY}
+      - UPBIT_SECRET_KEY=${UPBIT_SECRET_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - TELEGRAM_ENABLED=${TELEGRAM_ENABLED:-true}
+    volumes:
+      - ./src:/app/src
+      - ./backend:/app/backend
+      - ./logs:/app/logs
+      - ./data:/app/data
+    command: ["python", "telegram_bot.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - trading_network
     logging:

@@ -5,6 +5,7 @@
 
 주요 기능:
 - 유동성 상위 코인 스캔
+- 섹터별 분산 선택 (포트폴리오 다양성 확보)
 - 병렬 백테스팅 필터링
 - AI 진입 분석 (상위 N개만)
 - 최종 진입 코인 선택
@@ -17,6 +18,12 @@ from typing import List, Dict, Any, Optional, Tuple
 from src.scanner.liquidity_scanner import LiquidityScanner, CoinInfo
 from src.scanner.data_sync import HistoricalDataSync
 from src.scanner.multi_backtest import MultiCoinBacktest, BacktestScore, MultiBacktestConfig
+from src.scanner.sector_mapping import (
+    SectorDiversifier,
+    get_coin_sector,
+    get_sector_korean_name,
+    CoinSector
+)
 from src.ai.entry_analyzer import EntryAnalyzer, EntrySignal
 from src.utils.logger import Logger
 
@@ -63,11 +70,11 @@ class CoinSelector:
     코인 선택기
 
     전체 스캐닝 파이프라인을 조율합니다:
-    1. 유동성 스캔 (상위 20개)
+    1. 유동성 스캔 (상위 10개, ScannerConfig.LIQUIDITY_TOP_N 참조)
     2. 데이터 동기화
     3. 병렬 백테스팅 (상위 5개 선별)
     4. AI 진입 분석 (상위 5개)
-    5. 최종 선택 (상위 2-3개)
+    5. 최종 선택 (상위 2개)
 
     사용 예시:
         selector = CoinSelector()
@@ -82,12 +89,17 @@ class CoinSelector:
         data_sync: Optional[HistoricalDataSync] = None,
         multi_backtest: Optional[MultiCoinBacktest] = None,
         entry_analyzer: Optional[EntryAnalyzer] = None,
+        sector_diversifier: Optional[SectorDiversifier] = None,
         # 스캔 파라미터
-        liquidity_top_n: int = 20,
+        liquidity_top_n: int = 10,
         min_volume_krw: float = 10_000_000_000,  # 100억원
         backtest_top_n: int = 5,
         ai_top_n: int = 5,
-        final_select_n: int = 2
+        final_select_n: int = 2,
+        # 섹터 분산 파라미터
+        enable_sector_diversification: bool = True,
+        one_per_sector: bool = True,
+        exclude_unknown_sector: bool = False
     ):
         """
         Args:
@@ -95,22 +107,32 @@ class CoinSelector:
             data_sync: 데이터 동기화 관리자
             multi_backtest: 멀티 백테스터
             entry_analyzer: AI 진입 분석기
+            sector_diversifier: 섹터 분산 선택기
             liquidity_top_n: 유동성 스캔 상위 N개
             min_volume_krw: 최소 거래대금
             backtest_top_n: 백테스팅 통과 상위 N개
             ai_top_n: AI 분석 대상 N개
             final_select_n: 최종 선택 N개
+            enable_sector_diversification: 섹터 분산 활성화 여부
+            one_per_sector: True면 섹터당 1개만 선택
+            exclude_unknown_sector: True면 미분류 섹터 코인 제외
         """
         self.liquidity_scanner = liquidity_scanner or LiquidityScanner(min_volume_krw=min_volume_krw)
         self.data_sync = data_sync or HistoricalDataSync()
         self.multi_backtest = multi_backtest or MultiCoinBacktest(data_sync=self.data_sync)
         self.entry_analyzer = entry_analyzer
+        self.sector_diversifier = sector_diversifier or SectorDiversifier()
 
         self.liquidity_top_n = liquidity_top_n
         self.min_volume_krw = min_volume_krw
         self.backtest_top_n = backtest_top_n
         self.ai_top_n = ai_top_n
         self.final_select_n = final_select_n
+
+        # 섹터 분산 설정
+        self.enable_sector_diversification = enable_sector_diversification
+        self.one_per_sector = one_per_sector
+        self.exclude_unknown_sector = exclude_unknown_sector
 
     async def select_coins(
         self,
@@ -145,6 +167,27 @@ class CoinSelector:
         # 이미 보유 중인 코인 제외
         filtered_coins = [c for c in top_coins if c.ticker not in exclude_tickers]
         Logger.print_info(f"  유동성 상위: {len(top_coins)}개 → 보유 제외: {len(filtered_coins)}개")
+
+        if not filtered_coins:
+            return self._empty_result(start_time)
+
+        # ========================================
+        # 1-1단계: 섹터별 분산 선택 (옵션)
+        # ========================================
+        if self.enable_sector_diversification:
+            Logger.print_info("\n🏷️ 1-1단계: 섹터별 분산 선택")
+            diversified_coins = self.sector_diversifier.select_diversified(
+                coins=filtered_coins,
+                max_coins=self.liquidity_top_n,
+                one_per_sector=self.one_per_sector,
+                exclude_unknown=self.exclude_unknown_sector
+            )
+            Logger.print_info(f"  섹터 분산 전: {len(filtered_coins)}개 → 분산 후: {len(diversified_coins)}개")
+
+            # 섹터 분포 출력
+            self._print_sector_summary(diversified_coins)
+
+            filtered_coins = diversified_coins
 
         if not filtered_coins:
             return self._empty_result(start_time)
@@ -469,3 +512,15 @@ class CoinSelector:
                 print(f"{i:>4} {coin.symbol:>8} {coin.final_score:>8.1f} {coin.final_grade:>12} {coin.selection_reason[:30]:>30}")
         else:
             print("선택된 코인이 없습니다.")
+
+    def _print_sector_summary(self, coins: List[CoinInfo]) -> None:
+        """섹터 분포 요약 출력"""
+        distribution = self.sector_diversifier.get_sector_distribution(coins)
+
+        print("\n  [섹터 분포]")
+        for sector, count in distribution.items():
+            sector_coins = [c.symbol for c in coins if get_coin_sector(c.symbol) == sector]
+            coins_str = ", ".join(sector_coins[:3])
+            if len(sector_coins) > 3:
+                coins_str += f" (+{len(sector_coins) - 3})"
+            print(f"    {get_sector_korean_name(sector):12}: {count}개 ({coins_str})")

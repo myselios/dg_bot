@@ -47,9 +47,10 @@ async def trading_job():
         notify_trade,
         notify_error,
         notify_cycle_start,  # 1) 사이클 시작 알림
-        notify_backtest_and_signals,  # 2) 백테스팅 및 신호 분석
-        notify_ai_decision,  # 3) AI 의사결정 상세
-        notify_portfolio_status,  # 4) 포트폴리오 현황
+        notify_scan_result,  # 2) 스캔 결과 알림 (유동성 + 백테스팅)
+        notify_backtest_and_signals,  # 3) 백테스팅 및 신호 분석
+        notify_ai_decision,  # 4) AI 의사결정 상세
+        notify_portfolio_status,  # 5) 포트폴리오 현황
     )
     from backend.app.services.metrics import (
         record_ai_decision,
@@ -135,25 +136,54 @@ async def trading_job():
 
         # 📱 백테스팅 완료 콜백 정의 (AI 분석 전에 호출됨)
         async def on_backtest_complete_callback(backtest_data: dict):
-            """백테스팅 완료 후 텔레그램 알림 전송"""
+            """백테스팅 완료 후 텔레그램 알림 전송 (스캔 결과 + 백테스팅)"""
             try:
                 bt_ticker = backtest_data.get('ticker', ticker)
                 bt_result = backtest_data.get('backtest_result', {})
                 flash_crash = backtest_data.get('flash_crash')
                 rsi_divergence = backtest_data.get('rsi_divergence')
                 scan_summary = backtest_data.get('scan_summary', {})
+                selected_coin = backtest_data.get('selected_coin')
+                all_backtest_results = backtest_data.get('all_backtest_results', [])
+                technical_indicators = backtest_data.get('technical_indicators', {})
 
                 # 스캔 요약 로깅
                 logger.info(f"📊 백테스팅 콜백 데이터:")
                 logger.info(f"  - 티커: {bt_ticker}")
                 logger.info(f"  - 스캔: {scan_summary.get('liquidity_scanned', 0)}개 → 통과: {scan_summary.get('backtest_passed', 0)}개")
                 logger.info(f"  - 최고점수: {scan_summary.get('best_score', 0)}")
+                logger.info(f"  - 선택 코인: {selected_coin}")
                 logger.info(f"  - metrics: {bt_result.get('metrics', {})}")
+
+                # 📱 1) 스캔 결과 알림 (유동성 + 백테스팅 요약)
+                try:
+                    await notify_scan_result(
+                        scan_summary=scan_summary,
+                        selected_coin=selected_coin,
+                        all_backtest_results=all_backtest_results,
+                    )
+                    logger.info("✅ 스캔 결과 알림 전송 완료")
+                except Exception as scan_error:
+                    logger.warning(f"스캔 결과 알림 전송 실패: {scan_error}")
+
+                # 📱 2) 백테스팅 상세 알림 (선택된 코인의 기술적 지표 포함)
+                # market_data에 기술적 지표 병합
+                bt_market_data = market_data.copy() if market_data else {}
+                if technical_indicators:
+                    bt_market_data.update(technical_indicators)
+                # 선택된 코인의 현재가 정보 추가
+                if selected_coin and 'current_price' not in bt_market_data:
+                    try:
+                        coin_price = upbit_client.get_current_price(bt_ticker)
+                        if coin_price:
+                            bt_market_data['current_price'] = coin_price
+                    except Exception:
+                        pass
 
                 await notify_backtest_and_signals(
                     symbol=bt_ticker,
                     backtest_result=bt_result,
-                    market_data=market_data,
+                    market_data=bt_market_data,
                     flash_crash=flash_crash,
                     rsi_divergence=rsi_divergence,
                 )

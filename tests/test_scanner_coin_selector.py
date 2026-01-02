@@ -137,7 +137,7 @@ class TestCoinSelector:
         """기본값 초기화 테스트"""
         selector = CoinSelector()
 
-        assert selector.liquidity_top_n == 20
+        assert selector.liquidity_top_n == 10
         assert selector.min_volume_krw == 10_000_000_000
         assert selector.backtest_top_n == 5
         assert selector.ai_top_n == 5

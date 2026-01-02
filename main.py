@@ -65,7 +65,7 @@ async def execute_trading_cycle(
     daily_loss_limit_pct: float = -10.0,
     min_trade_interval_hours: int = 4,
     # 스캐너 파라미터
-    liquidity_top_n: int = 20,
+    liquidity_top_n: int = 10,
     min_volume_krw: float = 10_000_000_000,
     backtest_top_n: int = 5,
     final_select_n: int = 2,
@@ -102,7 +102,7 @@ async def execute_trading_cycle(
         take_profit_pct: 익절 비율 (기본 +10%)
         daily_loss_limit_pct: 일일 최대 손실 비율 (기본 -10%)
         min_trade_interval_hours: 최소 거래 간격 (기본 4시간)
-        liquidity_top_n: 유동성 스캔 상위 N개 (기본 20)
+        liquidity_top_n: 유동성 스캔 상위 N개 (기본 10)
         min_volume_krw: 최소 거래대금 (기본 100억원)
         backtest_top_n: 백테스팅 통과 상위 N개 (기본 5)
         final_select_n: 최종 선택 N개 (기본 2)

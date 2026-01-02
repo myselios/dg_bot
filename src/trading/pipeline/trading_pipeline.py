@@ -218,7 +218,7 @@ def create_hybrid_trading_pipeline(
     # 스캔 파라미터
     enable_scanning: bool = True,
     fallback_ticker: str = "KRW-ETH",
-    liquidity_top_n: int = 20,
+    liquidity_top_n: int = 10,
     min_volume_krw: float = 10_000_000_000,
     backtest_top_n: int = 5,
     final_select_n: int = 2
@@ -248,7 +248,7 @@ def create_hybrid_trading_pipeline(
         max_positions: 최대 동시 포지션 수 (기본 3개)
         enable_scanning: 코인 스캔 활성화 여부 (기본 True)
         fallback_ticker: 스캔 비활성화 또는 실패 시 사용할 티커 (기본 "KRW-ETH")
-        liquidity_top_n: 유동성 스캔 상위 N개 (기본 20)
+        liquidity_top_n: 유동성 스캔 상위 N개 (기본 10)
         min_volume_krw: 최소 거래대금 (기본 100억원)
         backtest_top_n: 백테스팅 통과 상위 N개 (기본 5)
         final_select_n: 최종 선택 N개 (기본 2)

@@ -8,8 +8,10 @@ AI 기반 암호화폐 자동매매 시스템으로, **멀티코인 스캐닝 + 
 
 ### 핵심 컴포넌트
 
-1. **Scheduler (scheduler_main.py)** - 1시간 주기 자동 거래 실행
-2. **Adaptive Trading Pipeline** - 5단계 적응형 파이프라인 (Risk → Scan → Data → Analysis → Execution)
+1. **Scheduler (scheduler_main.py)** - 듀얼 타임프레임 자동 거래
+   - `trading_job` (1시간): 멀티코인 스캔 + AI 분석 + 진입 탐색
+   - `position_management_job` (15분): 보유 포지션 손절/익절 관리
+2. **Hybrid Trading Pipeline** - 4단계 하이브리드 파이프라인 (HybridRiskCheck → Data → Analysis → Execution)
 3. **Multi-Coin Scanner** - 유동성 스캔 → 백테스팅 → AI 분석 → 최적 코인 선택
 4. **Portfolio Manager** - 최대 3개 코인 동시 관리, 하이브리드 포지션 관리
 5. **PostgreSQL** - 거래 데이터 저장 (Grafana 연동)
@@ -19,7 +21,13 @@ AI 기반 암호화폐 자동매매 시스템으로, **멀티코인 스캐닝 + 
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│              Scheduler (scheduler_main.py) - 1시간 주기 ⏰               │
+│          Scheduler (scheduler_main.py) - 듀얼 타임프레임 ⏰               │
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  trading_job (1시간)           position_management_job (15분)    │   │
+│  │  - 멀티코인 스캔                - 보유 포지션 손절/익절 체크       │   │
+│  │  - AI 분석 + 진입 탐색          - 규칙 기반 빠른 처리 (AI 없음)   │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
 │                                                                          │
 │  ┌────────────────────────────────────────────────────────────────┐    │
 │  │         Adaptive Trading Pipeline (5-Stage Architecture)       │    │
@@ -29,7 +37,7 @@ AI 기반 암호화폐 자동매매 시스템으로, **멀티코인 스캐닝 + 
 │  │     └─ MANAGEMENT MODE (포지션 있음 → 하이브리드 관리)          │    │
 │  │                                                                  │    │
 │  │  2. CoinScanStage - 멀티코인 스캐닝 (ENTRY MODE에서만)          │    │
-│  │     ├─ LiquidityScanner: 상위 20개 유동성 코인                  │    │
+│  │     ├─ LiquidityScanner: 상위 10개 유동성 코인                  │    │
 │  │     ├─ MultiCoinBacktest: 12가지 퀀트 필터 (병렬 처리)          │    │
 │  │     └─ CoinSelector: 최종 2개 코인 선택                         │    │
 │  │                                                                  │    │
@@ -94,7 +102,7 @@ AI 기반 암호화폐 자동매매 시스템으로, **멀티코인 스캐닝 + 
 │    (포지션 없음/추가가능)    │    │       (포지션 있음)          │
 ├─────────────────────────────┤    ├─────────────────────────────┤
 │                             │    │                             │
-│  1. 유동성 스캔 (20개)      │    │  1. 규칙 기반 체크 (무료)   │
+│  1. 유동성 스캔 (10개)      │    │  1. 규칙 기반 체크 (무료)   │
 │     └─ 100억원+ 거래대금    │    │     ├─ 손절 -5%            │
 │     └─ 스테이블코인 제외    │    │     ├─ 익절 +10%           │
 │                             │    │     ├─ Fakeout 감지        │
@@ -118,8 +126,10 @@ AI 기반 암호화폐 자동매매 시스템으로, **멀티코인 스캐닝 + 
 
 ```
 dg_bot/
-├── main.py                    # 실전 트레이딩 메인 스크립트 (파이프라인)
-├── scheduler_main.py          # 스케줄러 진입점 (1시간 주기)
+├── main.py                    # 실전 트레이딩 메인 스크립트
+│   ├── execute_trading_cycle()         # 1시간 주기 거래 사이클 (진입 탐색)
+│   └── execute_position_management_cycle()  # 15분 주기 포지션 관리
+├── scheduler_main.py          # 스케줄러 진입점 (듀얼 타임프레임)
 │
 ├── src/                       # 핵심 소스 코드
 │   ├── api/                   # API 클라이언트
@@ -146,7 +156,7 @@ dg_bot/
 │   │
 │   ├── scanner/               # 🆕 멀티코인 스캐닝 모듈
 │   │   ├── __init__.py
-│   │   ├── liquidity_scanner.py  # 유동성 스캔 (상위 20개)
+│   │   ├── liquidity_scanner.py  # 유동성 스캔 (상위 10개)
 │   │   ├── data_sync.py          # 과거 데이터 동기화 (Parquet)
 │   │   ├── multi_backtest.py     # 병렬 백테스팅 (12가지 퀀트 필터)
 │   │   └── coin_selector.py      # 코인 선택 파이프라인
@@ -174,14 +184,15 @@ dg_bot/
 │   │   ├── signal_analyzer.py # 신호 분석기
 │   │   └── pipeline/          # 파이프라인 아키텍처
 │   │       ├── __init__.py
-│   │       ├── base_stage.py      # 베이스 스테이지 클래스
-│   │       ├── trading_pipeline.py # 파이프라인 오케스트레이터
-│   │       ├── risk_stage.py      # 리스크 체크 스테이지
-│   │       ├── adaptive_stage.py  # 🆕 AdaptiveRiskCheckStage (포지션 분기)
-│   │       ├── coin_scan_stage.py # 🆕 CoinScanStage (멀티코인 스캐닝)
-│   │       ├── data_stage.py      # 데이터 수집 스테이지
-│   │       ├── analysis_stage.py  # 분석 스테이지
-│   │       └── execution_stage.py # 실행 스테이지
+│   │       ├── base_stage.py           # 베이스 스테이지 클래스
+│   │       ├── trading_pipeline.py     # 파이프라인 오케스트레이터
+│   │       ├── risk_check_stage.py     # 리스크 체크 스테이지
+│   │       ├── adaptive_stage.py       # AdaptiveRiskCheckStage (포지션 분기)
+│   │       ├── hybrid_stage.py         # 🆕 HybridRiskCheckStage (진입/관리 통합)
+│   │       ├── coin_scan_stage.py      # CoinScanStage (멀티코인 스캐닝)
+│   │       ├── data_collection_stage.py # 데이터 수집 스테이지
+│   │       ├── analysis_stage.py       # 분석 스테이지
+│   │       └── execution_stage.py      # 실행 스테이지
 │   │
 │   ├── utils/                 # 유틸리티
 │   │   ├── logger.py          # 로깅 유틸리티
@@ -335,7 +346,7 @@ class MultiBacktestConfig:
 
 - **역할**: 전체 스캐닝 파이프라인 조율
 - **5단계 필터링**:
-  1. 유동성 스캔 (20개)
+  1. 유동성 스캔 (10개)
   2. 데이터 동기화
   3. 병렬 백테스팅 (5개 통과)
   4. AI 진입 분석
@@ -473,7 +484,39 @@ class PortfolioManager:
 
 - **역할**: 종합 시장 데이터를 분석하여 매수/매도/보유 결정 생성
 - **입력**: 차트 데이터, 오더북, 기술적 지표, 포지션 정보, 백테스팅 결과
-- **출력**: decision (buy/sell/hold), confidence, reason
+- **출력**: decision (buy/sell/hold), confidence, reason, regime_analysis, rejection_reasons
+
+**🎯 리스크 헌터(Risk Hunter) 페르소나**:
+- AI의 임무: "이 거래를 막을 이유를 적극적으로 찾는 것"
+- 설득력 있는 이유가 없을 때만 거래 승인
+- 확증 편향 방지를 위한 비판적 시각 유지
+
+**Regime 분석 (핵심 질문)**:
+> "현재의 변동성(ATR), 거래량, 오더북 상태가 지난 30일간 성과를 냈던 시장 환경과 유사합니까?"
+
+**안전 조건 (5가지, 모두 충족 필요)**:
+| 조건 | 설명 |
+|------|------|
+| 오더북 안전 | 매도벽 비율 < 5% (현재가 위 큰 매도벽 없음) |
+| 추세 명확 | ADX > 25 (강한 추세 존재) |
+| 거래량 확인 | 현재 거래량 > 평균의 1.5배 AND 가격 방향 일치 |
+| BB 패턴 | 상단 터치 후 즉시 하락 패턴 아님 |
+| Regime 일관성 | 현재 시장 환경이 최근 30일과 유사 |
+
+**위험 조건 (6가지, 하나라도 있으면 중단)**:
+| 조건 | 설명 |
+|------|------|
+| BTC 급락 위험 | 베타 > 1.2, 알파 < 0, BTC 하락 중 |
+| RSI 다이버전스 | 가격 상승하지만 RSI 고점 하락 |
+| 플래시 크래시 | 비정상적 급락 (ATR 대비 2배 이상) |
+| 극단적 탐욕 | 공포탐욕지수 > 75 (과열 시장) |
+| Price-Volume 괴리 | 가격 상승하지만 거래량 감소 |
+| Alpha 음수 | BTC 대비 성과가 마이너스 |
+
+**판단 기준**:
+- **BUY**: 안전 조건 모두 충족 + 위험 조건 없음 + 막을 이유 못 찾음
+- **HOLD**: 안전 조건 미충족 또는 위험 조건 1개 이상
+- **SELL**: 위험 조건 2개 이상 또는 명백한 플래시 크래시
 
 #### AIDecisionValidator (`src/ai/validator.py`)
 
@@ -499,9 +542,58 @@ class PortfolioManager:
 
 ### 7. 백테스팅 시스템 (`src/backtesting/`)
 
-- **Backtester**: 백테스팅 엔진
-- **QuickBacktestFilter**: 12가지 퀀트 필터 적용
-- **RuleBasedBreakoutStrategy**: 변동성 돌파 전략 (3단계 관문)
+#### Backtester (`src/backtesting/backtester.py`)
+
+- **역할**: 백테스팅 엔진 (과거 데이터 기반 전략 시뮬레이션)
+- **주요 특징**:
+  - **Look-Ahead Bias 방지**: `execute_on_next_open=True`로 t시점 종가 신호 → t+1시점 시가 체결
+  - 슬리피지 모델: 퍼센트 기반 또는 오더북 기반
+  - 분할 주문 지원
+  - 성과 지표 연율화 (`data_interval` 파라미터)
+
+#### QuickBacktestFilter (`src/backtesting/quick_filter.py`)
+
+- **역할**: AI 호출 없이 12가지 퀀트 필터로 빠른 전략 검증
+- **12가지 필터 조건** (모두 통과해야 실전 거래 진행):
+
+| 카테고리 | 필터 | 기준값 | 설명 |
+|---------|------|--------|------|
+| **수익성** | 수익률 | ≥ 15% | 2년간 15% (연 7.5%) |
+| | 승률 | ≥ 38% | 돌파 전략 특성상 낮지만 손익비로 보완 |
+| | 손익비 (Profit Factor) | ≥ 1.8 | 수수료/슬리피지 고려 |
+| **위험조정수익** | Sharpe Ratio | ≥ 1.0 | 기관 기준 1.0 미만은 투자 부적격 |
+| | Sortino Ratio | ≥ 1.2 | 하방 리스크 고려 |
+| | Calmar Ratio | ≥ 0.8 | 수익률/최대낙폭 |
+| **리스크관리** | 최대 낙폭 (MDD) | ≤ 15% | 15% 초과 시 심리적 압박 |
+| | 연속 손실 | ≤ 5회 | 5회 초과 시 전략 재검토 |
+| | 연율 변동성 | ≤ 50% | 너무 높으면 위험 |
+| **통계유의성** | 최소 거래 수 | ≥ 20 | 20회 이상이어야 통계적 의미 |
+| **거래품질** | 평균 손익비 | ≥ 1.3 | 평균 수익/평균 손실 |
+| | 평균 보유 시간 | ≤ 168h | 7일 초과 시 자본 효율 저하 |
+
+#### RuleBasedBreakoutStrategy (`src/backtesting/rule_based_strategy.py`)
+
+- **역할**: 변동성 돌파 전략 (AI 호출 없이 **4단계 관문** 룰 기반)
+- **최신 퀀트 트렌드 반영**:
+
+**진입 조건 (4단계 관문)**:
+| Gate | 이름 | 조건 | 설명 |
+|------|------|------|------|
+| Gate 0 | 추세 필터 | 현재가 > MA(50) | 하락장 가짜 돌파(데드캣 바운스) 차단 |
+| Gate 1 | 응축 확인 | BB 폭 < 평균 또는 ADX < 25 | 볼린저 밴드 폭 축소 확인 |
+| Gate 2 | 돌파 발생 | 20일 고점 돌파 또는 래리 윌리엄스 | 동적 K값 지원 (노이즈 비율 기반) |
+| Gate 3 | 거래량 확인 | Volume > 평균 × 1.5 또는 OBV 정배열 | 매수세 유입 확인 |
+
+**청산 조건 (5가지)**:
+| 조건 | 기준 | 설명 |
+|------|------|------|
+| 스탑로스 | ATR × 1.0 | 손실 보호 최우선 |
+| Fakeout | 3봉 내 -2% | 진입 직후 급락 시 즉시 탈출 |
+| 타겟가 | ATR × 1.5 | 손익비 1:1.5 익절 |
+| ADX 약화 | ADX < 20 (급락) | 추세 반전 감지 |
+| 타임아웃 | 24봉 + 수익률 < 2% | 모멘텀 부족 |
+
+- **성능 최적화**: `prepare_indicators()`로 지표 사전 계산 (O(N²) → O(N))
 
 ## 🔄 시스템 워크플로우
 
@@ -529,7 +621,7 @@ class PortfolioManager:
   [LiquidityScanner]
     - 업비트 KRW 마켓 전체 스캔
     - 거래대금 100억원+ 필터링
-    - 상위 20개 코인 추출
+    - 상위 10개 코인 추출
     ↓
   [HistoricalDataSync]
     - 2년치 데이터 동기화
@@ -599,22 +691,43 @@ class PortfolioManager:
 ### 3. 스케줄러 자동 트레이딩 (scheduler_main.py)
 
 ```
-APScheduler (1시간 주기)
-    ↓
-서비스 초기화
-    ↓
-execute_trading_cycle(use_multi_coin=True/False) 호출
-    ↓
-멀티코인 파이프라인 또는 적응형 파이프라인 실행
-    ↓
-Telegram 4-Stage 알림
-  1. 사이클 시작
-  2. 백테스팅 결과 (멀티코인 시 스캔 결과)
-  3. AI 판단
-  4. 포트폴리오 현황
-    ↓
-Prometheus 메트릭 기록
+APScheduler (듀얼 타임프레임)
+    │
+    ├─ [매 1시간] trading_job()
+    │       ↓
+    │   서비스 초기화
+    │       ↓
+    │   execute_trading_cycle(enable_scanning=True) 호출
+    │       ↓
+    │   멀티코인 스캔 + AI 분석 + 진입 탐색
+    │       ↓
+    │   Telegram 5단계 알림
+    │     1. 사이클 시작
+    │     2. 스캔 진행 상황
+    │     3. 백테스팅 결과
+    │     4. AI 판단
+    │     5. 포트폴리오 현황
+    │       ↓
+    │   Prometheus 메트릭 기록
+    │
+    └─ [매 15분] position_management_job()
+            ↓
+        보유 포지션 확인
+            ↓
+        execute_position_management_cycle() 호출
+            ↓
+        규칙 기반 손절/익절 체크 (AI 없음)
+            ↓
+        청산 시 Telegram 알림
 ```
+
+**스케줄러 작업 목록**:
+| 작업 | 주기 | 설명 |
+|------|------|------|
+| `trading_job` | 1시간 | 멀티코인 스캔 + AI 분석 + 진입 탐색 |
+| `position_management_job` | 15분 | 보유 포지션 손절/익절 관리 |
+| `portfolio_snapshot_job` | 1시간 | 포트폴리오 스냅샷 DB 저장 |
+| `daily_report_job` | 매일 09:00 | 일일 리포트 텔레그램 발송 |
 
 ## 🏗 계층 구조
 
@@ -1148,8 +1261,8 @@ python -m pytest tests/ --cov=src --cov-report=html
 
 ---
 
-**현재 버전**: 4.2.0
+**현재 버전**: 4.3.0
 **마지막 업데이트**: 2026-01-02
-**아키텍처**: Clean Architecture + Multi-Coin Scanning + Adaptive Pipeline + Portfolio Management
+**아키텍처**: Clean Architecture + Multi-Coin Scanning + Dual-Timeframe Pipeline + Portfolio Management
 **상태**: 프로덕션 준비 완료 ✅
-**문서 상태**: ✨ Clean Architecture 마이그레이션 완료
+**문서 상태**: ✨ 듀얼 타임프레임 (1시간 + 15분) 아키텍처 완료

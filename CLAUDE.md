@@ -100,26 +100,36 @@ docker exec -it dg_bot-postgres-1 psql -U postgres -d trading_bot
 
 ### System Flow
 
-The bot operates on a **dual-mode architecture**:
+The bot operates on a **dual-timeframe architecture**:
 
-1. **Standalone Mode** (`main.py`): Single execution of trading cycle
-2. **Scheduler Mode** (`scheduler_main.py`): Automated 1-hour interval execution
+1. **Trading Job** (1시간): 멀티코인 스캔 + AI 분석 + 진입 탐색
+2. **Position Management Job** (15분): 보유 포지션 손절/익절 관리
+3. **Portfolio Snapshot Job** (1시간): 포트폴리오 스냅샷 저장
+4. **Daily Report Job** (매일 09:00): 일일 리포트 Telegram 전송
+
+**스케줄러 작업 구성:**
+| 작업 | 주기 | 설명 |
+|------|------|------|
+| `trading_job` | 1시간 | `execute_trading_cycle()` → HybridTradingPipeline |
+| `position_management_job` | 15분 | `execute_position_management_cycle()` → 규칙 기반 |
+| `portfolio_snapshot_job` | 1시간 | DB 저장 |
+| `daily_report_job` | 09:00 | Telegram |
 
 **Key Flow** (Clean Architecture - 2026-01-02 마이그레이션 완료):
 ```
-scheduler_main.py / main.py
-  → Container.create_from_legacy() (DI Container 초기화)
-    → TradingPipeline.execute() (async 파이프라인)
-      → DataCollectionStage (데이터 수집)
-      → HybridRiskCheckStage (리스크 체크)
-      → AnalysisStage (분석)
-          ├── Container 있음 → AnalyzeMarketUseCase (클린 아키텍처)
-          └── Container 없음 → AIService (레거시 호환)
-      → ExecutionStage (거래 실행)
-          ├── Container 있음 → ExecuteTradeUseCase (클린 아키텍처)
-          └── Container 없음 → TradingService (레거시 호환)
-      → Database recording (via backend models)
-      → Telegram notifications
+scheduler_main.py
+  ├─ trading_job() [1시간]
+  │   → execute_trading_cycle()
+  │       → HybridTradingPipeline.execute()
+  │           → HybridRiskCheckStage (포지션 확인 + 코인 스캔 + 백테스팅)
+  │           → DataCollectionStage (데이터 수집)
+  │           → AnalysisStage (AI 분석)
+  │           → ExecutionStage (거래 실행)
+  │
+  └─ position_management_job() [15분]
+      → execute_position_management_cycle()
+          → PositionManagementPipeline.execute()
+              → 규칙 기반 손절/익절 체크 (AI 호출 없음)
 ```
 
 ### Directory Structure
@@ -251,8 +261,11 @@ dg_bot/
 - Significantly reduces AI API costs
 
 **Scheduler** (`backend/app/core/scheduler.py`):
-- APScheduler configuration for 1-hour interval jobs
-- `trading_job()`: Main scheduled task
+- APScheduler configuration for dual-timeframe jobs
+- `trading_job()` [1시간]: 멀티코인 스캔 + AI 분석 + 진입 탐색
+- `position_management_job()` [15분]: 보유 포지션 손절/익절 관리 (규칙 기반, AI 호출 없음)
+- `portfolio_snapshot_job()` [1시간]: 포트폴리오 스냅샷 DB 저장
+- `daily_report_job()` [09:00]: 일일 리포트 Telegram 전송
 - Handles error recovery, duplicate prevention (max_instances=1)
 
 **Database Models** (`backend/app/models/`):
@@ -322,20 +335,158 @@ python -m pytest tests/unit/infrastructure/ -v
 
 ## Development Guidelines
 
-### TDD (Test-Driven Development)
+### ⚠️ TDD (Test-Driven Development) - 필수 준수사항
 
-This project strictly follows TDD principles (see `.cursorrules`):
+**이 프로젝트는 TDD를 엄격히 준수합니다. 모든 코드 작성 전 테스트를 먼저 작성해야 합니다.**
 
-1. **Red**: Write failing test first
-2. **Green**: Write minimal code to pass test
-3. **Refactor**: Optimize code while keeping tests green
+#### TDD 사이클 (Red-Green-Refactor)
 
-**Test Structure**:
-- All tests in `tests/` directory
-- Use `@pytest.mark.unit` for unit tests
-- Use `@pytest.mark.integration` for integration tests
-- Fixtures in `conftest.py`
-- Follow Given-When-Then pattern
+1. **Red (실패하는 테스트 작성)**
+   - 구현할 기능의 테스트를 먼저 작성
+   - 테스트 실행하여 실패 확인 (반드시 실패해야 함)
+   - 테스트가 명확한 요구사항을 정의해야 함
+
+2. **Green (최소한의 코드로 테스트 통과)**
+   - 테스트를 통과시키는 최소한의 코드만 작성
+   - 완벽한 코드가 아니어도 됨 - 테스트만 통과하면 됨
+   - `python -m pytest tests/해당_테스트.py -v` 로 확인
+
+3. **Refactor (코드 개선)**
+   - 테스트가 통과하는 상태에서 코드 품질 개선
+   - 중복 제거, 가독성 향상, 성능 최적화
+   - 리팩토링 후에도 모든 테스트 통과 확인
+
+#### TDD 필수 체크리스트
+
+```markdown
+새 기능 개발 시:
+[ ] 테스트 파일 생성 (tests/test_기능명.py)
+[ ] 실패하는 테스트 작성
+[ ] 테스트 실행하여 실패 확인
+[ ] 최소 코드 작성하여 테스트 통과
+[ ] 리팩토링 및 추가 테스트 케이스 작성
+[ ] 전체 테스트 실행 (python -m pytest tests/ -v)
+
+버그 수정 시:
+[ ] 버그를 재현하는 테스트 작성
+[ ] 테스트 실행하여 실패 확인 (버그 재현)
+[ ] 버그 수정 코드 작성
+[ ] 테스트 통과 확인
+[ ] 회귀 테스트로 유지
+```
+
+#### 테스트 구조
+
+```
+tests/
+├── conftest.py              # 공통 픽스처
+├── unit/                    # 단위 테스트
+│   ├── domain/              # 도메인 계층 (순수 로직)
+│   ├── application/         # 유스케이스 (mock 사용)
+│   └── infrastructure/      # 어댑터 (통합 테스트)
+├── integration/             # 통합 테스트
+└── e2e/                     # End-to-End 테스트
+```
+
+#### 테스트 마커
+
+```python
+@pytest.mark.unit           # 단위 테스트
+@pytest.mark.integration    # 통합 테스트
+@pytest.mark.slow           # 느린 테스트
+@pytest.mark.skip           # 임시 스킵
+```
+
+#### Given-When-Then 패턴
+
+```python
+def test_buy_order_execution():
+    # Given (준비)
+    upbit_client = Mock()
+    trading_service = TradingService(upbit_client)
+
+    # When (실행)
+    result = trading_service.buy("KRW-BTC", 100000)
+
+    # Then (검증)
+    assert result.success is True
+    assert result.amount > 0
+```
+
+**⚠️ TDD 없이 작성된 코드는 리뷰에서 거절됩니다.**
+
+### 📝 문서 업데이트 - 필수 준수사항
+
+**모든 코드 변경 후에는 반드시 관련 문서를 업데이트해야 합니다.**
+
+#### 문서 업데이트 체크리스트
+
+```markdown
+코드 변경 후:
+[ ] 변경된 기능이 docs/에 반영되었는가?
+[ ] ARCHITECTURE.md에 구조 변경이 반영되었는가?
+[ ] 다이어그램(docs/diagrams/)이 최신 상태인가?
+[ ] CLAUDE.md에 새 컴포넌트가 반영되었는가?
+[ ] 관련 가이드 문서가 업데이트되었는가?
+```
+
+#### 문서 업데이트가 필요한 경우
+
+1. **새 파일/모듈 추가**: ARCHITECTURE.md, CLAUDE.md 디렉토리 구조 업데이트
+2. **파이프라인 스테이지 변경**: SCHEDULER_GUIDE.md, 다이어그램 업데이트
+3. **스케줄러 작업 변경**: SCHEDULER_GUIDE.md 업데이트
+4. **AI 프롬프트 변경**: AI 관련 문서 업데이트
+5. **설정값 변경**: 관련 가이드 문서 업데이트
+6. **API 변경**: API 문서 업데이트
+
+#### ⚠️ 설정값 변경 시 필수 동기화 절차
+
+**설정값(숫자, 비율, 개수 등)을 변경할 때 반드시 아래 절차를 따르세요:**
+
+```bash
+# 1. grep으로 해당 값의 모든 참조 확인
+grep -r "변경할값\|관련키워드" --include="*.py" --include="*.md" --include="*.mmd"
+
+# 2. 예시: liquidity_top_n을 20에서 10으로 변경할 때
+grep -r "liquidity_top_n\|20개\|상위 20" --include="*.py" --include="*.md" --include="*.mmd"
+```
+
+**확인해야 할 위치:**
+
+| 설정값 | 확인 파일 |
+|--------|----------|
+| `liquidity_top_n` | settings.py, main.py, trading_pipeline.py, coin_scan_stage.py, coin_selector.py, ARCHITECTURE.md, 08-multi-coin-scanning.mmd, test_coin_scan_stage.py, test_scanner_coin_selector.py |
+| `backtest_top_n` | 동일 |
+| `final_select_n` | 동일 |
+| `stop_loss_pct` | settings.py, RISK_MANAGEMENT_CONFIG.md, ARCHITECTURE.md |
+| `take_profit_pct` | 동일 |
+
+**설정값의 단일 소스 (Single Source of Truth):**
+- 모든 설정값은 `src/config/settings.py`에 정의되어야 합니다
+- 각 Config 클래스에는 변경 시 업데이트해야 할 파일 목록이 주석으로 명시되어 있습니다
+- 예: `ScannerConfig` 클래스 docstring 참조
+
+```python
+# src/config/settings.py에서 설정값 import
+from src.config.settings import ScannerConfig
+
+# 사용
+liquidity_top_n = ScannerConfig.LIQUIDITY_TOP_N
+```
+
+**⚠️ 설정값 변경 후 grep 확인 없이 커밋하지 마세요.**
+
+#### 문서 위치 규칙
+
+```
+docs/
+├── guide/          # 사용자 가이드 (HOW-TO)
+├── plans/          # 구현 계획 (PLAN_*.md)
+├── diagrams/       # Mermaid 다이어그램 (.mmd)
+└── reviews/        # 코드 리뷰 결과
+```
+
+**⚠️ 문서 업데이트 없이 PR/커밋하지 마세요.**
 
 ### Virtual Environment (venv)
 
@@ -430,7 +581,13 @@ All in `src/config/settings.py`:
 
 ### Scheduler Behavior
 
-- Runs every 1 hour (configurable in `scheduler.py`)
+**듀얼 타임프레임 구조:**
+- `trading_job`: 매 1시간 (진입 탐색)
+- `position_management_job`: 매 15분 (포지션 관리)
+- `portfolio_snapshot_job`: 매 1시간 (포트폴리오 스냅샷)
+- `daily_report_job`: 매일 09:00 (일일 리포트)
+
+**안정성:**
 - `max_instances=1` prevents concurrent executions
 - Graceful shutdown on SIGINT/SIGTERM
 - Auto-recovery on errors (logs to Sentry if enabled)

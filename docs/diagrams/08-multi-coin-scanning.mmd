@@ -27,7 +27,7 @@ sequenceDiagram
     Upbit-->>LiquidityScanner: 현재가, 거래대금
     LiquidityScanner->>LiquidityScanner: 거래대금 기준 정렬
     Note over LiquidityScanner: 필터: min_volume_krw > 100억원
-    LiquidityScanner-->>CoinSelector: List[CoinInfo] (상위 20개)
+    LiquidityScanner-->>CoinSelector: List[CoinInfo] (상위 10개)
 
     Note over CoinSelector: Phase 2: 과거 데이터 동기화
 

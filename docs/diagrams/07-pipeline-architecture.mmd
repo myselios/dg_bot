@@ -1,35 +1,29 @@
 flowchart TB
-    subgraph Main["main.py - execute_trading_cycle()"]
+    subgraph Main["main.py - 듀얼 타임프레임"]
         START((시작))
-        SELECT{파이프라인 선택}
+        SELECT{사이클 타입}
+    end
+
+    subgraph Cycles["사이클 타입"]
+        TRADING["execute_trading_cycle()<br/>(1시간 주기)"]
+        POSITION["execute_position_management_cycle()<br/>(15분 주기)"]
     end
 
     subgraph Pipelines["파이프라인 타입"]
-        MULTI[create_multi_coin_trading_pipeline]
-        ADAPTIVE[create_adaptive_trading_pipeline]
-        BASIC[create_spot_trading_pipeline]
+        HYBRID[create_hybrid_trading_pipeline]
+        POSMGMT[create_position_management_pipeline]
     end
 
-    subgraph MultiCoinPipeline["멀티코인 파이프라인 (5 스테이지)"]
-        M1[AdaptiveRiskCheckStage]
-        M2[CoinScanStage]
-        M3[DataCollectionStage]
-        M4[AnalysisStage]
-        M5[ExecutionStage]
+    subgraph HybridPipeline["하이브리드 파이프라인 (4 스테이지)"]
+        H1[HybridRiskCheckStage<br/>리스크 체크 + 코인 스캔]
+        H2[DataCollectionStage]
+        H3[AnalysisStage]
+        H4[ExecutionStage]
     end
 
-    subgraph AdaptivePipeline["적응형 파이프라인 (4 스테이지)"]
-        A1[AdaptiveRiskCheckStage]
-        A2[DataCollectionStage]
-        A3[AnalysisStage]
-        A4[ExecutionStage]
-    end
-
-    subgraph BasicPipeline["기본 파이프라인 (4 스테이지)"]
-        B1[RiskCheckStage]
-        B2[DataCollectionStage]
-        B3[AnalysisStage]
-        B4[ExecutionStage]
+    subgraph PositionPipeline["포지션 관리 파이프라인 (2 스테이지)"]
+        P1[PositionCheckStage]
+        P2[PositionExecutionStage]
     end
 
     subgraph Context["PipelineContext"]
@@ -47,38 +41,36 @@ flowchart TB
     end
 
     START --> SELECT
-    SELECT -->|use_multi_coin=True| MULTI
-    SELECT -->|use_adaptive=True| ADAPTIVE
-    SELECT -->|기본| BASIC
+    SELECT -->|1시간 주기| TRADING
+    SELECT -->|15분 주기| POSITION
 
-    MULTI --> M1
-    M1 -->|continue| M2
-    M2 -->|continue| M3
-    M3 -->|continue| M4
-    M4 -->|continue| M5
+    TRADING --> HYBRID
+    POSITION --> POSMGMT
 
-    ADAPTIVE --> A1
-    A1 -->|continue| A2
-    A2 -->|continue| A3
-    A3 -->|continue| A4
+    HYBRID --> H1
+    H1 -->|continue| H2
+    H2 -->|continue| H3
+    H3 -->|continue| H4
 
-    BASIC --> B1
-    B1 -->|continue| B2
-    B2 -->|continue| B3
-    B3 -->|continue| B4
+    POSMGMT --> P1
+    P1 -->|continue| P2
 
-    M1 -.->|읽기/쓰기| CTX_BASE
-    M2 -.->|읽기/쓰기| CTX_BASE
-    M3 -.->|읽기/쓰기| CTX_DATA
-    M4 -.->|읽기/쓰기| CTX_ANALYSIS
-    M5 -.->|읽기| CTX_ANALYSIS
+    H1 -.->|읽기/쓰기| CTX_BASE
+    H1 -.->|읽기/쓰기| CTX_RISK
+    H2 -.->|읽기/쓰기| CTX_DATA
+    H3 -.->|읽기/쓰기| CTX_ANALYSIS
+    H4 -.->|읽기| CTX_ANALYSIS
 
-    style MULTI fill:#e1f5fe
-    style ADAPTIVE fill:#fff3e0
-    style BASIC fill:#f3e5f5
+    P1 -.->|읽기/쓰기| CTX_BASE
+    P2 -.->|읽기| CTX_BASE
 
-    style M1 fill:#bbdefb
-    style M2 fill:#bbdefb
-    style A1 fill:#ffe0b2
-    style B1 fill:#e1bee7
+    style TRADING fill:#e1f5fe
+    style POSITION fill:#fff3e0
+
+    style H1 fill:#bbdefb
+    style H2 fill:#bbdefb
+    style H3 fill:#bbdefb
+    style H4 fill:#bbdefb
+    style P1 fill:#ffe0b2
+    style P2 fill:#ffe0b2
 
