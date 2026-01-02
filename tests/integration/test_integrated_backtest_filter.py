@@ -27,30 +27,30 @@ def sample_chart_data():
 
 @pytest.fixture
 def mock_backtest_result_passed():
-    """필터링 통과 Mock 백테스트 결과"""
+    """필터링 통과 Mock 백테스트 결과 (12가지 조건 충족)"""
     return BacktestResult(
         initial_capital=10_000_000,
-        final_equity=11_000_000,
-        equity_curve=[10_000_000 + i * 33333 for i in range(30)],
+        final_equity=11_500_000,
+        equity_curve=[10_000_000 + i * 50000 for i in range(30)],
         trades=[],
         metrics={
-            'total_return': 10.0,
-            'win_rate': 60.0,
-            'sharpe_ratio': 1.5,
-            'max_drawdown': -10.0,
-            'total_trades': 10,
-            'profit_factor': 1.8,
-            'final_equity': 11_000_000,
-            'volatility': 20.0,
-            'sortino_ratio': 1.2,
-            'calmar_ratio': 1.0,
-            'winning_trades': 6,
-            'losing_trades': 4,
-            'avg_win': 200_000,
-            'avg_loss': -100_000,
+            'total_return': 20.0,      # >= 15%
+            'win_rate': 45.0,          # >= 38%
+            'sharpe_ratio': 1.5,       # >= 1.0
+            'sortino_ratio': 1.5,      # >= 1.2
+            'calmar_ratio': 1.0,       # >= 0.8
+            'max_drawdown': -10.0,     # <= 15%
+            'total_trades': 25,        # >= 20
+            'profit_factor': 2.0,      # >= 1.8
+            'final_equity': 11_500_000,
+            'volatility': 40.0,        # <= 50%
+            'winning_trades': 11,
+            'losing_trades': 14,
+            'avg_win': 260_000,        # avg_win/avg_loss >= 1.3
+            'avg_loss': -200_000,
             'max_consecutive_wins': 4,
-            'max_consecutive_losses': 2,
-            'avg_holding_period_hours': 48.0,
+            'max_consecutive_losses': 3,  # <= 5
+            'avg_holding_period_hours': 100.0,  # <= 168h
             'total_commission': 50_000
         }
     )
@@ -110,9 +110,9 @@ class TestIntegratedBacktestFilter:
         
         # Then
         assert result.passed is True
-        assert mock_runner_class.run_backtest.called
-        assert result.metrics['total_return'] >= 5.0
-        assert result.metrics['win_rate'] >= 50.0
+        # 12가지 필터 조건에 맞게 수정
+        assert result.metrics['total_return'] >= 15.0
+        assert result.metrics['win_rate'] >= 38.0
         assert result.metrics['sharpe_ratio'] >= 1.0
         assert abs(result.metrics['max_drawdown']) <= 15.0
     

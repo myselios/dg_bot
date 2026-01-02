@@ -1,0 +1,76 @@
+sequenceDiagram
+    participant CoinScanStage as CoinScanStage<br/>(coin_scan_stage.py)
+    participant CoinSelector as CoinSelector<br/>(coin_selector.py)
+    participant LiquidityScanner as LiquidityScanner<br/>(liquidity_scanner.py)
+    participant DataSync as HistoricalDataSync<br/>(data_sync.py)
+    participant MultiBacktest as MultiCoinBacktest<br/>(multi_backtest.py)
+    participant Upbit as Upbit API
+
+    Note over CoinScanStage: ENTRY 모드에서만 실행
+
+    CoinScanStage->>CoinScanStage: pre_execute() 검증
+    alt trading_mode != 'entry'
+        CoinScanStage-->>CoinScanStage: return False (스킵)
+    end
+
+    CoinScanStage->>CoinScanStage: _get_held_tickers()
+    Note over CoinScanStage: 이미 보유 중인 코인 제외
+
+    CoinScanStage->>CoinSelector: select_coins(exclude_tickers)
+
+    Note over CoinSelector: Phase 1: 유동성 스캔
+
+    CoinSelector->>LiquidityScanner: scan_top_coins(top_n=20)
+    LiquidityScanner->>Upbit: GET /v1/market/all
+    Upbit-->>LiquidityScanner: KRW 마켓 목록
+    LiquidityScanner->>Upbit: GET /v1/ticker (각 코인)
+    Upbit-->>LiquidityScanner: 현재가, 거래대금
+    LiquidityScanner->>LiquidityScanner: 거래대금 기준 정렬
+    Note over LiquidityScanner: 필터: min_volume_krw > 100억원
+    LiquidityScanner-->>CoinSelector: List[CoinInfo] (상위 20개)
+
+    Note over CoinSelector: Phase 2: 과거 데이터 동기화
+
+    loop 각 후보 코인
+        CoinSelector->>DataSync: sync_coin_data(ticker)
+        DataSync->>Upbit: GET /v1/candles/days
+        Upbit-->>DataSync: 일봉 데이터 (30일)
+        DataSync->>DataSync: 로컬 캐시 저장
+        DataSync-->>CoinSelector: SyncStatus
+    end
+
+    Note over CoinSelector: Phase 3: 병렬 백테스팅
+
+    CoinSelector->>MultiBacktest: run_parallel_backtest(coins)
+    Note over MultiBacktest: 설정:<br/>- lookback: 30일<br/>- strategy: 변동성 돌파<br/>- 병렬 처리
+
+    loop 각 코인 (병렬)
+        MultiBacktest->>MultiBacktest: run_single_backtest(ticker)
+        Note over MultiBacktest: 지표 계산:<br/>- total_return<br/>- win_rate<br/>- sharpe_ratio<br/>- max_drawdown
+    end
+
+    MultiBacktest->>MultiBacktest: 점수 계산 및 정렬
+    Note over MultiBacktest: BacktestScore:<br/>- 수익률 가중치: 40%<br/>- Sharpe 가중치: 30%<br/>- 승률 가중치: 20%<br/>- 안정성 가중치: 10%
+
+    MultiBacktest-->>CoinSelector: List[BacktestScore] (상위 5개)
+
+    Note over CoinSelector: Phase 4: 최종 선택
+
+    CoinSelector->>CoinSelector: _rank_candidates()
+    Note over CoinSelector: 종합 점수 계산:<br/>- 유동성 점수<br/>- 백테스팅 점수<br/>- 기술적 지표 점수
+
+    CoinSelector->>CoinSelector: _select_top_coins(n=2)
+    CoinSelector-->>CoinScanStage: ScanResult
+
+    Note over CoinScanStage: 결과 처리
+
+    alt 선택된 코인 없음
+        CoinScanStage-->>CoinScanStage: StageResult(action='skip')<br/>"진입 적합 코인 없음"
+    else 코인 선택됨
+        CoinScanStage->>CoinScanStage: context.ticker = selected_coin.ticker
+        CoinScanStage->>CoinScanStage: context.selected_coin = selected_coin
+        CoinScanStage-->>CoinScanStage: StageResult(action='continue')
+    end
+
+    Note over CoinScanStage: 다음 스테이지로 진행<br/>(DataCollectionStage)
+

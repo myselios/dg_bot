@@ -65,30 +65,30 @@ def sample_multi_timeframe_data():
 
 @pytest.fixture
 def mock_backtest_result_passed():
-    """필터링 통과 Mock 백테스트 결과"""
+    """필터링 통과 Mock 백테스트 결과 (12가지 조건 충족)"""
     return BacktestResult(
         initial_capital=10_000_000,
-        final_equity=11_000_000,
-        equity_curve=[10_000_000 + i * 33333 for i in range(30)],
+        final_equity=11_500_000,
+        equity_curve=[10_000_000 + i * 50000 for i in range(30)],
         trades=[],
         metrics={
-            'total_return': 10.0,      # 10% 수익률 (5% 초과)
-            'win_rate': 60.0,          # 60% 승률 (50% 초과)
-            'sharpe_ratio': 1.5,       # 1.5 (1.0 초과)
-            'max_drawdown': -10.0,     # -10% (15% 미만)
-            'total_trades': 10,
-            'profit_factor': 1.8,
-            'final_equity': 11_000_000,
-            'volatility': 20.0,
-            'sortino_ratio': 1.2,
-            'calmar_ratio': 1.0,
-            'winning_trades': 6,
-            'losing_trades': 4,
-            'avg_win': 200_000,
-            'avg_loss': -100_000,
+            'total_return': 20.0,      # 20% 수익률 (>= 15%)
+            'win_rate': 45.0,          # 45% 승률 (>= 38%)
+            'sharpe_ratio': 1.5,       # 1.5 (>= 1.0)
+            'sortino_ratio': 1.5,      # 1.5 (>= 1.2)
+            'calmar_ratio': 1.0,       # 1.0 (>= 0.8)
+            'max_drawdown': -10.0,     # -10% (<= 15%)
+            'total_trades': 25,        # 25 (>= 20)
+            'profit_factor': 2.0,      # 2.0 (>= 1.8)
+            'final_equity': 11_500_000,
+            'volatility': 40.0,        # 40% (<= 50%)
+            'winning_trades': 11,
+            'losing_trades': 14,
+            'avg_win': 260_000,        # 260000/200000 = 1.3 (>= 1.3)
+            'avg_loss': -200_000,
             'max_consecutive_wins': 4,
-            'max_consecutive_losses': 2,
-            'avg_holding_period_hours': 48.0,
+            'max_consecutive_losses': 3,  # 3 (<= 5)
+            'avg_holding_period_hours': 100.0,  # 100h (<= 168h)
             'total_commission': 50_000
         }
     )
@@ -133,17 +133,18 @@ class TestQuickBacktestConfig:
         """기본 설정 테스트"""
         # When
         config = QuickBacktestConfig()
-        
+
         # Then
-        assert config.days == 730  # 변경됨: 365 -> 730 (2년)
-        assert config.use_local_data == True  # 새로 추가됨
+        assert config.days == 730  # 2년
+        assert config.use_local_data == True
         assert config.initial_capital == 10_000_000
         assert config.commission == 0.0005
         assert config.slippage == 0.0001
-        assert config.min_return == 3.0
-        assert config.min_win_rate == 35.0
-        assert config.min_sharpe_ratio == 0.8
-        assert config.max_drawdown == 20.0
+        # 퀀트/헤지펀드 기준으로 강화된 설정
+        assert config.min_return == 15.0  # 2년간 15%
+        assert config.min_win_rate == 38.0  # 38%
+        assert config.min_sharpe_ratio == 1.0  # 기관 기준 1.0
+        assert config.max_drawdown == 15.0  # 15%
     
     @pytest.mark.unit
     def test_custom_config(self):
@@ -217,7 +218,7 @@ class TestQuickBacktestFilter:
         assert result.passed is True
         assert result.result is not None
         assert 'total_return' in result.metrics
-        assert result.metrics['total_return'] == 10.0
+        assert result.metrics['total_return'] == 20.0  # mock_backtest_result_passed의 값
         assert all(result.filter_results.values())  # 모든 조건 통과
         assert "통과" in result.reason or "모든" in result.reason
     
@@ -302,24 +303,41 @@ class TestQuickBacktestFilter:
     
     @pytest.mark.unit
     def test_check_filters_all_passed(self):
-        """모든 필터 조건 통과 테스트"""
+        """모든 필터 조건 통과 테스트 (12가지 조건)"""
         # Given
         filter_instance = QuickBacktestFilter()
         metrics = {
-            'total_return': 10.0,
-            'win_rate': 60.0,
-            'sharpe_ratio': 1.5,
-            'max_drawdown': -10.0
+            'total_return': 20.0,  # >= 15.0
+            'win_rate': 45.0,  # >= 38.0
+            'profit_factor': 2.0,  # >= 1.8
+            'sharpe_ratio': 1.5,  # >= 1.0
+            'sortino_ratio': 1.5,  # >= 1.2
+            'calmar_ratio': 1.0,  # >= 0.8
+            'max_drawdown': -10.0,  # <= 15.0
+            'max_consecutive_losses': 3,  # <= 5
+            'volatility': 40.0,  # <= 50.0
+            'total_trades': 25,  # >= 20
+            'avg_win': 200000,  # avg_win/avg_loss >= 1.3
+            'avg_loss': -100000,
+            'avg_holding_period_hours': 100.0  # <= 168.0
         }
-        
+
         # When
         filter_results = filter_instance._check_filters(metrics)
-        
-        # Then
+
+        # Then - 12가지 필터 조건 체크
         assert filter_results['return'] is True
         assert filter_results['win_rate'] is True
+        assert filter_results['profit_factor'] is True
         assert filter_results['sharpe_ratio'] is True
+        assert filter_results['sortino_ratio'] is True
+        assert filter_results['calmar_ratio'] is True
         assert filter_results['max_drawdown'] is True
+        assert filter_results['max_consecutive_losses'] is True
+        assert filter_results['volatility'] is True
+        assert filter_results['min_trades'] is True
+        assert filter_results['avg_win_loss_ratio'] is True
+        assert filter_results['avg_holding_hours'] is True
     
     @pytest.mark.unit
     def test_check_filters_failed_return(self):
@@ -348,18 +366,27 @@ class TestQuickBacktestFilter:
         # Given
         filter_instance = QuickBacktestFilter()
         metrics = {
-            'total_return': 10.0,
-            'win_rate': 30.0,  # 35% 미만
+            'total_return': 20.0,
+            'win_rate': 30.0,  # 38% 미만
+            'profit_factor': 2.0,
             'sharpe_ratio': 1.5,
-            'max_drawdown': -10.0
+            'sortino_ratio': 1.5,
+            'calmar_ratio': 1.0,
+            'max_drawdown': -10.0,
+            'max_consecutive_losses': 3,
+            'volatility': 40.0,
+            'total_trades': 25,
+            'avg_win': 200000,
+            'avg_loss': -100000,
+            'avg_holding_period_hours': 100.0
         }
-        
+
         # When
         filter_results = filter_instance._check_filters(metrics)
-        
+
         # Then
         assert filter_results['return'] is True
-        assert filter_results['win_rate'] is False
+        assert filter_results['win_rate'] is False  # 30% < 38%
         assert filter_results['sharpe_ratio'] is True
         assert filter_results['max_drawdown'] is True
     
@@ -369,19 +396,28 @@ class TestQuickBacktestFilter:
         # Given
         filter_instance = QuickBacktestFilter()
         metrics = {
-            'total_return': 10.0,
-            'win_rate': 60.0,
+            'total_return': 20.0,
+            'win_rate': 45.0,
+            'profit_factor': 2.0,
             'sharpe_ratio': 0.5,  # 1.0 미만
-            'max_drawdown': -10.0
+            'sortino_ratio': 1.5,
+            'calmar_ratio': 1.0,
+            'max_drawdown': -10.0,
+            'max_consecutive_losses': 3,
+            'volatility': 40.0,
+            'total_trades': 25,
+            'avg_win': 200000,
+            'avg_loss': -100000,
+            'avg_holding_period_hours': 100.0
         }
-        
+
         # When
         filter_results = filter_instance._check_filters(metrics)
-        
+
         # Then
         assert filter_results['return'] is True
         assert filter_results['win_rate'] is True
-        assert filter_results['sharpe_ratio'] is False
+        assert filter_results['sharpe_ratio'] is False  # 0.5 < 1.0
         assert filter_results['max_drawdown'] is True
     
     @pytest.mark.unit
@@ -390,20 +426,29 @@ class TestQuickBacktestFilter:
         # Given
         filter_instance = QuickBacktestFilter()
         metrics = {
-            'total_return': 10.0,
-            'win_rate': 60.0,
+            'total_return': 20.0,
+            'win_rate': 45.0,
+            'profit_factor': 2.0,
             'sharpe_ratio': 1.5,
-            'max_drawdown': -25.0  # -25% (20% 초과)
+            'sortino_ratio': 1.5,
+            'calmar_ratio': 1.0,
+            'max_drawdown': -25.0,  # -25% (15% 초과)
+            'max_consecutive_losses': 3,
+            'volatility': 40.0,
+            'total_trades': 25,
+            'avg_win': 200000,
+            'avg_loss': -100000,
+            'avg_holding_period_hours': 100.0
         }
-        
+
         # When
         filter_results = filter_instance._check_filters(metrics)
-        
+
         # Then
         assert filter_results['return'] is True
         assert filter_results['win_rate'] is True
         assert filter_results['sharpe_ratio'] is True
-        assert filter_results['max_drawdown'] is False
+        assert filter_results['max_drawdown'] is False  # 25% > 15%
     
     @pytest.mark.unit
     def test_check_filters_boundary_values(self):
@@ -411,20 +456,37 @@ class TestQuickBacktestFilter:
         # Given
         filter_instance = QuickBacktestFilter()
         metrics = {
-            'total_return': 3.0,      # 정확히 3%
-            'win_rate': 35.0,         # 정확히 35%
-            'sharpe_ratio': 0.8,      # 정확히 0.8
-            'max_drawdown': -20.0     # 정확히 -20%
+            'total_return': 15.0,      # 정확히 15%
+            'win_rate': 38.0,          # 정확히 38%
+            'profit_factor': 1.8,      # 정확히 1.8
+            'sharpe_ratio': 1.0,       # 정확히 1.0
+            'sortino_ratio': 1.2,      # 정확히 1.2
+            'calmar_ratio': 0.8,       # 정확히 0.8
+            'max_drawdown': -15.0,     # 정확히 -15%
+            'max_consecutive_losses': 5,  # 정확히 5
+            'volatility': 50.0,        # 정확히 50%
+            'total_trades': 20,        # 정확히 20
+            'avg_win': 130000,         # 130000/100000 = 1.3
+            'avg_loss': -100000,
+            'avg_holding_period_hours': 168.0  # 정확히 168h
         }
-        
+
         # When
         filter_results = filter_instance._check_filters(metrics)
-        
+
         # Then (경계값 포함이므로 모두 True)
         assert filter_results['return'] is True
         assert filter_results['win_rate'] is True
+        assert filter_results['profit_factor'] is True
         assert filter_results['sharpe_ratio'] is True
+        assert filter_results['sortino_ratio'] is True
+        assert filter_results['calmar_ratio'] is True
         assert filter_results['max_drawdown'] is True
+        assert filter_results['max_consecutive_losses'] is True
+        assert filter_results['volatility'] is True
+        assert filter_results['min_trades'] is True
+        assert filter_results['avg_win_loss_ratio'] is True
+        assert filter_results['avg_holding_hours'] is True
     
     @pytest.mark.unit
     def test_generate_reason_passed(self):

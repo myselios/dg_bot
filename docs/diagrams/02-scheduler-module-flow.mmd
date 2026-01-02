@@ -1,39 +1,72 @@
 sequenceDiagram
     participant User as 사용자/시스템
     participant Scheduler as Scheduler<br/>(scheduler_main.py)
-    participant APScheduler as APScheduler<br/>(BackgroundScheduler)
+    participant APScheduler as APScheduler<br/>(AsyncIOScheduler)
     participant BackendScheduler as Backend Scheduler<br/>(core/scheduler.py)
+    participant DB as PostgreSQL<br/>(init_db)
+    participant Metrics as Prometheus<br/>(metrics.py)
+    participant Telegram as Telegram<br/>(notification.py)
     participant Logger as Logger
 
     User->>Scheduler: 애플리케이션 시작
     Scheduler->>Scheduler: load_dotenv()<br/>.env 파일 로드
-    Scheduler->>Scheduler: 환경변수 검증<br/>(API_KEY, SECRET, DB_URL)
+    Scheduler->>Scheduler: validate_environment_variables()
 
     alt 환경변수 누락
+        Note over Scheduler: 필수 환경변수:<br/>UPBIT_ACCESS_KEY<br/>UPBIT_SECRET_KEY<br/>DATABASE_URL<br/>OPENAI_API_KEY
         Scheduler->>Logger: ERROR 로그 기록
         Scheduler->>User: 프로그램 종료 (exit 1)
     end
 
-    Scheduler->>APScheduler: 스케줄러 생성<br/>BackgroundScheduler()
-    Scheduler->>APScheduler: add_job(<br/>trading_job,<br/>trigger='cron',<br/>hour='*'<br/>)
+    opt Sentry 활성화
+        Scheduler->>Scheduler: sentry_sdk.init()<br/>(environment="scheduler")
+    end
 
-    Note over Scheduler,APScheduler: 매시 정각에 실행되도록 설정
+    Scheduler->>DB: init_db() 호출
+    DB-->>Scheduler: 테이블 초기화 완료
+
+    Scheduler->>Metrics: set_bot_running(True)
+    Scheduler->>Telegram: notify_bot_status("started")
+
+    Scheduler->>APScheduler: 스케줄러 생성<br/>AsyncIOScheduler()
+    Note over APScheduler: 설정:<br/>timezone="Asia/Seoul"<br/>coalesce=True<br/>max_instances=1<br/>misfire_grace_time=60
+
+    Scheduler->>APScheduler: add_jobs()
+    Note over APScheduler: 등록된 작업:<br/>1. trading_job (1시간)<br/>2. portfolio_snapshot_job (1시간)<br/>3. daily_report_job (09:00)
 
     Scheduler->>APScheduler: start()
     APScheduler->>Logger: INFO: 스케줄러 시작됨
+    Scheduler->>APScheduler: modify_job(next_run_time=now)<br/>(즉시 첫 실행)
 
-    loop 매 시간 정각
+    loop 매 시간
         APScheduler->>BackendScheduler: trading_job() 실행
-        BackendScheduler->>Logger: INFO: 거래 작업 시작
-        BackendScheduler->>BackendScheduler: 거래 로직 실행<br/>(다음 섹션 참조)
+        BackendScheduler->>Logger: INFO: 트레이딩 작업 시작
+        BackendScheduler->>BackendScheduler: 서비스 초기화<br/>(UpbitClient, DataCollector,<br/>TradingService, AIService)
+        BackendScheduler->>Telegram: notify_cycle_start()
+        BackendScheduler->>BackendScheduler: execute_trading_cycle()
+        Note over BackendScheduler: 파이프라인 기반 거래 로직<br/>(다음 다이어그램 참조)
+        BackendScheduler->>Telegram: 4단계 알림 전송
+        BackendScheduler->>Metrics: 메트릭 기록
         BackendScheduler-->>APScheduler: 작업 완료
-        APScheduler->>Logger: INFO: 거래 작업 완료
+        APScheduler->>Logger: INFO: 트레이딩 작업 완료
     end
 
-    User->>Scheduler: Ctrl+C (중단 신호)
-    Scheduler->>APScheduler: shutdown()
+    loop 매 시간
+        APScheduler->>BackendScheduler: portfolio_snapshot_job()
+        BackendScheduler->>Logger: 포트폴리오 스냅샷 저장
+    end
+
+    loop 매일 09:00
+        APScheduler->>BackendScheduler: daily_report_job()
+        BackendScheduler->>Telegram: notify_daily_report()
+    end
+
+    User->>Scheduler: Ctrl+C (SIGINT/SIGTERM)
+    Note over Scheduler: GracefulKiller 처리
+
+    Scheduler->>Metrics: set_bot_running(False)
+    Scheduler->>Telegram: notify_bot_status("stopped")
+    Scheduler->>APScheduler: shutdown(wait=True)
     APScheduler->>Logger: INFO: 스케줄러 종료됨
     Scheduler->>User: 프로그램 정상 종료
-
-
 

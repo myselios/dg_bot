@@ -1,45 +1,77 @@
 sequenceDiagram
     participant BackendScheduler as Backend Scheduler<br/>(core/scheduler.py)
-    participant MetricsService as MetricsService<br/>(backend/services/metrics.py)
-    participant Prometheus as Prometheus<br/>(메트릭 저장소)
-    participant NotificationService as NotificationService<br/>(backend/services/notification.py)
+    participant NotificationService as NotificationService<br/>(services/notification.py)
     participant Telegram as Telegram Bot API
+    participant MetricsService as MetricsService<br/>(services/metrics.py)
+    participant Prometheus as Prometheus<br/>(메트릭 저장소)
     participant Grafana as Grafana<br/>(대시보드)
 
-    Note over BackendScheduler: 거래 실행 완료 후
+    Note over BackendScheduler: 거래 사이클 시작
 
-    par 병렬 처리: 메트릭 기록
-        BackendScheduler->>MetricsService: record_trade(<br/>symbol,<br/>side,<br/>price,<br/>amount<br/>)
-        MetricsService->>MetricsService: trade_counter.labels(<br/>symbol=symbol,<br/>side=side<br/>).inc()
-        MetricsService->>MetricsService: trade_amount.labels(<br/>symbol=symbol<br/>).observe(amount)
-        MetricsService->>MetricsService: trade_value.labels(<br/>symbol=symbol<br/>).observe(total)
-        MetricsService->>Prometheus: Push Metrics<br/>(HTTP /metrics)
-
-        BackendScheduler->>MetricsService: record_ai_decision(<br/>decision,<br/>confidence,<br/>reason<br/>)
-        MetricsService->>MetricsService: ai_decision_counter.labels(<br/>decision=decision<br/>).inc()
-        MetricsService->>MetricsService: ai_confidence.observe(<br/>confidence<br/>)
-        MetricsService->>Prometheus: Push Metrics
-    and 병렬 처리: 알림 전송
-        BackendScheduler->>NotificationService: notify_trade(<br/>trade_data<br/>)
+    par 병렬 처리: 사이클 시작 알림
+        BackendScheduler->>NotificationService: notify_cycle_start(<br/>symbol, status, message)
         NotificationService->>NotificationService: 메시지 포맷팅
+        Note over NotificationService: 🔄 트레이딩 사이클 시작<br/>━━━━━━━━━━━━━━━<br/>📈 종목: KRW-ETH<br/>⏰ 시작 시각: 2024-01-15 10:00
+        NotificationService->>Telegram: POST /sendMessage
+        Telegram-->>NotificationService: Message Sent
+    end
 
-        Note over NotificationService: 📊 거래 알림<br/>━━━━━━━━━━━━━━━<br/>🔹 종목: KRW-ETH<br/>🔹 거래: 매수 ✅<br/>🔹 가격: 3,500,000 KRW<br/>🔹 수량: 0.01 ETH<br/>🔹 총액: 35,000 KRW<br/>🔹 수수료: 17.5 KRW<br/>━━━━━━━━━━━━━━━<br/>⏰ 2024-01-15 10:30:00
+    Note over BackendScheduler: 데이터 수집 및 분석 완료 후
 
+    par 병렬 처리: 백테스팅/신호 알림
+        BackendScheduler->>NotificationService: notify_backtest_and_signals(<br/>symbol, backtest_result,<br/>market_data, flash_crash,<br/>rsi_divergence)
+        NotificationService->>NotificationService: 메시지 포맷팅
+        Note over NotificationService: 📊 백테스팅 결과<br/>━━━━━━━━━━━━━━━<br/>✅ 통과 여부: PASS<br/>📈 수익률: +15.2%<br/>🎯 Sharpe: 1.85<br/>━━━━━━━━━━━━━━━<br/>⚡ 신호 분석<br/>- RSI: 45.2<br/>- MACD: 상승 크로스
+        NotificationService->>Telegram: POST /sendMessage
+        Telegram-->>NotificationService: Message Sent
+    end
+
+    Note over BackendScheduler: AI 분석 완료 후
+
+    par 병렬 처리: AI 의사결정 알림
+        BackendScheduler->>NotificationService: notify_ai_decision(<br/>symbol, decision,<br/>confidence, reason, duration)
+        NotificationService->>NotificationService: 메시지 포맷팅
+        Note over NotificationService: 🤖 AI 의사결정<br/>━━━━━━━━━━━━━━━<br/>📌 결정: BUY ✅<br/>🎯 신뢰도: HIGH<br/>⏱️ 분석 시간: 2.5초<br/>━━━━━━━━━━━━━━━<br/>💬 분석 근거:<br/>(상세 분석 내용)
         NotificationService->>Telegram: POST /sendMessage
         Telegram-->>NotificationService: Message Sent
 
         alt 알림 실패
             NotificationService->>NotificationService: 재시도 (최대 3회)
             alt 재시도 실패
-                NotificationService->>BackendScheduler: Warning Log<br/>(알림 실패)
+                NotificationService->>BackendScheduler: Warning Log
             end
         end
+    end
+
+    Note over BackendScheduler: 거래 실행 완료 후
+
+    par 병렬 처리: 메트릭 기록
+        BackendScheduler->>MetricsService: record_ai_decision(<br/>symbol, decision, confidence)
+        MetricsService->>MetricsService: ai_decision_counter.labels(<br/>symbol, decision).inc()
+        MetricsService->>MetricsService: ai_confidence.observe(confidence)
+        MetricsService->>Prometheus: Push Metrics
+
+        opt 거래 성공 시
+            BackendScheduler->>MetricsService: record_trade(<br/>symbol, side, volume, fee)
+            MetricsService->>MetricsService: trade_counter.labels(<br/>symbol, side).inc()
+            MetricsService->>MetricsService: trade_volume.observe(volume)
+            MetricsService->>MetricsService: trade_fee.observe(fee)
+            MetricsService->>Prometheus: Push Metrics
+        end
+
+        BackendScheduler->>MetricsService: scheduler_job_duration_seconds<br/>.observe(duration)
+        BackendScheduler->>MetricsService: scheduler_job_success_total.inc()
+        MetricsService->>Prometheus: Push Metrics
+    and 병렬 처리: 포트폴리오 알림
+        BackendScheduler->>NotificationService: notify_portfolio_status(<br/>symbol, portfolio_data,<br/>trade_result)
+        NotificationService->>NotificationService: 메시지 포맷팅
+        Note over NotificationService: 💰 포트폴리오 현황<br/>━━━━━━━━━━━━━━━<br/>💵 KRW: 1,000,000원<br/>🪙 ETH: 0.5개<br/>📊 총 자산: 2,500,000원<br/>━━━━━━━━━━━━━━━<br/>📝 거래 내역<br/>- 매수가: 3,000,000원<br/>- 수량: 0.01 ETH<br/>- 수수료: 150원
+        NotificationService->>Telegram: POST /sendMessage
+        Telegram-->>NotificationService: Message Sent
     end
 
     Prometheus->>Grafana: Scrape Metrics<br/>(15초마다)
     Grafana->>Grafana: 대시보드 업데이트
 
-    Note over Grafana: 실시간 차트:<br/>- 거래 횟수<br/>- 거래 금액<br/>- AI 판단 분포<br/>- 신뢰도 추이
-
-
+    Note over Grafana: 실시간 차트:<br/>- 거래 횟수/금액<br/>- AI 판단 분포<br/>- 신뢰도 추이<br/>- 스케줄러 상태<br/>- 수수료 누적
 

@@ -66,7 +66,7 @@ TELEGRAM_ENABLED=true
 
 ```bash
 # 모든 서비스 시작 (PostgreSQL, Backend, Scheduler, Prometheus, Grafana)
-docker-compose -f docker-compose.full-stack.yml up -d
+docker-compose up -d
 ```
 
 #### 3️⃣ 대시보드 접속
@@ -116,28 +116,28 @@ services:
 
 ```bash
 # 전체 스택 시작
-docker-compose -f docker-compose.full-stack.yml up -d
+docker-compose up -d
 
 # 특정 서비스만 시작
-docker-compose -f docker-compose.full-stack.yml up -d backend frontend
+docker-compose up -d backend frontend
 
 # 서비스 중지
-docker-compose -f docker-compose.full-stack.yml down
+docker-compose down
 
 # 볼륨 포함 완전 삭제
-docker-compose -f docker-compose.full-stack.yml down -v
+docker-compose down -v
 
 # 로그 확인
-docker-compose -f docker-compose.full-stack.yml logs -f
+docker-compose logs -f
 
 # Backend 로그만
-docker-compose -f docker-compose.full-stack.yml logs -f backend
+docker-compose logs -f backend
 
 # 재시작
-docker-compose -f docker-compose.full-stack.yml restart backend
+docker-compose restart backend
 
 # 재빌드 및 재시작
-docker-compose -f docker-compose.full-stack.yml up -d --build
+docker-compose up -d --build
 ```
 
 ### 봇 제어
@@ -202,7 +202,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Backend API용 (추가)
-pip install -r requirements-api.txt
+# requirements-api.txt가 requirements.txt에 통합됨
 ```
 
 ### 3. 환경 변수 설정
@@ -439,7 +439,7 @@ python scheduler_main.py
 
 ```bash
 # docker-compose로 실행 (자동 스케줄링)
-docker-compose -f docker-compose.full-stack.yml up -d backend
+docker-compose up -d backend
 ```
 
 Backend는 APScheduler를 사용하여 기본 5분마다 자동으로 거래를 실행합니다.
@@ -585,8 +585,7 @@ Grafana 대시보드에서 실시간 모니터링이 가능합니다: http://loc
 **해결**:
 
 ```bash
-# requirements-api.txt 설치
-pip install -r requirements-api.txt
+# requirements-api.txt가 requirements.txt에 통합됨
 ```
 
 #### 문제: .env 파일 없음 에러
@@ -647,13 +646,13 @@ docker-compose stop scheduler
 
 ```bash
 # 전체 스택 실행 (PostgreSQL, Backend, Scheduler, Grafana 등)
-docker-compose -f docker-compose.full-stack.yml up -d
+docker-compose up -d
 
 # 스케줄러 로그 확인
-docker-compose -f docker-compose.full-stack.yml logs -f scheduler
+docker-compose logs -f scheduler
 
 # 중지
-docker-compose -f docker-compose.full-stack.yml down
+docker-compose down
 ```
 
 #### 포함 서비스
@@ -989,7 +988,7 @@ TELEGRAM_ENABLED=true
 ### 4. Backend 재시작
 
 ```bash
-docker-compose -f docker-compose.full-stack.yml restart backend
+docker-compose restart backend
 ```
 
 ### 5. 알림 타입
@@ -1065,7 +1064,7 @@ Grafana에서 임계값을 설정하여 알림을 받을 수 있습니다:
 SCHEDULER_INTERVAL_MINUTES=10  # 5분 → 10분으로 변경
 
 # Backend 재시작
-docker-compose -f docker-compose.full-stack.yml restart backend
+docker-compose restart backend
 ```
 
 ### 거래 심볼 변경
@@ -1075,7 +1074,7 @@ docker-compose -f docker-compose.full-stack.yml restart backend
 TRADING_SYMBOL=KRW-BTC  # ETH → BTC로 변경
 
 # Backend 재시작
-docker-compose -f docker-compose.full-stack.yml restart backend
+docker-compose restart backend
 ```
 
 ### 최소 주문 금액 변경
@@ -1085,7 +1084,7 @@ docker-compose -f docker-compose.full-stack.yml restart backend
 TRADING_MIN_ORDER_AMOUNT=10000.0  # 5,000원 → 10,000원
 
 # Backend 재시작
-docker-compose -f docker-compose.full-stack.yml restart backend
+docker-compose restart backend
 ```
 
 ### AI 모델 변경
@@ -1095,7 +1094,7 @@ docker-compose -f docker-compose.full-stack.yml restart backend
 OPENAI_MODEL=gpt-4  # gpt-4o-mini → gpt-4 (더 정확하지만 비용 증가)
 
 # Backend 재시작
-docker-compose -f docker-compose.full-stack.yml restart backend
+docker-compose restart backend
 ```
 
 ---
@@ -1112,7 +1111,7 @@ docker logs trading_bot_backend
 docker exec trading_bot_backend env | grep -E "UPBIT|OPENAI"
 
 # 재시작
-docker-compose -f docker-compose.full-stack.yml restart backend
+docker-compose restart backend
 ```
 
 ### PostgreSQL 연결 오류
@@ -1125,7 +1124,7 @@ docker ps | grep postgres
 docker exec trading_bot_postgres pg_isready -U postgres
 
 # 재시작
-docker-compose -f docker-compose.full-stack.yml restart postgres
+docker-compose restart postgres
 ```
 
 ### Frontend가 Backend를 찾지 못함
@@ -1159,16 +1158,16 @@ UPBIT_ACCESS_KEY= your_key  # ❌ 공백 제거
 
 ```bash
 # 전체 로그
-docker-compose -f docker-compose.full-stack.yml logs -f
+docker-compose logs -f
 
 # Backend 로그만
-docker-compose -f docker-compose.full-stack.yml logs -f backend
+docker-compose logs -f backend
 
 # 에러만 필터링
-docker-compose -f docker-compose.full-stack.yml logs -f backend | grep ERROR
+docker-compose logs -f backend | grep ERROR
 
 # 최근 100줄
-docker-compose -f docker-compose.full-stack.yml logs --tail=100 backend
+docker-compose logs --tail=100 backend
 ```
 
 ---
@@ -1274,7 +1273,7 @@ cp .env.example .env
 nano .env  # API 키 및 설정 입력
 
 # 프로덕션 모드로 실행
-docker-compose -f docker-compose.full-stack.yml up -d --build
+docker-compose up -d --build
 ```
 
 ### 4. SSL 인증서 설정 (Let's Encrypt)
@@ -1360,8 +1359,8 @@ After=docker.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/path/to/bitcoin-trading-bot
-ExecStart=/usr/local/bin/docker-compose -f docker-compose.full-stack.yml up -d
-ExecStop=/usr/local/bin/docker-compose -f docker-compose.full-stack.yml down
+ExecStart=/usr/local/bin/docker-compose up -d
+ExecStop=/usr/local/bin/docker-compose down
 TimeoutStartSec=0
 
 [Install]
@@ -1387,7 +1386,7 @@ SENTRY_DSN=https://your-sentry-dsn@sentry.io/project-id
 SENTRY_ENABLED=true
 
 # Backend 재시작
-docker-compose -f docker-compose.full-stack.yml restart backend
+docker-compose restart backend
 ```
 
 #### Grafana 알림

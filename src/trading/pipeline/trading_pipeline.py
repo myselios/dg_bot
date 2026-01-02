@@ -160,6 +160,86 @@ class TradingPipeline:
         }
 
 
+def create_hybrid_trading_pipeline(
+    # 리스크 파라미터
+    stop_loss_pct: float = -5.0,
+    take_profit_pct: float = 10.0,
+    daily_loss_limit_pct: float = -10.0,
+    min_trade_interval_hours: int = 4,
+    max_positions: int = 3,
+    # 스캔 파라미터
+    enable_scanning: bool = True,
+    fallback_ticker: str = "KRW-ETH",
+    liquidity_top_n: int = 20,
+    min_volume_krw: float = 10_000_000_000,
+    backtest_top_n: int = 5,
+    final_select_n: int = 2
+) -> TradingPipeline:
+    """
+    통합 하이브리드 트레이딩 파이프라인 생성
+
+    Mode 2(적응형)와 Mode 3(멀티코인)을 통합한 단일 파이프라인입니다.
+    포지션 유무에 따라 ENTRY/MANAGEMENT 모드로 분기하고,
+    ENTRY 모드에서는 선택적으로 코인 스캔을 수행합니다.
+
+    흐름:
+    1. HybridRiskCheckStage: 포지션 확인 + 모드 분기 + 코인 스캔 (옵션)
+       - BLOCKED: 즉시 종료
+       - MANAGEMENT: 포지션 관리 (규칙 + AI 하이브리드)
+       - ENTRY + 스캔 활성화: 코인 스캔 후 동적 티커
+       - ENTRY + 스캔 비활성화: 고정 티커 사용
+    2. DataCollectionStage: 데이터 수집
+    3. AnalysisStage: 진입 분석 (ENTRY 모드에서만)
+    4. ExecutionStage: 거래 실행
+
+    Args:
+        stop_loss_pct: 손절 비율 (기본 -5%)
+        take_profit_pct: 익절 비율 (기본 +10%)
+        daily_loss_limit_pct: 일일 최대 손실 비율 (기본 -10%)
+        min_trade_interval_hours: 최소 거래 간격 (기본 4시간)
+        max_positions: 최대 동시 포지션 수 (기본 3개)
+        enable_scanning: 코인 스캔 활성화 여부 (기본 True)
+        fallback_ticker: 스캔 비활성화 또는 실패 시 사용할 티커 (기본 "KRW-ETH")
+        liquidity_top_n: 유동성 스캔 상위 N개 (기본 20)
+        min_volume_krw: 최소 거래대금 (기본 100억원)
+        backtest_top_n: 백테스팅 통과 상위 N개 (기본 5)
+        final_select_n: 최종 선택 N개 (기본 2)
+
+    Returns:
+        TradingPipeline: 통합 하이브리드 트레이딩 파이프라인
+    """
+    from src.trading.pipeline.hybrid_stage import HybridRiskCheckStage
+    from src.trading.pipeline.data_collection_stage import DataCollectionStage
+    from src.trading.pipeline.analysis_stage import AnalysisStage
+    from src.trading.pipeline.execution_stage import ExecutionStage
+
+    # 스캐너 설정
+    scanner_config = {
+        'liquidity_top_n': liquidity_top_n,
+        'min_volume_krw': min_volume_krw,
+        'backtest_top_n': backtest_top_n,
+        'final_select_n': final_select_n
+    }
+
+    stages = [
+        HybridRiskCheckStage(
+            stop_loss_pct=stop_loss_pct,
+            take_profit_pct=take_profit_pct,
+            daily_loss_limit_pct=daily_loss_limit_pct,
+            min_trade_interval_hours=min_trade_interval_hours,
+            max_positions=max_positions,
+            enable_scanning=enable_scanning,
+            fallback_ticker=fallback_ticker,
+            scanner_config=scanner_config
+        ),
+        DataCollectionStage(),
+        AnalysisStage(),
+        ExecutionStage(),
+    ]
+
+    return TradingPipeline(stages=stages)
+
+
 def create_spot_trading_pipeline(
     stop_loss_pct: float = -5.0,
     take_profit_pct: float = 10.0,
@@ -168,6 +248,10 @@ def create_spot_trading_pipeline(
 ) -> TradingPipeline:
     """
     현물 거래 파이프라인 생성
+
+    .. deprecated::
+        이 함수는 deprecated 되었습니다.
+        대신 create_hybrid_trading_pipeline(enable_scanning=False)를 사용하세요.
 
     Args:
         stop_loss_pct: 손절 비율
@@ -178,21 +262,57 @@ def create_spot_trading_pipeline(
     Returns:
         TradingPipeline: 현물 거래 파이프라인
     """
-    from src.trading.pipeline.risk_check_stage import RiskCheckStage
-    from src.trading.pipeline.data_collection_stage import DataCollectionStage
-    from src.trading.pipeline.analysis_stage import AnalysisStage
-    from src.trading.pipeline.execution_stage import ExecutionStage
+    import warnings
+    warnings.warn(
+        "create_spot_trading_pipeline is deprecated. "
+        "Use create_hybrid_trading_pipeline(enable_scanning=False) instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
 
+    return create_hybrid_trading_pipeline(
+        stop_loss_pct=stop_loss_pct,
+        take_profit_pct=take_profit_pct,
+        daily_loss_limit_pct=daily_loss_limit_pct,
+        min_trade_interval_hours=min_trade_interval_hours,
+        max_positions=1,
+        enable_scanning=False,
+        fallback_ticker="KRW-ETH"
+    )
+
+
+def create_position_management_pipeline(
+    stop_loss_pct: float = -5.0,
+    take_profit_pct: float = 10.0,
+    max_positions: int = 3
+) -> TradingPipeline:
+    """
+    포지션 관리 전용 파이프라인 생성 (15분 주기용)
+
+    진입 로직 없이 기존 포지션의 손절/익절만 관리합니다.
+    포지션이 없으면 즉시 종료합니다.
+
+    Args:
+        stop_loss_pct: 손절 비율 (기본 -5%)
+        take_profit_pct: 익절 비율 (기본 +10%)
+        max_positions: 최대 동시 포지션 수 (기본 3개)
+
+    Returns:
+        TradingPipeline: 포지션 관리 전용 파이프라인
+    """
+    from src.trading.pipeline.hybrid_stage import HybridRiskCheckStage
+
+    # 포지션 관리 전용 스테이지만 사용 (진입 로직 없음)
     stages = [
-        RiskCheckStage(
+        HybridRiskCheckStage(
             stop_loss_pct=stop_loss_pct,
             take_profit_pct=take_profit_pct,
-            daily_loss_limit_pct=daily_loss_limit_pct,
-            min_trade_interval_hours=min_trade_interval_hours
+            daily_loss_limit_pct=-10.0,
+            min_trade_interval_hours=0,  # 관리는 간격 제한 없음
+            max_positions=max_positions,
+            enable_scanning=False,  # 스캔 비활성화 (관리만)
+            fallback_ticker="KRW-BTC"  # 사용되지 않음
         ),
-        DataCollectionStage(),
-        AnalysisStage(),
-        ExecutionStage(),
     ]
 
     return TradingPipeline(stages=stages)
@@ -219,3 +339,46 @@ def create_futures_trading_pipeline(
     # - FuturesExecutionStage (롱/숏 포지션 관리)
 
     raise NotImplementedError("선물 거래 파이프라인은 아직 구현되지 않았습니다.")
+
+
+def create_adaptive_trading_pipeline(
+    stop_loss_pct: float = -5.0,
+    take_profit_pct: float = 10.0,
+    daily_loss_limit_pct: float = -10.0,
+    min_trade_interval_hours: int = 4,
+    max_positions: int = 3
+) -> TradingPipeline:
+    """
+    적응형 트레이딩 파이프라인 생성
+
+    .. deprecated::
+        이 함수는 deprecated 되었습니다.
+        대신 create_hybrid_trading_pipeline(enable_scanning=False)를 사용하세요.
+
+    Args:
+        stop_loss_pct: 손절 비율
+        take_profit_pct: 익절 비율
+        daily_loss_limit_pct: 일일 최대 손실 비율
+        min_trade_interval_hours: 최소 거래 간격
+        max_positions: 최대 동시 포지션 수
+
+    Returns:
+        TradingPipeline: 적응형 트레이딩 파이프라인
+    """
+    import warnings
+    warnings.warn(
+        "create_adaptive_trading_pipeline is deprecated. "
+        "Use create_hybrid_trading_pipeline(enable_scanning=False) instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+
+    return create_hybrid_trading_pipeline(
+        stop_loss_pct=stop_loss_pct,
+        take_profit_pct=take_profit_pct,
+        daily_loss_limit_pct=daily_loss_limit_pct,
+        min_trade_interval_hours=min_trade_interval_hours,
+        max_positions=max_positions,
+        enable_scanning=False,
+        fallback_ticker="KRW-ETH"
+    )

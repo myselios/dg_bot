@@ -24,7 +24,7 @@ source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
-pip install -r requirements-api.txt
+# requirements-api.txt가 requirements.txt에 통합됨
 ```
 
 ### Testing
@@ -65,7 +65,7 @@ docker-compose up -d scheduler
 docker-compose logs -f scheduler
 
 # Run full stack (DB, API, monitoring)
-docker-compose -f docker-compose.full-stack.yml up -d
+docker-compose up -d
 ```
 
 ### Docker Operations
@@ -124,11 +124,35 @@ scheduler_main.py
 dg_bot/
 ├── main.py                    # Main trading cycle (standalone execution)
 ├── scheduler_main.py          # Scheduler entry point (automated mode)
-├── src/                       # Core trading logic
-│   ├── ai/                    # AI decision making (GPT-4)
+├── src/
+│   ├── container.py           # DI Container (Clean Architecture)
+│   │
+│   ├── domain/                # 🆕 Domain Layer (Pure Business Logic)
+│   │   ├── entities/          # Trade, Order, Position entities
+│   │   ├── value_objects/     # Money, Percentage value objects
+│   │   ├── services/          # FeeCalculator, RiskCalculator
+│   │   └── exceptions.py
+│   │
+│   ├── application/           # 🆕 Application Layer (Use Cases)
+│   │   ├── ports/outbound/    # Port interfaces (ExchangePort, AIPort, etc.)
+│   │   ├── use_cases/         # ExecuteTradeUseCase, AnalyzeMarketUseCase
+│   │   └── dto/               # Data Transfer Objects
+│   │
+│   ├── infrastructure/        # 🆕 Infrastructure Layer (Adapters)
+│   │   └── adapters/
+│   │       ├── exchange/      # UpbitExchangeAdapter
+│   │       ├── ai/            # OpenAIAdapter
+│   │       ├── market_data/   # UpbitMarketDataAdapter
+│   │       ├── persistence/   # InMemoryPersistenceAdapter
+│   │       └── legacy_bridge.py  # Legacy service wrappers
+│   │
+│   ├── presentation/          # 🆕 Presentation Layer
+│   │   └── cli/               # TradingRunner CLI
+│   │
+│   ├── ai/                    # AI decision making (GPT-4) - Legacy
 │   │   ├── service.py         # AIService - main AI analysis
 │   │   └── market_correlation.py
-│   ├── api/                   # Exchange API clients
+│   ├── api/                   # Exchange API clients - Legacy
 │   │   └── upbit_client.py    # Upbit exchange integration
 │   ├── backtesting/           # Backtesting engine
 │   │   ├── backtester.py      # Main backtesting engine
@@ -218,6 +242,52 @@ dg_bot/
 7. **Database Recording**: Models store trade, decision, and portfolio data
 8. **Notifications**: Telegram alerts sent via `notification.py`
 9. **Metrics**: Prometheus metrics recorded via `metrics.py`
+
+### Clean Architecture (Hexagonal/Ports & Adapters)
+
+The project implements Clean Architecture for better testability and maintainability:
+
+```
+Presentation → Application → Domain
+      ↓              ↓
+Infrastructure ─────┘
+```
+
+**Key Concepts**:
+- **Domain Layer**: Pure business logic (Trade, Order, Position, Money, Percentage)
+- **Application Layer**: Use cases and port interfaces (ExchangePort, AIPort, etc.)
+- **Infrastructure Layer**: Adapters for external systems (Upbit, OpenAI, PostgreSQL)
+- **Presentation Layer**: CLI runner and schedulers
+
+**DI Container Usage**:
+```python
+from src.container import Container
+
+# Production
+container = Container()
+execute_trade = container.get_execute_trade_use_case()
+
+# Testing with mocks
+container = Container.create_for_testing()
+
+# Legacy service migration
+container = Container.create_from_legacy(
+    upbit_client=existing_upbit,
+    ai_service=existing_ai
+)
+```
+
+**Testing by Layer**:
+```bash
+# Domain layer only (no mocks needed)
+python -m pytest tests/unit/domain/ -v
+
+# Use cases (with port mocks)
+python -m pytest tests/unit/application/ -v
+
+# Adapters (integration tests)
+python -m pytest tests/unit/infrastructure/ -v
+```
 
 ## Development Guidelines
 

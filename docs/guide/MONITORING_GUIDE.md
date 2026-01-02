@@ -281,13 +281,13 @@ Docker Compose 실행 시 자동으로:
 
 ```bash
 # 모든 서비스 시작 (PostgreSQL, Backend, Scheduler, Prometheus, Grafana)
-docker-compose -f docker-compose.full-stack.yml up -d
+docker-compose up -d
 
 # 로그 확인
-docker-compose -f docker-compose.full-stack.yml logs -f
+docker-compose logs -f
 
 # 특정 서비스 로그만
-docker-compose -f docker-compose.full-stack.yml logs grafana -f
+docker-compose logs grafana -f
 ```
 
 **접속 URL**:
@@ -428,7 +428,7 @@ http://localhost:9090/alerts
 http://localhost:9090/rules
 
 # Alert 테스트 (스케줄러 중지)
-docker-compose -f docker-compose.full-stack.yml stop scheduler
+docker-compose stop scheduler
 
 # 5분 후 "SchedulerDown" Alert 발생 확인
 ```
@@ -485,14 +485,14 @@ TELEGRAM_CHAT_ID=987654321
 4. **스케줄러 재시작**:
 
 ```bash
-docker-compose -f docker-compose.full-stack.yml restart scheduler
+docker-compose restart scheduler
 ```
 
 ### 알림 테스트
 
 ```bash
 # 로그 확인 (Telegram 전송 메시지 확인)
-docker-compose -f docker-compose.full-stack.yml logs scheduler -f | grep Telegram
+docker-compose logs scheduler -f | grep Telegram
 
 # 출력 예시:
 # "✅ Telegram 시작 알림 전송 완료"
@@ -504,7 +504,7 @@ docker-compose -f docker-compose.full-stack.yml logs scheduler -f | grep Telegra
 
 ### PostgreSQL Exporter 설정
 
-**docker-compose.full-stack.yml**에 이미 포함됨:
+**docker-compose.yml**에 이미 포함됨:
 
 ```yaml
 postgres-exporter:
@@ -555,7 +555,7 @@ rate(pg_stat_database_tup_inserted[5m])
 1. **Backend 실행 확인**:
 
 ```bash
-docker-compose -f docker-compose.full-stack.yml ps backend
+docker-compose ps backend
 ```
 
 2. **Backend 메트릭 엔드포인트 확인**:
@@ -577,7 +577,7 @@ scrape_configs:
 4. **Prometheus 재시작**:
 
 ```bash
-docker-compose -f docker-compose.full-stack.yml restart prometheus
+docker-compose restart prometheus
 ```
 
 ---
@@ -596,7 +596,7 @@ docker-compose -f docker-compose.full-stack.yml restart prometheus
 2. **Prometheus 실행 확인**:
 
 ```bash
-docker-compose -f docker-compose.full-stack.yml logs prometheus
+docker-compose logs prometheus
 ```
 
 3. **네트워크 연결 테스트**:
@@ -682,7 +682,7 @@ rule_files:
 3. **Prometheus 재시작**:
 
 ```bash
-docker-compose -f docker-compose.full-stack.yml restart prometheus
+docker-compose restart prometheus
 ```
 
 4. **Rules 로드 확인**:
@@ -725,7 +725,7 @@ ls -la monitoring/grafana/dashboards/trading-bot-dashboard.json
 3. **Grafana 재시작**:
 
 ```bash
-docker-compose -f docker-compose.full-stack.yml restart grafana
+docker-compose restart grafana
 ```
 
 4. **수동 Import**:

@@ -132,12 +132,29 @@ async def trading_job():
             logger.warning(f"시장 데이터 수집 실패: {market_error}")
             # market_data는 이미 {} 로 초기화되어 있음
         
-        # 3. 거래 사이클 실행
+        # 3. 거래 사이클 실행 (하이브리드 파이프라인)
         result = await execute_trading_cycle(
-            ticker, upbit_client, data_collector,
-            trading_service, ai_service
+            ticker=ticker,
+            upbit_client=upbit_client,
+            data_collector=data_collector,
+            trading_service=trading_service,
+            ai_service=ai_service,
+            trading_type='spot',
+            enable_scanning=True,  # 멀티코인 스캐닝 활성화
+            max_positions=3
         )
-        
+
+        # 스캔된 코인 정보 추출 (멀티코인 스캐닝 결과)
+        selected_coin = result.get('selected_coin', {})
+        actual_ticker = selected_coin.get('ticker') if selected_coin else ticker
+        actual_symbol = selected_coin.get('symbol', ticker.replace('KRW-', '')) if selected_coin else ticker.replace('KRW-', '')
+
+        # 스캔 결과 로깅
+        if selected_coin:
+            logger.info(f"🎯 스캔 선택 코인: {actual_symbol} (점수: {selected_coin.get('score', 'N/A')})")
+        else:
+            logger.info(f"📌 고정 티커 사용: {ticker}")
+
         # 4. 결과 처리
         if result['status'] == 'success':
             logger.info(f"✅ 거래 사이클 성공: {result['decision']}")
@@ -146,9 +163,9 @@ async def trading_job():
             confidence_map = {'high': 0.8, 'medium': 0.5, 'low': 0.3}
             confidence_value = confidence_map.get(result.get('confidence', 'medium'), 0.5)
             
-            # AI 판단 메트릭 (Prometheus)
+            # AI 판단 메트릭 (Prometheus) - 실제 선택된 코인 사용
             record_ai_decision(
-                symbol=ticker,
+                symbol=actual_ticker,
                 decision=result['decision'],
                 confidence=confidence_value
             )
@@ -160,9 +177,9 @@ async def trading_job():
                 from backend.app.db.session import get_db
                 from decimal import Decimal
                 
-                # AIDecisionCreate 스키마 생성
+                # AIDecisionCreate 스키마 생성 - 실제 선택된 코인 사용
                 ai_decision_data = AIDecisionCreate(
-                    symbol=ticker,
+                    symbol=actual_ticker,
                     decision=result['decision'],
                     confidence=Decimal(str(confidence_value * 100)),  # 0-1 -> 0-100%
                     reason=result.get('reason', '')[:500],  # 500자 제한
@@ -184,15 +201,15 @@ async def trading_job():
             except Exception as e:
                 logger.error(f"AI 판단 저장 중 오류: {e}", exc_info=True)
             
-            # 거래 메트릭 (매수/매도 성공 시만 기록)
+            # 거래 메트릭 (매수/매도 성공 시만 기록) - 실제 선택된 코인 사용
             if result['decision'] in ['buy', 'sell'] and result.get('trade_success', False):
                 record_trade(
-                    symbol=ticker,
+                    symbol=actual_ticker,
                     side=result['decision'],
                     volume=float(result.get('total', 0)),
                     fee=float(result.get('fee', 0))
                 )
-                logger.info(f"✅ 거래 메트릭 기록 완료: {result['decision']}")
+                logger.info(f"✅ 거래 메트릭 기록 완료: {actual_symbol} {result['decision']}")
             
             # PostgreSQL에 거래 기록 저장 (매수/매도인 경우)
             # API 호출을 통해 저장 (다이어그램 04-database-save-flow.mmd와 일치)
@@ -203,10 +220,10 @@ async def trading_job():
                     from backend.app.api.v1.endpoints.trades import create_trade
                     from decimal import Decimal
                     
-                    # TradeCreate 스키마 생성 (검증 포함)
+                    # TradeCreate 스키마 생성 (검증 포함) - 실제 선택된 코인 사용
                     trade_data = TradeCreate(
                         trade_id=result['trade_id'],
-                        symbol=ticker,
+                        symbol=actual_ticker,
                         side=result['decision'],
                         price=Decimal(str(result.get('price', 0))),
                         amount=Decimal(str(result.get('amount', 0))),
@@ -230,15 +247,15 @@ async def trading_job():
                 except Exception as e:
                     logger.error(f"거래 내역 저장 실패: {e}", exc_info=True)
             
-            # 포트폴리오 정보 수집 (텔레그램 로그용)
+            # 포트폴리오 정보 수집 (텔레그램 로그용) - 실제 선택된 코인 사용
             try:
                 # 전체 잔고 조회 (get_balances 사용)
                 balances = upbit_client.get_balances()
-                
+
                 # KRW 잔고 찾기
                 krw_balance = 0.0
                 crypto_balance = 0.0
-                crypto_currency = ticker.replace('KRW-', '')
+                crypto_currency = actual_symbol  # 실제 선택된 코인 심볼 사용
                 
                 if balances:
                     for balance in balances:
@@ -247,9 +264,8 @@ async def trading_job():
                         elif balance['currency'] == crypto_currency:
                             crypto_balance = float(balance['balance'])
                 
-                # 현재가 조회 (이미 위에서 수집했으면 재사용)
-                if 'current_price' not in locals():
-                    current_price = upbit_client.get_current_price(ticker)
+                # 현재가 조회 - 실제 선택된 코인
+                current_price = upbit_client.get_current_price(actual_ticker)
                 
                 total_value = krw_balance + (crypto_balance * current_price if current_price else 0)
                 
@@ -270,23 +286,24 @@ async def trading_job():
             # 실행 시간 계산
             duration = time() - job_start_time
             
-            # 📱 2) 백테스팅 및 신호 분석 알림
+            # 📱 2) 백테스팅 및 신호 분석 알림 - 실제 선택된 코인 사용
             try:
                 # main.py에서 flash_crash, rsi_divergence 정보 가져오기
                 flash_crash = result.get('flash_crash', None)
                 rsi_divergence = result.get('rsi_divergence', None)
                 backtest_result = result.get('backtest_result', {})
-                
+                scan_summary = result.get('scan_summary', {})
+
                 # 디버깅: 데이터 확인
                 logger.info(f"🔍 백테스팅 데이터 확인:")
+                logger.info(f"  - 선택된 코인: {actual_symbol}")
+                logger.info(f"  - 스캔 요약: {scan_summary}")
                 logger.info(f"  - backtest_result 타입: {type(backtest_result)}")
-                logger.info(f"  - backtest_result 내용: {backtest_result}")
-                logger.info(f"  - market_data 내용: {market_data}")
                 logger.info(f"  - flash_crash: {flash_crash}")
                 logger.info(f"  - rsi_divergence: {rsi_divergence}")
-                
+
                 await notify_backtest_and_signals(
-                    symbol=ticker,
+                    symbol=actual_ticker,  # 실제 선택된 코인 사용
                     backtest_result=backtest_result,
                     market_data=market_data,
                     flash_crash=flash_crash,
@@ -296,10 +313,10 @@ async def trading_job():
             except Exception as telegram_error:
                 logger.warning(f"백테스팅 알림 전송 실패: {telegram_error}", exc_info=True)
             
-            # 📱 3) AI 의사결정 상세 알림 (전체 텍스트)
+            # 📱 3) AI 의사결정 상세 알림 (전체 텍스트) - 실제 선택된 코인 사용
             try:
                 await notify_ai_decision(
-                    symbol=ticker,
+                    symbol=actual_ticker,  # 실제 선택된 코인 사용
                     decision=result['decision'],
                     confidence=result.get('confidence', 'medium'),
                     reason=result.get('reason', '분석 중'),
@@ -309,7 +326,7 @@ async def trading_job():
             except Exception as telegram_error:
                 logger.warning(f"AI 의사결정 알림 전송 실패: {telegram_error}")
             
-            # 📱 4) 포트폴리오 현황 알림
+            # 📱 4) 포트폴리오 현황 알림 - 실제 선택된 코인 사용
             try:
                 # 거래 결과 (매수/매도인 경우)
                 trade_result_data = None
@@ -322,9 +339,9 @@ async def trading_job():
                         'total': result.get('total'),
                         'fee': result.get('fee'),
                     }
-                
+
                 await notify_portfolio_status(
-                    symbol=ticker,
+                    symbol=actual_ticker,  # 실제 선택된 코인 사용
                     portfolio_data=portfolio_data,
                     trade_result=trade_result_data,
                 )
@@ -395,6 +412,93 @@ async def trading_job():
         
         # 실패 메트릭
         scheduler_job_failure_total.labels(job_name='trading_job').inc()
+
+
+async def position_management_job():
+    """
+    포지션 관리 작업 (15분마다)
+
+    기존 포지션의 손절/익절을 관리합니다.
+    포지션이 없으면 즉시 종료합니다 (진입 로직 없음).
+    """
+    from main import execute_position_management_cycle
+    from src.api.upbit_client import UpbitClient
+    from src.data.collector import DataCollector
+    from src.trading.service import TradingService
+    from backend.app.services.notification import notify_error
+    from backend.app.services.metrics import (
+        scheduler_job_duration_seconds,
+        scheduler_job_success_total,
+        scheduler_job_failure_total
+    )
+    from time import time
+
+    job_start_time = time()
+
+    try:
+        logger.info(f"[{datetime.now()}] 포지션 관리 작업 시작 (15분 주기)")
+
+        # 서비스 초기화
+        upbit_client = UpbitClient()
+        data_collector = DataCollector()
+        trading_service = TradingService(upbit_client)
+
+        # 포지션 관리 사이클 실행
+        result = await execute_position_management_cycle(
+            upbit_client=upbit_client,
+            data_collector=data_collector,
+            trading_service=trading_service
+        )
+
+        # 결과 처리
+        duration = time() - job_start_time
+
+        if result.get('status') == 'success':
+            actions = result.get('actions', [])
+            exit_actions = [a for a in actions if a.get('action') in ['exit', 'partial_exit']]
+
+            if exit_actions:
+                logger.info(f"✅ 포지션 관리 완료: {len(exit_actions)}개 포지션 청산")
+                # TODO: 청산 알림 전송
+            else:
+                logger.info(f"✅ 포지션 관리 완료: 변동 없음")
+
+            scheduler_job_success_total.labels(job_name='position_management_job').inc()
+
+        elif result.get('status') == 'skipped':
+            logger.info(f"⏭️ 포지션 관리 스킵: {result.get('reason', '포지션 없음')}")
+            scheduler_job_success_total.labels(job_name='position_management_job').inc()
+
+        else:
+            logger.error(f"❌ 포지션 관리 실패: {result.get('error', 'Unknown')}")
+            scheduler_job_failure_total.labels(job_name='position_management_job').inc()
+
+        scheduler_job_duration_seconds.labels(job_name='position_management_job').observe(duration)
+        logger.info(f"✅ 포지션 관리 작업 완료 (소요 시간: {duration:.2f}초)")
+
+    except Exception as e:
+        logger.error(f"❌ 포지션 관리 작업 중 예외 발생: {e}", exc_info=True)
+
+        duration = time() - job_start_time
+        scheduler_job_failure_total.labels(job_name='position_management_job').inc()
+
+        # Sentry로 에러 전송
+        if settings.SENTRY_ENABLED:
+            import sentry_sdk
+            with sentry_sdk.push_scope() as scope:
+                scope.set_tag("component", "scheduler")
+                scope.set_tag("job", "position_management_job")
+                sentry_sdk.capture_exception(e)
+
+        # 에러 알림
+        try:
+            await notify_error(
+                error_type=type(e).__name__,
+                error_message=str(e),
+                context={'job': 'position_management_job', 'duration': f'{duration:.2f}초'}
+            )
+        except Exception as telegram_error:
+            logger.warning(f"에러 알림 전송 실패: {telegram_error}")
 
 
 async def portfolio_snapshot_job():
@@ -504,7 +608,7 @@ def add_jobs():
     # 현재 시각 (즉시 실행을 위해)
     now = datetime.now()
     
-    # 1. 트레이딩 작업 (1시간마다 실행, 시작 즉시 첫 실행)
+    # 1. 트레이딩 작업 (1시간마다 실행 - 진입 탐색용)
     scheduler.add_job(
         trading_job,
         trigger=IntervalTrigger(
@@ -512,12 +616,25 @@ def add_jobs():
             start_date=now  # 즉시 실행
         ),
         id="trading_job",
-        name="주기적 트레이딩 작업 (1시간)",
+        name="트레이딩 작업 - 진입 탐색 (1시간)",
         replace_existing=True,
     )
     logger.info(f"✅ 트레이딩 작업 등록됨 (주기: {settings.SCHEDULER_INTERVAL_MINUTES}분 = 1시간, 즉시 실행)")
+
+    # 2. 포지션 관리 작업 (15분마다 실행 - 손절/익절 관리용)
+    scheduler.add_job(
+        position_management_job,
+        trigger=IntervalTrigger(
+            minutes=15,
+            start_date=now  # 즉시 실행
+        ),
+        id="position_management_job",
+        name="포지션 관리 작업 - 손절/익절 (15분)",
+        replace_existing=True,
+    )
+    logger.info("✅ 포지션 관리 작업 등록됨 (주기: 15분, 즉시 실행)")
     
-    # 2. 포트폴리오 스냅샷 (매 시간, 즉시 실행)
+    # 3. 포트폴리오 스냅샷 (매 시간, 즉시 실행)
     scheduler.add_job(
         portfolio_snapshot_job,
         trigger=IntervalTrigger(
@@ -530,7 +647,7 @@ def add_jobs():
     )
     logger.info("✅ 포트폴리오 스냅샷 작업 등록됨 (주기: 1시간, 즉시 실행)")
     
-    # 3. 일일 리포트 (매일 오전 9시)
+    # 4. 일일 리포트 (매일 오전 9시)
     scheduler.add_job(
         daily_report_job,
         trigger=CronTrigger(hour=9, minute=0, timezone="Asia/Seoul"),

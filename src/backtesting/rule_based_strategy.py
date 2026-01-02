@@ -13,13 +13,13 @@ import numpy as np
 from .strategy import Strategy, Signal
 from .portfolio import Portfolio
 from ..trading.indicators import TechnicalIndicators
+from ..config.settings import StrategyConfig
 
 # 상수 정의
 DEFAULT_RISK_PER_TRADE = 0.02  # 거래당 리스크 2%
 DEFAULT_MAX_POSITION_SIZE = 0.3  # 최대 포지션 30%
 DEFAULT_DONCHIAN_PERIOD = 20  # Donchian Channel 기간
 DEFAULT_VOLUME_MULTIPLIER = 1.5  # 거래량 배수
-DEFAULT_K_VALUE = 0.5  # 래리 윌리엄스 K 값
 DEFAULT_TIMEOUT_BARS = 24  # 타임아웃 바 수 (24봉)
 
 # 포지션 사이징 상수
@@ -35,14 +35,16 @@ ADX_WEAKENING_THRESHOLD = 0.8  # ADX 약화 임계값
 ADX_WEAK_TREND = 20  # 약한 추세 ADX 기준값
 PROFIT_THRESHOLD_FOR_TIMEOUT = 0.02  # 타임아웃 시 최소 수익률 (2%)
 
-# 스탑로스/테이크프로핏 배수
-STOP_LOSS_ATR_MULTIPLIER = 2.0  # 스탑로스 ATR 배수
-TAKE_PROFIT_ATR_MULTIPLIER = 3.0  # 테이크프로핏 ATR 배수
-
 # 추세 필터 상수
 DEFAULT_TREND_MA_PERIOD = 50  # 기본 추세 필터 이동평균 기간 (50일)
 MIN_TREND_MA_PERIOD = 20  # 최소 추세 필터 이동평균 기간
-DEFAULT_USE_DYNAMIC_K = False  # 기본값: 고정 K 사용
+
+# 설정 파일에서 가져오는 상수 (StrategyConfig 참조)
+# - DEFAULT_K_VALUE: StrategyConfig.K_VALUE_DEFAULT
+# - DEFAULT_USE_DYNAMIC_K: StrategyConfig.USE_DYNAMIC_K
+# - STOP_LOSS_ATR_MULTIPLIER: StrategyConfig.STOP_LOSS_ATR_MULTIPLIER
+# - TAKE_PROFIT_ATR_MULTIPLIER: StrategyConfig.TAKE_PROFIT_ATR_MULTIPLIER
+# - K_VALUE_LOW_VOL/MED_VOL/HIGH_VOL: StrategyConfig 참조
 
 
 class RuleBasedBreakoutStrategy(Strategy):
@@ -73,22 +75,27 @@ class RuleBasedBreakoutStrategy(Strategy):
         max_position_size: float = DEFAULT_MAX_POSITION_SIZE,
         donchian_period: int = DEFAULT_DONCHIAN_PERIOD,
         volume_multiplier: float = DEFAULT_VOLUME_MULTIPLIER,
-        k_value: float = DEFAULT_K_VALUE,
+        k_value: float = None,  # None이면 StrategyConfig에서 가져옴
         timeout_bars: int = DEFAULT_TIMEOUT_BARS,
         trend_filter_enabled: bool = True,  # 추세 필터 사용 여부
         trend_ma_period: int = DEFAULT_TREND_MA_PERIOD,  # 추세 필터 이동평균 기간
-        use_dynamic_k: bool = DEFAULT_USE_DYNAMIC_K  # 동적 K값 사용 여부
+        use_dynamic_k: bool = None  # None이면 StrategyConfig에서 가져옴
     ):
         self.ticker = ticker
         self.risk_per_trade = risk_per_trade
         self.max_position_size = max_position_size
         self.donchian_period = donchian_period
         self.volume_multiplier = volume_multiplier
-        self.k_value = k_value  # 고정 K값 (use_dynamic_k=False일 때 사용)
+        # 설정 파일에서 기본값 가져오기
+        self.k_value = k_value if k_value is not None else StrategyConfig.K_VALUE_DEFAULT
         self.timeout_bars = timeout_bars
         self.trend_filter_enabled = trend_filter_enabled
         self.trend_ma_period = max(trend_ma_period, MIN_TREND_MA_PERIOD)  # 최소값 보장
-        self.use_dynamic_k = use_dynamic_k
+        self.use_dynamic_k = use_dynamic_k if use_dynamic_k is not None else StrategyConfig.USE_DYNAMIC_K
+
+        # ATR 배수 설정 (StrategyConfig에서 가져옴)
+        self.stop_loss_atr_multiplier = StrategyConfig.STOP_LOSS_ATR_MULTIPLIER
+        self.take_profit_atr_multiplier = StrategyConfig.TAKE_PROFIT_ATR_MULTIPLIER
 
         # 포지션 추적 (매도 신호 생성을 위해)
         self.current_position = None  # {'entry_price', 'stop_loss', 'take_profit', 'entry_bar_index'}
@@ -365,10 +372,10 @@ class RuleBasedBreakoutStrategy(Strategy):
                     indicators = TechnicalIndicators.get_latest_indicators(data)
                     atr = indicators.get('atr', current_price * 0.02)  # fallback 2%
 
-                # 전략적 스탑로스/테이크프로핏 설정
+                # 전략적 스탑로스/테이크프로핏 설정 (인스턴스 변수 사용)
                 # 돌파 매매는 손절을 짧게 잡는 것이 핵심 (돌파 실패 = 즉시 탈출)
-                stop_loss = current_price - (STOP_LOSS_ATR_MULTIPLIER * atr)
-                take_profit = current_price + (TAKE_PROFIT_ATR_MULTIPLIER * atr)  # 손익비 1:1.5
+                stop_loss = current_price - (self.stop_loss_atr_multiplier * atr)
+                take_profit = current_price + (self.take_profit_atr_multiplier * atr)  # 손익비 1:1.5
                 
                 # 포지션 정보 저장
                 self.current_position = {
@@ -597,13 +604,13 @@ class RuleBasedBreakoutStrategy(Strategy):
         # ATR 비율 계산
         atr_pct = (current_atr / yesterday_close) * 100
 
-        # 동적 K값 결정
+        # 동적 K값 결정 (StrategyConfig에서 가져옴)
         if atr_pct < 2.0:
-            k_value = 2.0  # 저변동성: 큰 돌파 필요
+            k_value = StrategyConfig.K_VALUE_LOW_VOL  # 저변동성: 큰 돌파 필요
         elif atr_pct < 4.0:
-            k_value = 1.5  # 중변동성
+            k_value = StrategyConfig.K_VALUE_MED_VOL  # 중변동성
         else:
-            k_value = 1.0  # 고변동성: 작은 돌파로도 진입
+            k_value = StrategyConfig.K_VALUE_HIGH_VOL  # 고변동성: 작은 돌파로도 진입
 
         # 돌파가 계산
         target_price = yesterday_close + current_atr * k_value
@@ -1110,14 +1117,14 @@ class RuleBasedBreakoutStrategy(Strategy):
             atr_pct: ATR 비율 (%)
 
         Returns:
-            K값 (2.0, 1.5, 1.0)
+            K값 (StrategyConfig에서 설정)
         """
         if atr_pct < 2.0:
-            return 2.0  # 저변동성
+            return StrategyConfig.K_VALUE_LOW_VOL  # 저변동성
         elif atr_pct < 4.0:
-            return 1.5  # 중변동성
+            return StrategyConfig.K_VALUE_MED_VOL  # 중변동성
         else:
-            return 1.0  # 고변동성
+            return StrategyConfig.K_VALUE_HIGH_VOL  # 고변동성
 
     def _calculate_target_price_atr(self, data: pd.DataFrame, current_idx: int) -> float:
         """

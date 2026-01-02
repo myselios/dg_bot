@@ -2,37 +2,66 @@ sequenceDiagram
     participant Scheduler as 스케줄러<br/>(scheduler_main.py)
     participant BackendScheduler as Backend Scheduler<br/>(core/scheduler.py)
     participant Main as main.py<br/>(execute_trading_cycle)
-    participant TradingService as TradingService<br/>(src/trading/service.py)
+    participant Pipeline as TradingPipeline<br/>(파이프라인 오케스트레이터)
+    participant Stages as Pipeline Stages<br/>(스테이지들)
     participant Upbit as Upbit API<br/>(거래소)
     participant DB as PostgreSQL<br/>(trades 테이블)
-    participant API as Backend API<br/>(POST /trades/)
-    participant Metrics as Prometheus<br/>(메트릭)
     participant Telegram as Telegram<br/>(알림)
+    participant Metrics as Prometheus<br/>(메트릭)
 
     Scheduler->>BackendScheduler: 1시간마다 trading_job() 실행
     BackendScheduler->>Main: execute_trading_cycle() 호출
 
-    Note over Main: 1. 현재 투자 상태 조회<br/>2. 차트 데이터 수집<br/>3. 시장 분석<br/>4. 백테스팅 필터링
+    Note over Main: 파이프라인 타입 선택:<br/>- 멀티코인 파이프라인<br/>- 적응형 파이프라인<br/>- 기본 파이프라인
 
-    Main->>Main: AI 분석 수행
-    Main->>TradingService: execute_buy() 또는<br/>execute_sell() 호출
+    Main->>Pipeline: create_*_trading_pipeline()
+    Main->>Pipeline: pipeline.execute(context)
 
-    TradingService->>Upbit: 매수/매도 주문 전송
-    Upbit-->>TradingService: 주문 결과 반환<br/>(uuid, price, volume, fee)
+    Note over Pipeline,Stages: 스테이지 순차 실행
 
-    TradingService-->>Main: 거래 실행 결과
-    Main-->>BackendScheduler: result 반환<br/>{status, decision, price, amount, trade_id}
+    alt 멀티코인 파이프라인
+        Pipeline->>Stages: 1. AdaptiveRiskCheckStage
+        Stages->>Upbit: 포트폴리오 조회
+        Upbit-->>Stages: 포지션 정보
+
+        Pipeline->>Stages: 2. CoinScanStage (ENTRY 모드)
+        Note over Stages: 유동성 스캔 → 백테스팅<br/>→ 최적 코인 선택
+
+        Pipeline->>Stages: 3. DataCollectionStage
+        Stages->>Upbit: 차트/오더북 데이터
+        Upbit-->>Stages: OHLCV, 호가
+
+        Pipeline->>Stages: 4. AnalysisStage
+        Note over Stages: 기술적 분석 + AI 진입 분석
+
+        Pipeline->>Stages: 5. ExecutionStage
+        Stages->>Upbit: 매수/매도 주문
+        Upbit-->>Stages: 주문 결과
+    else 적응형 파이프라인
+        Pipeline->>Stages: 1. AdaptiveRiskCheckStage
+        Note over Stages: ENTRY/MANAGEMENT 모드 분기
+
+        alt 포지션 있음 (MANAGEMENT)
+            Stages->>Stages: 규칙 기반 청산 체크<br/>(손절/익절/Fakeout)
+            opt 애매한 상황
+                Stages->>Stages: AI 포지션 분석
+            end
+        else 포지션 없음 (ENTRY)
+            Pipeline->>Stages: 2. DataCollectionStage
+            Pipeline->>Stages: 3. AnalysisStage
+            Pipeline->>Stages: 4. ExecutionStage
+        end
+    end
+
+    Pipeline-->>Main: 실행 결과 반환
+    Main-->>BackendScheduler: result 반환
 
     alt 거래 성공 (buy 또는 sell)
-        BackendScheduler->>API: POST /trades/ 호출
-        Note over BackendScheduler,API: TradeCreate 스키마<br/>{trade_id, symbol, side,<br/>price, amount, total, fee, status}
-        API->>DB: Trade 레코드 INSERT
-        DB-->>API: 저장 완료
-        API-->>BackendScheduler: TradeResponse
-
-        BackendScheduler->>Metrics: 거래 메트릭 기록<br/>record_trade()
-        BackendScheduler->>Metrics: AI 판단 메트릭 기록<br/>record_ai_decision()
-        BackendScheduler->>Telegram: 거래 알림 전송<br/>notify_trade()
+        BackendScheduler->>DB: Trade/AIDecision 저장
+        DB-->>BackendScheduler: 저장 완료
+        BackendScheduler->>Metrics: record_trade() / record_ai_decision()
+        BackendScheduler->>Telegram: 4단계 알림 전송
+        Note over Telegram: 1. 사이클 시작<br/>2. 백테스팅/신호<br/>3. AI 의사결정<br/>4. 포트폴리오 현황
     else 거래 실패 또는 hold
         BackendScheduler->>Metrics: AI 판단만 기록
         BackendScheduler->>Telegram: 에러 알림 (실패 시)

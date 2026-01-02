@@ -52,7 +52,7 @@ class AnalysisStage(BasePipelineStage):
 
             # 4. 백테스팅 필터
             backtest_result = self._run_backtest_filter(context)
-            if not backtest_result.success:
+            if not backtest_result.success or backtest_result.action == 'exit':
                 return backtest_result
 
             # 5. 신호 분석
@@ -75,7 +75,7 @@ class AnalysisStage(BasePipelineStage):
 
     def _analyze_market_correlation(self, context: PipelineContext) -> None:
         """
-        시장 상관관계 분석 (BTC-ETH)
+        시장 상관관계 분석 (BTC vs 현재 코인)
 
         Args:
             context: 파이프라인 컨텍스트
@@ -85,9 +85,12 @@ class AnalysisStage(BasePipelineStage):
             context.chart_data['day']
         )
 
+        # 현재 코인 심볼 추출 (KRW-ETH -> ETH)
+        coin_symbol = context.ticker.replace('KRW-', '') if context.ticker else 'COIN'
+
         Logger.print_header("📊 시장 상관관계 분석")
-        print(f"BTC-ETH 베타: {context.market_correlation.get('beta', 1.0):.2f}")
-        print(f"BTC-ETH 알파: {context.market_correlation.get('alpha', 0.0):.4f}")
+        print(f"BTC-{coin_symbol} 베타: {context.market_correlation.get('beta', 1.0):.2f}")
+        print(f"BTC-{coin_symbol} 알파: {context.market_correlation.get('alpha', 0.0):.4f}")
         print(f"상관계수: {context.market_correlation.get('correlation', 0.0):.2f}")
         print(f"시장 리스크: {context.market_correlation.get('market_risk', 'unknown')}")
         print(f"판단 근거: {context.market_correlation.get('risk_reason', 'N/A')}")

@@ -78,7 +78,7 @@ source venv/bin/activate
 
 # 의존성 설치
 pip install -r requirements.txt
-pip install -r requirements-api.txt
+# requirements-api.txt가 requirements.txt에 통합됨
 ```
 
 ### 2. API 키 설정
@@ -119,7 +119,7 @@ python backtest.py
 docker-compose up -d scheduler
 
 # 전체 스택 실행 (DB, API, 모니터링 포함)
-docker-compose -f docker-compose.full-stack.yml up -d
+docker-compose up -d
 
 # 로그 확인
 docker-compose logs -f scheduler

@@ -1,59 +1,107 @@
 sequenceDiagram
-    participant BackendScheduler as Backend Scheduler<br/>(core/scheduler.py)
     participant Main as main.py<br/>(execute_trading_cycle)
-    participant PositionService as PositionService<br/>(src/position/service.py)
-    participant DataCollector as DataCollector<br/>(src/data/collector.py)
-    participant AIService as AIService<br/>(src/ai/service.py)
-    participant BacktestRunner as BacktestRunner<br/>(src/backtesting/runner.py)
-    participant TradingService as TradingService<br/>(src/trading/service.py)
+    participant Pipeline as TradingPipeline<br/>(trading_pipeline.py)
+    participant Adaptive as AdaptiveRiskCheckStage<br/>(적응형 리스크 체크)
+    participant Portfolio as PortfolioManager<br/>(포트폴리오 관리)
+    participant PosAnalyzer as PositionAnalyzer<br/>(포지션 분석기)
+    participant DataStage as DataCollectionStage<br/>(데이터 수집)
+    participant AnalysisStage as AnalysisStage<br/>(분석)
+    participant ExecStage as ExecutionStage<br/>(실행)
     participant Upbit as Upbit API
 
-    BackendScheduler->>Main: execute_trading_cycle()
+    Main->>Pipeline: pipeline.execute(context)
 
-    Note over Main: Phase 1: 데이터 수집
-    Main->>PositionService: get_current_position()
-    PositionService->>Upbit: GET /v1/accounts
-    Upbit-->>PositionService: 계좌 정보<br/>(잔고, 평가금액)
-    PositionService-->>Main: Position 객체
+    Note over Pipeline: Phase 1: 적응형 리스크 체크
 
-    Main->>DataCollector: collect_chart_data()<br/>(symbol, interval, count)
-    DataCollector->>Upbit: GET /v1/candles/minutes/60
-    Upbit-->>DataCollector: 차트 데이터<br/>(OHLCV)
-    DataCollector-->>Main: DataFrame (차트)
+    Pipeline->>Adaptive: execute(context)
+    Adaptive->>Portfolio: PortfolioManager 초기화
+    Portfolio->>Upbit: GET /v1/accounts
+    Upbit-->>Portfolio: 계좌 정보<br/>(잔고, 보유 코인)
+    Portfolio->>Portfolio: get_portfolio_status()
+    Portfolio-->>Adaptive: PortfolioStatus<br/>(positions, mode, available_capital)
 
-    Note over Main: Phase 2: AI 분석
-    Main->>AIService: analyze_market(<br/>chart_data,<br/>position,<br/>context<br/>)
-    AIService->>AIService: 기술적 지표 계산<br/>(RSI, MACD, BB, etc.)
-    AIService->>AIService: GPT-4 API 호출<br/>시장 분석 및 판단
-    AIService-->>Main: Decision<br/>(action, confidence, reason)
+    Adaptive->>Portfolio: check_portfolio_risk()
+    alt 포트폴리오 서킷 브레이커
+        Adaptive-->>Pipeline: {status: 'blocked'}
+        Pipeline-->>Main: 거래 중단
+    end
 
-    Note over Main: Phase 3: 백테스팅 필터링
-    alt decision == 'buy'
-        Main->>BacktestRunner: quick_filter_strategy()
-        BacktestRunner->>BacktestRunner: 최근 데이터로<br/>전략 검증
-        BacktestRunner-->>Main: is_passed (True/False)
+    Adaptive->>Adaptive: 거래 모드 확인
+    Note over Adaptive: ENTRY / MANAGEMENT / BLOCKED
 
-        alt is_passed == False
-            Main-->>BackendScheduler: {status: 'hold',<br/>reason: 'backtest_filter_failed'}
+    alt TradingMode.MANAGEMENT (포지션 있음)
+        loop 각 포지션
+            Adaptive->>PosAnalyzer: PositionAnalyzer 초기화
+            Adaptive->>Adaptive: _collect_position_market_data()
+
+            Note over PosAnalyzer: 1단계: 규칙 기반 체크 (무료)
+            PosAnalyzer->>PosAnalyzer: _check_rule_based_exits()
+            Note over PosAnalyzer: 손절/익절/Fakeout/<br/>타임아웃/ADX약화/트레일링
+
+            alt 규칙 발동
+                PosAnalyzer-->>Adaptive: PositionAction(EXIT/ADJUST)
+                Adaptive->>Upbit: 청산 실행
+            else 규칙 미발동
+                PosAnalyzer->>PosAnalyzer: _check_needs_ai_analysis()
+                alt AI 필요 (애매한 상황)
+                    PosAnalyzer->>PosAnalyzer: _analyze_with_ai()
+                    PosAnalyzer-->>Adaptive: AI 판단 결과
+                else AI 불필요
+                    PosAnalyzer-->>Adaptive: HOLD
+                end
+            end
+        end
+
+        alt 추가 진입 가능
+            Adaptive->>Adaptive: trading_mode = 'entry'
+            Note over Adaptive: 다음 스테이지로 진행
+        else 최대 포지션 도달
+            Adaptive-->>Pipeline: {status: 'success', decision: 'hold'}
+            Pipeline-->>Main: 포지션 관리 완료
+        end
+    else TradingMode.ENTRY (포지션 없음)
+        Adaptive->>Adaptive: 진입 자본 확인
+        alt 자본 부족 (< 10,000원)
+            Adaptive-->>Pipeline: {status: 'success', reason: '자본 부족'}
+        else 자본 충분
+            Adaptive-->>Pipeline: StageResult(action='continue')
         end
     end
 
-    Note over Main: Phase 4: 거래 실행
-    alt decision == 'buy' and backtest_passed
-        Main->>TradingService: execute_buy(<br/>symbol,<br/>amount,<br/>price<br/>)
-        TradingService->>Upbit: POST /v1/orders<br/>(side=bid)
-        Upbit-->>TradingService: Order Response<br/>(uuid, executed_volume, price, fee)
-        TradingService-->>Main: TradeResult<br/>(success, trade_id, details)
+    Note over Pipeline: Phase 2: 데이터 수집
+
+    Pipeline->>DataStage: execute(context)
+    DataStage->>Upbit: GET /v1/candles/*
+    Upbit-->>DataStage: 차트 데이터 (일봉/시간봉/15분봉)
+    DataStage->>Upbit: GET /v1/orderbook
+    Upbit-->>DataStage: 오더북 데이터
+    DataStage->>DataStage: 기술적 지표 계산<br/>(RSI, MACD, BB, ADX)
+    DataStage-->>Pipeline: StageResult(action='continue')
+
+    Note over Pipeline: Phase 3: 분석
+
+    Pipeline->>AnalysisStage: execute(context)
+    AnalysisStage->>AnalysisStage: 시장 상관관계 분석
+    AnalysisStage->>AnalysisStage: RSI 다이버전스 체크
+    AnalysisStage->>AnalysisStage: 플래시 크래시 감지
+    AnalysisStage->>AnalysisStage: 백테스팅 필터
+    AnalysisStage->>AnalysisStage: AI 진입 분석
+    AnalysisStage->>AnalysisStage: AI 결정 검증
+    AnalysisStage-->>Pipeline: StageResult(action='continue')
+
+    Note over Pipeline: Phase 4: 거래 실행
+
+    Pipeline->>ExecStage: execute(context)
+    alt decision == 'buy'
+        ExecStage->>Upbit: POST /v1/orders (side=bid)
+        Upbit-->>ExecStage: 주문 결과<br/>(uuid, price, volume, fee)
     else decision == 'sell'
-        Main->>TradingService: execute_sell(<br/>symbol,<br/>volume<br/>)
-        TradingService->>Upbit: POST /v1/orders<br/>(side=ask)
-        Upbit-->>TradingService: Order Response
-        TradingService-->>Main: TradeResult
+        ExecStage->>Upbit: POST /v1/orders (side=ask)
+        Upbit-->>ExecStage: 주문 결과
     else decision == 'hold'
-        Main-->>BackendScheduler: {status: 'hold',<br/>reason: ai_reason}
+        ExecStage-->>Pipeline: {status: 'success', decision: 'hold'}
     end
 
-    Main-->>BackendScheduler: Final Result<br/>{status, decision, price, amount, trade_id}
-
-
+    ExecStage-->>Pipeline: TradeResult
+    Pipeline-->>Main: 최종 결과
 

@@ -240,7 +240,7 @@ jobs:
           python-version: '3.10'
       - name: Install dependencies
         run: |
-          pip install -r requirements-api.txt
+          # requirements-api.txt가 requirements.txt에 통합됨
       - name: Run tests
         run: |
           cd backend

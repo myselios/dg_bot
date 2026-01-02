@@ -184,10 +184,10 @@ TELEGRAM_CHAT_ID=987654321  # 실제 Chat ID로 교체
 
 ```bash
 # Docker Compose로 스케줄러 재시작
-docker-compose -f docker-compose.full-stack.yml restart scheduler
+docker-compose restart scheduler
 
 # 로그 확인
-docker-compose -f docker-compose.full-stack.yml logs scheduler -f
+docker-compose logs scheduler -f
 ```
 
 ### 4-2. 로컬 환경에서 재시작
@@ -407,7 +407,7 @@ BTC와의 높은 상관관계(0.82)를 고려할 때, BTC 상승에 동반 상�
 
    ```bash
    # Docker
-   docker-compose -f docker-compose.full-stack.yml logs scheduler | grep Telegram
+   docker-compose logs scheduler | grep Telegram
 
    # 로컬
    Get-Content logs\scheduler\scheduler.log | Select-String "Telegram"
@@ -472,8 +472,8 @@ BTC와의 높은 상관관계(0.82)를 고려할 때, BTC 상승에 동반 상�
    docker exec trading_bot_scheduler env | grep TELEGRAM
 
    # 재빌드 및 재시작
-   docker-compose -f docker-compose.full-stack.yml build scheduler
-   docker-compose -f docker-compose.full-stack.yml restart scheduler
+   docker-compose build scheduler
+   docker-compose restart scheduler
    ```
 
 ---

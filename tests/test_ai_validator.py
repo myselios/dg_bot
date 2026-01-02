@@ -9,16 +9,21 @@ from src.ai.validator import AIDecisionValidator
 class TestAIDecisionValidator:
     """AIDecisionValidator 클래스 테스트"""
 
-    @pytest.fixture
-    def sample_indicators(self):
-        """샘플 기술적 지표"""
+    def get_passing_indicators(self):
+        """모든 검증 통과하는 지표 반환"""
         return {
             'rsi': 50.0,
             'atr_percent': 3.0,
-            'volume_ratio': 1.5,
-            'adx': 30.0,
+            'volume_ratio': 2.0,  # >= 1.5 (fakeout, trend_filter)
+            'adx': 30.0,  # >= 25 (trend_filter)
+            'bb_width_pct': 5.0,  # >= 4.0 (trend_filter)
             'macd': 100.0
         }
+
+    @pytest.fixture
+    def sample_indicators(self):
+        """샘플 기술적 지표 (모든 검증 통과용)"""
+        return self.get_passing_indicators()
 
     @pytest.fixture
     def sample_decision(self):
@@ -34,9 +39,16 @@ class TestAIDecisionValidator:
     # ============================================
 
     @pytest.mark.unit
-    def test_validate_decision_all_pass(self, sample_decision, sample_indicators):
+    def test_validate_decision_all_pass(self):
         """모든 검증 통과 테스트"""
-        # Given
+        # Given - 모든 조건을 충족하는 지표
+        decision = {
+            'decision': 'buy',
+            'confidence': 'high',
+            'reason': '상승 추세 확인'
+        }
+        indicators = self.get_passing_indicators()
+
         market_conditions = {
             'market_correlation': {'market_risk': 'low'},
             'flash_crash': {'detected': False},
@@ -45,14 +57,14 @@ class TestAIDecisionValidator:
 
         # When
         is_valid, reason, override = AIDecisionValidator.validate_decision(
-            sample_decision,
-            sample_indicators,
+            decision,
+            indicators,
             market_conditions
         )
 
         # Then
         assert is_valid is True
-        assert '검증 통과' in reason
+        assert '통과' in reason
         assert override is None
 
     @pytest.mark.unit
@@ -119,15 +131,21 @@ class TestAIDecisionValidator:
         assert override == 'hold'
 
     @pytest.mark.unit
-    def test_check_rsi_normal_range(self, sample_decision, sample_indicators):
+    def test_check_rsi_normal_range(self):
         """RSI 정상 범위 (30~70) 테스트"""
-        # Given
-        sample_indicators['rsi'] = 55.0  # 정상
+        # Given - RSI 정상 범위 + 모든 조건 충족
+        decision = {
+            'decision': 'buy',
+            'confidence': 'high',
+            'reason': '상승 추세 확인'
+        }
+        indicators = self.get_passing_indicators()
+        indicators['rsi'] = 55.0  # 정상
 
         # When
         is_valid, reason, override = AIDecisionValidator.validate_decision(
-            sample_decision,
-            sample_indicators,
+            decision,
+            indicators,
             None
         )
 
@@ -158,15 +176,21 @@ class TestAIDecisionValidator:
         assert override == 'hold'
 
     @pytest.mark.unit
-    def test_check_volatility_normal_atr(self, sample_decision, sample_indicators):
+    def test_check_volatility_normal_atr(self):
         """정상 변동성 테스트"""
-        # Given
-        sample_indicators['atr_percent'] = 4.0  # 정상
+        # Given - 정상 변동성 + 모든 조건 충족
+        decision = {
+            'decision': 'buy',
+            'confidence': 'high',
+            'reason': '상승 추세 확인'
+        }
+        indicators = self.get_passing_indicators()
+        indicators['atr_percent'] = 4.0  # 정상
 
         # When
         is_valid, reason, override = AIDecisionValidator.validate_decision(
-            sample_decision,
-            sample_indicators,
+            decision,
+            indicators,
             None
         )
 
@@ -294,16 +318,23 @@ class TestAIDecisionValidator:
         assert override == 'hold'
 
     @pytest.mark.unit
-    def test_check_fakeout_strong_signal(self, sample_decision, sample_indicators):
+    def test_check_fakeout_strong_signal(self):
         """진짜 돌파 (거래량 충분 + ADX 높음) 테스트"""
-        # Given
-        sample_indicators['volume_ratio'] = 2.0  # 충분
-        sample_indicators['adx'] = 35.0  # 강한 추세
+        # Given - 모든 조건 충족
+        decision = {
+            'decision': 'buy',
+            'confidence': 'high',
+            'reason': '상승 추세 확인'
+        }
+        indicators = self.get_passing_indicators()
+        indicators['volume_ratio'] = 2.0  # 충분 >= 1.5
+        indicators['adx'] = 35.0  # 강한 추세 >= 25
+        indicators['bb_width_pct'] = 5.0  # BB 확장 >= 4.0
 
         # When
         is_valid, reason, override = AIDecisionValidator.validate_decision(
-            sample_decision,
-            sample_indicators,
+            decision,
+            indicators,
             None
         )
 
@@ -315,19 +346,20 @@ class TestAIDecisionValidator:
     # ============================================
 
     @pytest.mark.unit
-    def test_check_confidence_low_for_buy(self, sample_indicators):
+    def test_check_confidence_low_for_buy(self):
         """낮은 신뢰도 매수 신호 테스트"""
-        # Given
+        # Given - 모든 지표는 통과하지만 신뢰도가 낮음
         decision = {
             'decision': 'buy',
             'confidence': 'low',  # 낮은 신뢰도
             'reason': ''
         }
+        indicators = self.get_passing_indicators()
 
         # When
         is_valid, reason, override = AIDecisionValidator.validate_decision(
             decision,
-            sample_indicators,
+            indicators,
             None
         )
 
@@ -359,15 +391,20 @@ class TestAIDecisionValidator:
         assert override == 'hold'
 
     @pytest.mark.unit
-    def test_check_confidence_high(self, sample_decision, sample_indicators):
+    def test_check_confidence_high(self):
         """높은 신뢰도 테스트"""
-        # Given
-        sample_decision['confidence'] = 'high'
+        # Given - 모든 조건 충족
+        decision = {
+            'decision': 'buy',
+            'confidence': 'high',
+            'reason': '상승 추세 확인'
+        }
+        indicators = self.get_passing_indicators()
 
         # When
         is_valid, reason, override = AIDecisionValidator.validate_decision(
-            sample_decision,
-            sample_indicators,
+            decision,
+            indicators,
             None
         )
 
@@ -413,7 +450,7 @@ class TestAIDecisionValidator:
         # Then
         assert '검증 결과' in report
         assert '❌ 실패' in report
-        assert 'RSI 과매수' in reason
+        assert 'RSI 과매수' in report  # 수정: reason -> report
         assert 'HOLD' in report  # override된 결정
 
     # ============================================

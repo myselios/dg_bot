@@ -6,6 +6,7 @@
 """
 from typing import Dict, List, Optional
 from ..utils.logger import Logger
+from ..config.settings import SlippageConfig
 
 
 class LiquidityAnalyzer:
@@ -150,9 +151,10 @@ class LiquidityAnalyzer:
         # 슬리피지 계산
         slippage_pct = ((avg_price - best_ask) / best_ask) * 100 if best_ask > 0 else 0
 
-        # 경고 메시지
+        # 경고 메시지 (설정값 사용)
         warning = ""
-        if slippage_pct > 0.3:
+        warning_threshold = SlippageConfig.WARNING_SLIPPAGE_PCT
+        if slippage_pct > warning_threshold:
             warning = f"⚠️ 높은 슬리피지 예상: {slippage_pct:.2f}%"
         elif levels_used > 5:
             warning = f"⚠️ 많은 호가 단계 사용: {levels_used}단계"
@@ -245,9 +247,10 @@ class LiquidityAnalyzer:
         # 슬리피지 계산 (매도는 음수)
         slippage_pct = ((avg_price - best_bid) / best_bid) * 100 if best_bid > 0 else 0
 
-        # 경고 메시지
+        # 경고 메시지 (설정값 사용)
         warning = ""
-        if abs(slippage_pct) > 0.3:  # 절대값 비교
+        warning_threshold = SlippageConfig.WARNING_SLIPPAGE_PCT
+        if abs(slippage_pct) > warning_threshold:
             warning = f"⚠️ 높은 슬리피지 예상: {abs(slippage_pct):.2f}%"
         elif levels_used > 5:
             warning = f"⚠️ 많은 호가 단계 사용: {levels_used}단계"
@@ -265,7 +268,7 @@ class LiquidityAnalyzer:
         orderbook: Dict,
         order_side: str,
         order_krw_amount: float,
-        max_slippage_pct: float = 1.0
+        max_slippage_pct: float = None
     ) -> Dict:
         """
         유동성 리스크 체크
@@ -286,6 +289,10 @@ class LiquidityAnalyzer:
                 'recommendation': str  # 권장 사항
             }
         """
+        # 설정값에서 기본 최대 슬리피지 가져오기
+        if max_slippage_pct is None:
+            max_slippage_pct = SlippageConfig.MAX_SLIPPAGE_PCT
+
         slippage_info = LiquidityAnalyzer.calculate_slippage(
             orderbook=orderbook,
             order_side=order_side,

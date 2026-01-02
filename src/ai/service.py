@@ -859,63 +859,107 @@ class AIService:
             sharpe = metrics.get('sharpe_ratio', 0)
             profit_factor = metrics.get('profit_factor', 0)
             
-            if total_return > 5 and win_rate > 40 and sharpe > 0.5:
+            # P1 #4: 동적 임계값 - 시장 변동성 대비 상대 기준 적용
+            # 변동성이 높은 시장에서는 기준을 낮추고, 낮은 시장에서는 높임
+            risk_metrics = analysis_data.get('risk_metrics', {})
+            market_volatility = risk_metrics.get('volatility_30d', 30)  # 기본값 30%
+            volatility_adjustment = 30 / max(market_volatility, 10)  # 0.5 ~ 3.0 범위
+
+            # 조정된 임계값 (변동성 정규화)
+            adjusted_return_threshold = 5 * volatility_adjustment
+            adjusted_sharpe_threshold = 0.5 * volatility_adjustment
+
+            # P1 #6: BTC 대비 Alpha 계산
+            market_corr = analysis_data.get('market_correlation', {})
+            btc_perf = market_corr.get('btc_performance', {})
+            btc_return_30d = btc_perf.get('return_30d', 0) if btc_perf else 0
+            alpha = total_return - btc_return_30d
+
+            if total_return > adjusted_return_threshold and win_rate > 40 and sharpe > adjusted_sharpe_threshold:
                 backtest_grade = "STRONG PASS"
-                recommended_action = "전략이 작동 중. 현재 시그널 신뢰 가능. 매수 진행."
-            elif total_return > 3 and win_rate > 35 and sharpe > 0.3:
+                # P0 #2: 권장 행동 중립화 - 확정적 표현 제거
+                recommended_action = f"백테스팅 양호 (Alpha: {alpha:+.2f}%). 현재 시장 환경 유사성 검증 필요."
+            elif total_return > adjusted_return_threshold * 0.6 and win_rate > 35 and sharpe > adjusted_sharpe_threshold * 0.6:
                 backtest_grade = "WEAK PASS"
-                recommended_action = "전략 약화 중. 포지션 사이즈 50% 축소 권장."
+                recommended_action = f"전략 성과 약화 중 (Alpha: {alpha:+.2f}%). 포지션 사이즈 축소 또는 진입 보류 권장."
             else:
                 backtest_grade = "FAIL"
-                recommended_action = "전략 실패. 시장 환경 변화. 매수 금지."
+                recommended_action = f"전략 부진 (Alpha: {alpha:+.2f}%). 시장 환경 변화 가능성 높음. 진입 재검토 필요."
             
-            # 개선된 변동성 돌파 프롬프트 (안전/위험 조건 분리)
+            # P0 #1, #3, P2 #7: 개선된 프롬프트 - 확증 편향 제거 + Regime 변화 질문 + 리스크 헌터 페르소나
             system_prompt = (
-                f"당신은 백테스팅 검증 전략의 실행 환경을 체크하는 검증자입니다.\n\n"
-                
+                f"당신은 **리스크 헌터(Risk Hunter)** 역할의 트레이딩 검증자입니다.\n"
+                f"당신의 임무는 이 거래를 **막을 이유를 적극적으로 찾는 것**입니다.\n"
+                f"설득력 있는 이유가 없을 때만 거래를 승인하세요.\n\n"
+
+                f"## ⚠️ 중요 경고:\n"
+                f"- **과거 성과가 미래를 보장하지 않습니다.**\n"
+                f"- 최근 30일 백테스팅이 양호해도, 이는 **시장 국면(Regime)이 전략에 우호적이었다**는 의미입니다.\n"
+                f"- 동시에 **평균 회귀(Mean Reversion)로 성과가 꺾일 시점**일 수도 있습니다.\n"
+                f"- 당신은 '거수기'가 아닙니다. **비판적 시각**을 유지하세요.\n\n"
+
                 f"## 현재 상황:\n"
-                f"- 백테스팅 통과: 전략이 작동 중입니다.\n"
                 f"- 전략: 변동성 돌파 (Volatility Breakout)\n"
-                f"- 진입 조건: 3단계 관문(응축 → 돌파 → 거래량) 모두 충족\n\n"
-                
+                f"- 진입 조건: 3단계 관문(응축 → 돌파 → 거래량) 충족\n"
+                f"- 시장 변동성: {self._format_number(market_volatility, '.1f')}% (30일 기준)\n"
+                f"- 임계값 조정 계수: {self._format_number(volatility_adjustment, '.2f')}x\n\n"
+
                 f"## 백테스팅 성과 (최근 30일):\n"
-                f"- 총 수익률: {self._format_number(total_return, '.2f')}% (기준: >5%)\n"
+                f"- 총 수익률: {self._format_number(total_return, '.2f')}% (조정 기준: >{self._format_number(adjusted_return_threshold, '.1f')}%)\n"
+                f"- BTC 대비 Alpha: {self._format_number(alpha, '+.2f')}%\n"
                 f"- 승률: {self._format_number(win_rate, '.2f')}% (기준: >40%)\n"
-                f"- Sharpe Ratio: {self._format_number(sharpe, '.2f')} (기준: >0.5)\n"
+                f"- Sharpe Ratio: {self._format_number(sharpe, '.2f')} (조정 기준: >{self._format_number(adjusted_sharpe_threshold, '.2f')})\n"
                 f"- Profit Factor: {self._format_number(profit_factor, '.2f')} (기준: >1.5)\n"
                 f"→ **등급: {backtest_grade}** - {recommended_action}\n\n"
-                
-                f"## 당신의 임무:\n"
-                f"현재 시장 환경에서 이상 징후만 체크하세요. 전략은 이미 검증되었습니다.\n\n"
-                
+
+                f"## 🔴 핵심 질문 (반드시 답변 필요):\n"
+                f"**\"현재의 변동성(ATR), 거래량, 오더북 상태가 지난 30일간 성과를 냈던 시장 환경과 유사합니까?\"**\n"
+                f"- 시장 국면(Regime)이 변화하고 있다면, 과거 성과가 좋아도 진입을 거부하세요.\n"
+                f"- 거래량 없는 가격 상승(Price-Volume Divergence)은 Fakeout 신호입니다.\n"
+                f"- 오더북 매수벽이 급격히 생겼다 사라지는 패턴은 Spoofing(허수) 가능성입니다.\n\n"
+
+                f"## 🎯 당신의 임무: 이 거래를 막을 이유 3가지를 찾으세요\n"
+                f"1. **시장 국면 변화**: ATR, 거래량, 변동성 패턴이 최근 30일과 다른가?\n"
+                f"2. **모멘텀 약화 신호**: RSI 다이버전스, 거래량 감소 등\n"
+                f"3. **구조적 위험**: 저항선 근접, 오더북 불균형, BTC 약세 등\n\n"
+
+                f"→ 설득력 있는 이유가 **없다면** 거래를 승인하세요.\n"
+                f"→ 이유가 **1개라도** 있으면 HOLD를 고려하세요.\n"
+                f"→ 이유가 **2개 이상**이면 HOLD 또는 SELL을 권장하세요.\n\n"
+
                 f"### ✅ 안전 조건 (모두 충족해야 함):\n"
                 f"1. **오더북 안전**: 매도벽 비율 < 5% (현재가 위 큰 매도벽 없음)\n"
                 f"2. **추세 명확**: ADX > 25 (강한 추세 존재)\n"
-                f"3. **거래량 확인**: 현재 거래량 > 평균의 1.5배\n"
-                f"4. **볼린저 밴드**: 상단 터치 후 즉시 하락 패턴 아님\n\n"
-                
+                f"3. **거래량 확인**: 현재 거래량 > 평균의 1.5배 **AND** 가격 방향과 일치\n"
+                f"4. **볼린저 밴드**: 상단 터치 후 즉시 하락 패턴 아님\n"
+                f"5. **Regime 일관성**: 현재 시장 환경이 최근 30일과 유사\n\n"
+
                 f"### ⚠️ 위험 조건 (하나라도 있으면 중단):\n"
                 f"1. **BTC 급락 위험**: market_risk='high' (베타 > 1.2, 알파 < 0, BTC 하락 중)\n"
                 f"2. **RSI 다이버전스**: 가격 상승하지만 RSI 고점 하락 (모멘텀 약화)\n"
                 f"3. **플래시 크래시**: 비정상적 급락 감지 (ATR 대비 2배 이상)\n"
-                f"4. **극단적 탐욕**: 공포탐욕지수 > 75 (과열 시장)\n\n"
-                
+                f"4. **극단적 탐욕**: 공포탐욕지수 > 75 (과열 시장)\n"
+                f"5. **Price-Volume 괴리**: 가격은 상승하지만 거래량은 감소\n"
+                f"6. **Alpha 음수**: BTC 대비 성과가 마이너스 (약세 신호)\n\n"
+
                 f"## 판단 기준:\n"
-                f"- **BUY**: 안전 조건 모두 충족 AND 위험 조건 없음\n"
-                f"- **HOLD**: 안전 조건 미충족 OR 위험 조건 하나 이상 존재\n"
+                f"- **BUY**: 안전 조건 모두 충족 AND 위험 조건 없음 AND 막을 이유를 찾지 못함\n"
+                f"- **HOLD**: 안전 조건 미충족 OR 위험 조건 하나 이상 OR 막을 이유 1개 이상\n"
                 f"- **SELL**: 위험 조건 2개 이상 또는 명백한 플래시 크래시\n\n"
-                
+
                 f"## 출력 형식 (한국어 JSON):\n"
                 f"{{\n"
                 f"  \"decision\": \"buy|sell|hold\",\n"
                 f"  \"reason\": \"6개 섹션으로 구성된 상세 분석 (한국어)\",\n"
                 f"  \"confidence\": \"high|medium|low\",\n"
-                f"  \"safety_conditions_met\": {{\"orderbook\": true/false, \"trend\": true/false, \"volume\": true/false, \"bb_pattern\": true/false}},\n"
-                f"  \"risk_conditions_detected\": {{\"btc_risk\": true/false, \"rsi_divergence\": true/false, \"flash_crash\": true/false, \"greed_index\": true/false}},\n"
+                f"  \"regime_analysis\": \"현재 시장 국면이 최근 30일과 유사한지 분석\",\n"
+                f"  \"rejection_reasons\": [\"거래를 막을 이유 리스트 (없으면 빈 배열)\"],\n"
+                f"  \"safety_conditions_met\": {{\"orderbook\": true/false, \"trend\": true/false, \"volume\": true/false, \"bb_pattern\": true/false, \"regime_consistent\": true/false}},\n"
+                f"  \"risk_conditions_detected\": {{\"btc_risk\": true/false, \"rsi_divergence\": true/false, \"flash_crash\": true/false, \"greed_index\": true/false, \"price_volume_divergence\": true/false, \"negative_alpha\": true/false}},\n"
                 f"  \"key_indicators\": [\"주요 지표 리스트\"]\n"
                 f"}}\n\n"
-                
-                f"**중요**: 백테스팅에서 검증된 전략을 신뢰하되, 현재 시장 환경의 이상 징후만 엄격히 체크하세요."
+
+                f"**명심하세요**: 당신은 '승인자'가 아니라 '검증자'입니다. 비판적으로 분석하세요."
             )
         else:
             # 일반 분석 프롬프트
@@ -1152,9 +1196,32 @@ QUICK BACKTEST RESULTS (빠른 백테스팅 결과 - 최근 30일):
 - Max Drawdown: {self._format_number(abs(metrics.get('max_drawdown', 0)), '.2f')}%
 - Total Trades: {metrics.get('total_trades', 'N/A')}
 - Profit Factor: {self._format_number(metrics.get('profit_factor', 'N/A'), '.2f')}
-- Filter Passed: {bt_result.get('passed', False)}
+- Filter Passed: {bt_result.get('passed', False)}"""
 
-**중요**: 위 백테스팅 결과는 최근 30일 동안의 전략 성능을 보여줍니다. 
+            # P1 #5: 손실 날 메타데이터 추가
+            worst_loss = metrics.get('worst_loss_metadata', {})
+            if worst_loss.get('has_losses', False):
+                wl = worst_loss.get('worst_loss', {})
+                user_prompt += f"""
+
+🔴 WORST LOSS ANALYSIS (최악 손실 거래 분석 - P1 #5):
+- 총 손실 거래 수: {worst_loss.get('total_loss_count', 0)}회
+- 총 손실 금액: {self._format_number(worst_loss.get('total_loss_amount', 0), ',.0f')}원
+- 평균 손실/거래: {self._format_number(worst_loss.get('avg_loss_per_trade', 0), ',.0f')}원
+- 최대 연속 손실: {worst_loss.get('max_consecutive_losses', 0)}회
+
+⚠️ 최악 손실 거래 상세:
+- 손실 금액: {self._format_number(wl.get('pnl', 0), ',.0f')}원 ({self._format_number(wl.get('pnl_pct', 0), '.2f')}%)
+- 진입가: {self._format_number(wl.get('entry_price', 0), ',.0f')}원 → 청산가: {self._format_number(wl.get('exit_price', 0), ',.0f')}원
+- 보유 시간: {self._format_number(wl.get('holding_hours', 0), '.1f')}시간
+
+🎯 **핵심 질문**: 현재 시장 환경이 위 손실 발생 당시와 유사합니까?
+- 유사하다면: 진입을 재고하세요 (동일 패턴 반복 위험)
+- 다르다면: 진입 고려 가능 (다른 시장 환경)"""
+
+            user_prompt += f"""
+
+**중요**: 위 백테스팅 결과는 최근 30일 동안의 전략 성능을 보여줍니다.
 이 결과를 참고하여 현재 시장 상황과 과거 성과를 종합적으로 고려한 결정을 내려주세요.
 백테스팅 성과가 좋지 않더라도 현재 시장 상황이 유리하면 매수/매도 결정을 할 수 있습니다."""
 

@@ -1,51 +1,23 @@
 """
 의사결정 구조 테스트
-TDD 원칙: 백테스팅 우선 의사결정 구조를 테스트합니다.
+TDD 원칙: 파이프라인 아키텍처 기반 의사결정 구조를 테스트합니다.
 """
 import pytest
 import pandas as pd
 import numpy as np
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, MagicMock, patch, AsyncMock
 from datetime import datetime
 
 
-class TestDecisionStructure:
-    """의사결정 구조 테스트 (백테스팅 우선)"""
-    
-    @pytest.fixture
-    def passed_backtest_result(self):
-        """백테스팅 통과 결과"""
-        return {
-            'passed': True,
-            'metrics': {
-                'total_return': 21.28,
-                'win_rate': 47.83,
-                'sharpe_ratio': 0.88,
-                'profit_factor': 1.90,
-                'max_drawdown': 7.50
-            }
-        }
-    
-    @pytest.fixture
-    def failed_backtest_result(self):
-        """백테스팅 실패 결과"""
-        return {
-            'passed': False,
-            'metrics': {
-                'total_return': -5.0,
-                'win_rate': 30.0,
-                'sharpe_ratio': -0.2,
-                'profit_factor': 0.8,
-                'max_drawdown': 25.0
-            }
-        }
-    
+class TestPipelineDecisionStructure:
+    """파이프라인 기반 의사결정 구조 테스트"""
+
     @pytest.fixture
     def sample_chart_data(self):
         """샘플 차트 데이터"""
         dates = pd.date_range('2024-01-01', periods=50, freq='D')
         prices = 100 + np.random.randn(50).cumsum()
-        
+
         return {
             'day': pd.DataFrame({
                 'open': prices * 0.99,
@@ -55,303 +27,284 @@ class TestDecisionStructure:
                 'volume': np.random.randint(1000, 2000, 50)
             }, index=dates)
         }
-    
+
     @pytest.fixture
-    def safe_market_conditions(self):
-        """안전한 시장 조건"""
-        return {
-            'market_correlation': {
-                'market_risk': 'low',
-                'beta': 0.9,
-                'alpha': 0.01,
-                'btc_return_1d': 0.005
-            },
-            'flash_crash': {
-                'detected': False,
-                'description': '플래시 크래시 없음'
-            },
-            'rsi_divergence': {
-                'type': 'none',
-                'description': '다이버전스 없음'
-            }
-        }
-    
+    def mock_upbit_client(self):
+        """Mock Upbit 클라이언트"""
+        client = Mock()
+        client.get_balance.return_value = 1000000.0
+        client.get_current_price.return_value = 50000000.0
+        return client
+
     @pytest.fixture
-    def unsafe_market_conditions(self):
-        """위험한 시장 조건"""
-        return {
-            'market_correlation': {
-                'market_risk': 'high',
-                'beta': 1.5,
-                'alpha': -0.02,
-                'btc_return_1d': -0.03,
-                'risk_reason': 'BTC 하락 중, ETH 베타 높음'
-            },
-            'flash_crash': {
-                'detected': False,
-                'description': '플래시 크래시 없음'
-            },
-            'rsi_divergence': {
-                'type': 'bearish_divergence',
-                'confidence': 'high',
-                'description': '하락 다이버전스 감지'
-            }
-        }
-    
-    # ==================== 기본 기능 테스트 ====================
-    
+    def mock_data_collector(self):
+        """Mock 데이터 수집기"""
+        return Mock()
+
+    @pytest.fixture
+    def mock_trading_service(self):
+        """Mock 거래 서비스"""
+        return Mock()
+
+    @pytest.fixture
+    def mock_ai_service(self):
+        """Mock AI 서비스"""
+        return Mock()
+
+    # ==================== 파이프라인 생성 테스트 ====================
+
     @pytest.mark.unit
-    def test_execute_trading_decision_imports(self):
-        """execute_trading_decision 함수를 import할 수 있는지 테스트"""
-        # Given: 모듈 import
-        # When & Then: ImportError가 발생하지 않아야 함
+    def test_create_spot_trading_pipeline_exists(self):
+        """create_spot_trading_pipeline 함수가 존재하는지 테스트"""
         try:
-            from main import execute_trading_decision
-            assert callable(execute_trading_decision)
+            from src.trading.pipeline import create_spot_trading_pipeline
+            assert callable(create_spot_trading_pipeline)
         except ImportError as e:
-            pytest.fail(f"execute_trading_decision import 실패: {e}")
-    
-    # ==================== 백테스팅 필터 테스트 ====================
-    
+            pytest.fail(f"create_spot_trading_pipeline import 실패: {e}")
+
     @pytest.mark.unit
-    def test_backtest_failed_returns_hold(self, failed_backtest_result, sample_chart_data):
-        """백테스팅 실패 시 HOLD 반환"""
-        # Given: 백테스팅 실패 결과
-        from main import execute_trading_decision
-        
-        # When: 의사결정 실행
-        result = execute_trading_decision(
-            backtest_result=failed_backtest_result,
-            chart_data=sample_chart_data,
-            market_conditions={},
-            portfolio=None,
-            ticker='KRW-ETH'
-        )
-        
-        # Then: HOLD 결정
-        assert result['decision'] == 'hold'
-        assert '백테스팅 실패' in result['reason'] or '전략 비활성화' in result['reason']
-    
+    def test_create_adaptive_trading_pipeline_exists(self):
+        """create_adaptive_trading_pipeline 함수가 존재하는지 테스트"""
+        try:
+            from src.trading.pipeline import create_adaptive_trading_pipeline
+            assert callable(create_adaptive_trading_pipeline)
+        except ImportError as e:
+            pytest.fail(f"create_adaptive_trading_pipeline import 실패: {e}")
+
     @pytest.mark.unit
-    def test_backtest_passed_proceeds_to_strategy(
+    def test_pipeline_context_exists(self):
+        """PipelineContext 클래스가 존재하는지 테스트"""
+        try:
+            from src.trading.pipeline import PipelineContext
+            assert PipelineContext is not None
+        except ImportError as e:
+            pytest.fail(f"PipelineContext import 실패: {e}")
+
+    @pytest.mark.unit
+    def test_spot_pipeline_has_four_stages(self):
+        """현물 파이프라인이 4개의 스테이지를 가지는지 테스트"""
+        from src.trading.pipeline import create_spot_trading_pipeline
+
+        pipeline = create_spot_trading_pipeline()
+
+        assert len(pipeline.stages) == 4
+
+    @pytest.mark.unit
+    def test_adaptive_pipeline_has_four_stages(self):
+        """적응형 파이프라인이 4개의 스테이지를 가지는지 테스트"""
+        from src.trading.pipeline import create_adaptive_trading_pipeline
+
+        pipeline = create_adaptive_trading_pipeline()
+
+        assert len(pipeline.stages) == 4
+
+    # ==================== execute_trading_cycle 테스트 ====================
+
+    @pytest.mark.unit
+    def test_execute_trading_cycle_exists(self):
+        """execute_trading_cycle 함수가 존재하는지 테스트"""
+        try:
+            from main import execute_trading_cycle
+            assert callable(execute_trading_cycle)
+        except ImportError as e:
+            pytest.fail(f"execute_trading_cycle import 실패: {e}")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_trading_cycle_returns_dict(
         self,
-        passed_backtest_result,
-        sample_chart_data
+        mock_upbit_client,
+        mock_data_collector,
+        mock_trading_service,
+        mock_ai_service
     ):
-        """백테스팅 통과 시 전략 신호 확인으로 진행"""
-        # Given: 백테스팅 통과 결과
-        from main import execute_trading_decision
-        
-        # When: 의사결정 실행
-        result = execute_trading_decision(
-            backtest_result=passed_backtest_result,
-            chart_data=sample_chart_data,
-            market_conditions={'market_correlation': {}, 'flash_crash': {}, 'rsi_divergence': {}},
-            portfolio=None,
-            ticker='KRW-ETH'
+        """execute_trading_cycle이 Dict를 반환하는지 테스트"""
+        from main import execute_trading_cycle
+
+        with patch('main.create_hybrid_trading_pipeline') as mock_pipeline:
+            mock_result = AsyncMock(return_value={
+                'status': 'success',
+                'decision': 'hold',
+                'pipeline_status': 'completed'
+            })
+            mock_pipeline.return_value.execute = mock_result
+
+            result = await execute_trading_cycle(
+                ticker='KRW-BTC',
+                upbit_client=mock_upbit_client,
+                data_collector=mock_data_collector,
+                trading_service=mock_trading_service,
+                ai_service=mock_ai_service,
+                enable_scanning=False  # 테스트용으로 스캔 비활성화
+            )
+
+            assert isinstance(result, dict)
+            assert 'status' in result or 'decision' in result
+
+    # ==================== AI Validator 테스트 ====================
+
+    @pytest.mark.unit
+    def test_ai_decision_validator_exists(self):
+        """AIDecisionValidator 클래스가 존재하는지 테스트"""
+        try:
+            from src.ai.validator import AIDecisionValidator
+            assert AIDecisionValidator is not None
+        except ImportError as e:
+            pytest.fail(f"AIDecisionValidator import 실패: {e}")
+
+    @pytest.mark.unit
+    def test_ai_validator_validate_decision_method(self):
+        """AIDecisionValidator.validate_decision 메서드 테스트"""
+        from src.ai.validator import AIDecisionValidator
+
+        decision = {'decision': 'hold', 'confidence': 'medium', 'reason': '관망'}
+        indicators = {'rsi': 50.0, 'atr_percent': 3.0, 'volume_ratio': 1.5, 'adx': 30.0}
+
+        is_valid, reason, override = AIDecisionValidator.validate_decision(
+            decision, indicators, None
         )
-        
-        # Then: 결정이 내려져야 함 (buy/sell/hold 중 하나)
-        assert 'decision' in result
-        assert result['decision'] in ['buy', 'sell', 'hold']
-        assert 'reason' in result
-    
-    # ==================== 전략 신호 직접 호출 테스트 ====================
-    
+
+        assert isinstance(is_valid, bool)
+        assert isinstance(reason, str)
+
+    # ==================== RuleBasedBreakoutStrategy 테스트 ====================
+
     @pytest.mark.unit
-    @patch('main.RuleBasedBreakoutStrategy')
-    def test_strategy_signal_directly_called(
-        self,
-        mock_strategy_class,
-        passed_backtest_result,
-        sample_chart_data,
-        safe_market_conditions
-    ):
-        """RuleBasedBreakoutStrategy.generate_signal()이 직접 호출되는지 테스트"""
-        # Given: Mock 전략
-        from main import execute_trading_decision
-        
-        mock_signal = Mock()
-        mock_signal.action = 'buy'
-        mock_signal.reason = 'Volatility breakout'
-        mock_signal.stop_loss = 3000000
-        mock_signal.take_profit = 3500000
-        mock_signal.position_size = 0.5
-        
-        mock_strategy = Mock()
-        mock_strategy.generate_signal.return_value = mock_signal
-        mock_strategy_class.return_value = mock_strategy
-        
-        # When: 의사결정 실행
-        result = execute_trading_decision(
-            backtest_result=passed_backtest_result,
-            chart_data=sample_chart_data,
-            market_conditions=safe_market_conditions,
-            portfolio=None,
-            ticker='KRW-ETH'
+    def test_rule_based_breakout_strategy_exists(self):
+        """RuleBasedBreakoutStrategy 클래스가 존재하는지 테스트"""
+        try:
+            from src.backtesting.rule_based_strategy import RuleBasedBreakoutStrategy
+            assert RuleBasedBreakoutStrategy is not None
+        except ImportError as e:
+            pytest.fail(f"RuleBasedBreakoutStrategy import 실패: {e}")
+
+    @pytest.mark.unit
+    def test_rule_based_strategy_generate_signal(self, sample_chart_data):
+        """RuleBasedBreakoutStrategy.generate_signal 메서드 테스트"""
+        from src.backtesting.rule_based_strategy import RuleBasedBreakoutStrategy
+
+        strategy = RuleBasedBreakoutStrategy(
+            ticker='KRW-BTC',
+            risk_per_trade=0.02,
+            max_position_size=0.3
         )
-        
-        # Then: 전략의 generate_signal이 호출되었어야 함
-        mock_strategy.generate_signal.assert_called_once()
-    
+
+        signal = strategy.generate_signal(sample_chart_data['day'], None)
+
+        # 신호는 TradingSignal 또는 None이어야 함
+        if signal is not None:
+            assert hasattr(signal, 'action')
+            assert signal.action in ['buy', 'sell', 'hold']
+
+    # ==================== QuickBacktestFilter 테스트 ====================
+
     @pytest.mark.unit
-    @patch('main.RuleBasedBreakoutStrategy')
-    def test_strategy_buy_signal_with_safe_environment_returns_buy(
-        self,
-        mock_strategy_class,
-        passed_backtest_result,
-        sample_chart_data,
-        safe_market_conditions
-    ):
-        """전략 매수 신호 + 안전한 환경 = BUY"""
-        # Given: 매수 신호 + 안전한 환경
-        from main import execute_trading_decision
-        
-        mock_signal = Mock()
-        mock_signal.action = 'buy'
-        mock_signal.reason = 'Volatility breakout'
-        mock_signal.stop_loss = 3000000
-        mock_signal.take_profit = 3500000
-        mock_signal.position_size = 0.5
-        
-        mock_strategy = Mock()
-        mock_strategy.generate_signal.return_value = mock_signal
-        mock_strategy_class.return_value = mock_strategy
-        
-        # When: 의사결정 실행
-        result = execute_trading_decision(
-            backtest_result=passed_backtest_result,
-            chart_data=sample_chart_data,
-            market_conditions=safe_market_conditions,
-            portfolio=None,
-            ticker='KRW-ETH'
+    def test_quick_backtest_filter_exists(self):
+        """QuickBacktestFilter 클래스가 존재하는지 테스트"""
+        try:
+            from src.backtesting.quick_filter import QuickBacktestFilter
+            assert QuickBacktestFilter is not None
+        except ImportError as e:
+            pytest.fail(f"QuickBacktestFilter import 실패: {e}")
+
+    @pytest.mark.unit
+    def test_quick_backtest_config_defaults(self):
+        """QuickBacktestConfig 기본값 테스트"""
+        from src.backtesting.quick_filter import QuickBacktestConfig
+
+        config = QuickBacktestConfig()
+
+        # 퀀트/헤지펀드 기준 강화된 설정
+        assert config.min_return == 15.0
+        assert config.min_win_rate == 38.0
+        assert config.min_sharpe_ratio == 1.0
+        assert config.max_drawdown == 15.0
+
+
+class TestAIDecisionValidatorIntegration:
+    """AIDecisionValidator 통합 테스트"""
+
+    @pytest.fixture
+    def sample_indicators(self):
+        """샘플 기술적 지표"""
+        return {
+            'rsi': 50.0,
+            'atr_percent': 3.0,
+            'volume_ratio': 2.0,
+            'adx': 30.0,
+            'bb_width_pct': 5.0
+        }
+
+    @pytest.fixture
+    def sample_buy_decision(self):
+        """샘플 매수 판단"""
+        return {
+            'decision': 'buy',
+            'confidence': 'high',
+            'reason': '상승 추세 확인'
+        }
+
+    @pytest.mark.unit
+    def test_validate_decision_hold_always_valid(self, sample_indicators):
+        """HOLD 판단은 항상 유효"""
+        from src.ai.validator import AIDecisionValidator
+
+        decision = {'decision': 'hold', 'confidence': 'medium', 'reason': '관망'}
+
+        is_valid, reason, override = AIDecisionValidator.validate_decision(
+            decision, sample_indicators, None
         )
-        
-        # Then: BUY 결정
-        assert result['decision'] == 'buy'
-        assert 'stop_loss' in result
-        assert 'take_profit' in result
-        assert 'position_size' in result
-    
+
+        assert is_valid is True
+
     @pytest.mark.unit
-    @patch('main.RuleBasedBreakoutStrategy')
-    def test_strategy_buy_signal_with_unsafe_environment_returns_hold(
-        self,
-        mock_strategy_class,
-        passed_backtest_result,
-        sample_chart_data,
-        unsafe_market_conditions
-    ):
-        """전략 매수 신호 + 위험한 환경 = HOLD"""
-        # Given: 매수 신호 + 위험한 환경
-        from main import execute_trading_decision
-        
-        mock_signal = Mock()
-        mock_signal.action = 'buy'
-        mock_signal.reason = 'Volatility breakout'
-        
-        mock_strategy = Mock()
-        mock_strategy.generate_signal.return_value = mock_signal
-        mock_strategy_class.return_value = mock_strategy
-        
-        # When: 의사결정 실행
-        result = execute_trading_decision(
-            backtest_result=passed_backtest_result,
-            chart_data=sample_chart_data,
-            market_conditions=unsafe_market_conditions,
-            portfolio=None,
-            ticker='KRW-ETH'
+    def test_validate_decision_rsi_overbought(self, sample_buy_decision, sample_indicators):
+        """RSI 과매수 시 매수 차단"""
+        from src.ai.validator import AIDecisionValidator
+
+        sample_indicators['rsi'] = 75.0  # 과매수
+
+        is_valid, reason, override = AIDecisionValidator.validate_decision(
+            sample_buy_decision, sample_indicators, None
         )
-        
-        # Then: HOLD 결정 (위험 요소 감지)
-        assert result['decision'] == 'hold'
-        assert '위험' in result['reason'] or 'risk' in result['reason'].lower()
-    
+
+        assert is_valid is False
+        assert override == 'hold'
+
     @pytest.mark.unit
-    @patch('main.RuleBasedBreakoutStrategy')
-    def test_strategy_sell_signal_returns_sell(
-        self,
-        mock_strategy_class,
-        passed_backtest_result,
-        sample_chart_data,
-        safe_market_conditions
-    ):
-        """전략 매도 신호 = SELL (환경 체크 없이 바로 실행)"""
-        # Given: 매도 신호
-        from main import execute_trading_decision
-        
-        mock_signal = Mock()
-        mock_signal.action = 'sell'
-        mock_signal.reason = 'Take profit'
-        
-        mock_strategy = Mock()
-        mock_strategy.generate_signal.return_value = mock_signal
-        mock_strategy_class.return_value = mock_strategy
-        
-        # When: 의사결정 실행
-        result = execute_trading_decision(
-            backtest_result=passed_backtest_result,
-            chart_data=sample_chart_data,
-            market_conditions=safe_market_conditions,
-            portfolio=Mock(),  # 포지션 있음
-            ticker='KRW-ETH'
+    def test_validate_decision_high_volatility(self, sample_buy_decision, sample_indicators):
+        """고변동성 시 매수 차단"""
+        from src.ai.validator import AIDecisionValidator
+
+        sample_indicators['atr_percent'] = 7.0  # 고변동성
+
+        is_valid, reason, override = AIDecisionValidator.validate_decision(
+            sample_buy_decision, sample_indicators, None
         )
-        
-        # Then: SELL 결정
-        assert result['decision'] == 'sell'
-    
+
+        assert is_valid is False
+        assert override == 'hold'
+
     @pytest.mark.unit
-    @patch('main.RuleBasedBreakoutStrategy')
-    def test_strategy_no_signal_returns_hold(
-        self,
-        mock_strategy_class,
-        passed_backtest_result,
-        sample_chart_data,
-        safe_market_conditions
-    ):
-        """전략 신호 없음 = HOLD"""
-        # Given: 신호 없음 (None 또는 hold)
-        from main import execute_trading_decision
-        
-        mock_strategy = Mock()
-        mock_strategy.generate_signal.return_value = None
-        mock_strategy_class.return_value = mock_strategy
-        
-        # When: 의사결정 실행
-        result = execute_trading_decision(
-            backtest_result=passed_backtest_result,
-            chart_data=sample_chart_data,
-            market_conditions=safe_market_conditions,
-            portfolio=None,
-            ticker='KRW-ETH'
+    def test_validate_decision_low_confidence(self, sample_indicators):
+        """낮은 신뢰도 시 매수 차단"""
+        from src.ai.validator import AIDecisionValidator
+
+        decision = {'decision': 'buy', 'confidence': 'low', 'reason': ''}
+
+        is_valid, reason, override = AIDecisionValidator.validate_decision(
+            decision, sample_indicators, None
         )
-        
-        # Then: HOLD 결정
-        assert result['decision'] == 'hold'
-        assert '진입 조건 미충족' in result['reason'] or 'No signal' in result['reason']
-    
-    # ==================== 환경 체크 로직 테스트 ====================
-    
+
+        assert is_valid is False
+        assert override == 'hold'
+
     @pytest.mark.unit
-    def test_check_environment_safety_with_all_safe(self, safe_market_conditions):
-        """모든 조건이 안전한 경우"""
-        # Given: 안전한 시장 조건
-        from main import check_environment_safety
-        
-        # When: 환경 안전성 체크
-        result = check_environment_safety(safe_market_conditions)
-        
-        # Then: 안전으로 판단
-        assert result['safe'] is True
-        assert 'warning' not in result or result['warning'] == ''
-    
-    @pytest.mark.unit
-    def test_check_environment_safety_with_high_market_risk(self):
-        """시장 리스크 높음"""
-        # Given: 높은 시장 리스크
-        from main import check_environment_safety
-        
-        conditions = {
+    def test_validate_decision_market_risk_high(self, sample_buy_decision, sample_indicators):
+        """BTC 시장 리스크 높음 시 매수 차단"""
+        from src.ai.validator import AIDecisionValidator
+
+        market_conditions = {
             'market_correlation': {
                 'market_risk': 'high',
                 'risk_reason': 'BTC 급락 중'
@@ -359,85 +312,52 @@ class TestDecisionStructure:
             'flash_crash': {'detected': False},
             'rsi_divergence': {'type': 'none'}
         }
-        
-        # When: 환경 안전성 체크
-        result = check_environment_safety(conditions)
-        
-        # Then: 위험으로 판단
-        assert result['safe'] is False
-        assert 'warning' in result
-        assert 'BTC' in result['warning'] or 'market risk' in result['warning'].lower()
-    
+
+        is_valid, reason, override = AIDecisionValidator.validate_decision(
+            sample_buy_decision, sample_indicators, market_conditions
+        )
+
+        assert is_valid is False
+        assert override == 'hold'
+
     @pytest.mark.unit
-    def test_check_environment_safety_with_flash_crash(self):
-        """플래시 크래시 감지"""
-        # Given: 플래시 크래시 감지
-        from main import check_environment_safety
-        
-        conditions = {
+    def test_validate_decision_flash_crash(self, sample_buy_decision, sample_indicators):
+        """플래시 크래시 감지 시 매수 차단"""
+        from src.ai.validator import AIDecisionValidator
+
+        market_conditions = {
             'market_correlation': {'market_risk': 'low'},
             'flash_crash': {
                 'detected': True,
-                'description': '플래시 크래시 감지: 5% 급락'
+                'description': '5분 내 -10% 급락'
             },
             'rsi_divergence': {'type': 'none'}
         }
-        
-        # When: 환경 안전성 체크
-        result = check_environment_safety(conditions)
-        
-        # Then: 위험으로 판단
-        assert result['safe'] is False
-        assert '플래시 크래시' in result['warning'] or 'flash crash' in result['warning'].lower()
-    
+
+        is_valid, reason, override = AIDecisionValidator.validate_decision(
+            sample_buy_decision, sample_indicators, market_conditions
+        )
+
+        assert is_valid is False
+        assert override == 'hold'
+
     @pytest.mark.unit
-    def test_check_environment_safety_with_rsi_divergence(self):
-        """RSI 하락 다이버전스 감지"""
-        # Given: RSI 하락 다이버전스
-        from main import check_environment_safety
-        
-        conditions = {
+    def test_validate_decision_bearish_divergence(self, sample_buy_decision, sample_indicators):
+        """RSI 하락 다이버전스 시 매수 차단"""
+        from src.ai.validator import AIDecisionValidator
+
+        market_conditions = {
             'market_correlation': {'market_risk': 'low'},
             'flash_crash': {'detected': False},
             'rsi_divergence': {
                 'type': 'bearish_divergence',
-                'confidence': 'high',
-                'description': '하락 다이버전스'
+                'description': '가격 상승하나 RSI 하락'
             }
         }
-        
-        # When: 환경 안전성 체크
-        result = check_environment_safety(conditions)
-        
-        # Then: 위험으로 판단
-        assert result['safe'] is False
-        assert '다이버전스' in result['warning'] or 'divergence' in result['warning'].lower()
-    
-    # ==================== SignalAnalyzer 사용 안 함 테스트 ====================
-    
-    @pytest.mark.unit
-    def test_signal_analyzer_not_used(
-        self,
-        passed_backtest_result,
-        sample_chart_data,
-        safe_market_conditions
-    ):
-        """SignalAnalyzer가 사용되지 않는지 확인"""
-        # Given: 백테스팅 통과
-        from main import execute_trading_decision
-        
-        # When: 의사결정 실행
-        with patch('main.SignalAnalyzer') as mock_signal_analyzer:
-            result = execute_trading_decision(
-                backtest_result=passed_backtest_result,
-                chart_data=sample_chart_data,
-                market_conditions=safe_market_conditions,
-                portfolio=None,
-                ticker='KRW-ETH'
-            )
-            
-            # Then: SignalAnalyzer가 호출되지 않아야 함
-            mock_signal_analyzer.assert_not_called()
 
+        is_valid, reason, override = AIDecisionValidator.validate_decision(
+            sample_buy_decision, sample_indicators, market_conditions
+        )
 
-
+        assert is_valid is False
+        assert override == 'hold'

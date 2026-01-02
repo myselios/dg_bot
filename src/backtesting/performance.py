@@ -105,6 +105,11 @@ class PerformanceAnalyzer:
             for t in trades
         ]) if trades else 0
         
+        # 7. 손실 거래 분석 (P1 #5: 손실 날 메타데이터)
+        worst_loss_metadata = PerformanceAnalyzer._analyze_worst_loss_trades(
+            trades, losing_trades
+        )
+
         return {
             # 수익 지표
             'total_return': total_return,
@@ -134,7 +139,10 @@ class PerformanceAnalyzer:
 
             # 메타 정보
             'data_interval': data_interval,
-            'annualization_factor': annualization_factor
+            'annualization_factor': annualization_factor,
+
+            # P1 #5: 손실 날 메타데이터 (AI 프롬프트에서 현재 상황과 비교용)
+            'worst_loss_metadata': worst_loss_metadata
         }
     
     @staticmethod
@@ -214,15 +222,106 @@ class PerformanceAnalyzer:
         """최대 연속 True 개수"""
         max_count = 0
         current_count = 0
-        
+
         for val in boolean_list:
             if val:
                 current_count += 1
                 max_count = max(max_count, current_count)
             else:
                 current_count = 0
-        
+
         return max_count
+
+    @staticmethod
+    def _analyze_worst_loss_trades(
+        all_trades: List[Trade],
+        losing_trades: List[Trade]
+    ) -> Dict[str, Any]:
+        """
+        P1 #5: 손실 거래 분석 - 최악의 손실 거래 메타데이터 추출
+
+        AI 프롬프트에서 현재 시장 상황과 과거 손실 상황을 비교하여
+        유사한 환경인지 판단할 수 있도록 메타데이터 제공
+
+        Args:
+            all_trades: 모든 거래 목록
+            losing_trades: 손실 거래 목록
+
+        Returns:
+            손실 거래 메타데이터 딕셔너리
+        """
+        if not losing_trades:
+            return {
+                'has_losses': False,
+                'message': '손실 거래 없음 (양호)'
+            }
+
+        # 최악의 손실 거래 찾기 (금액 기준)
+        worst_trade = min(losing_trades, key=lambda t: t.pnl)
+
+        # 손실률 기준 최악 거래
+        worst_by_pct = min(
+            losing_trades,
+            key=lambda t: t.pnl / (t.entry_price * t.size) if t.entry_price and t.size else 0
+        )
+
+        # 연속 손실 분석
+        consecutive_losses = []
+        current_streak = 0
+        for trade in all_trades:
+            if trade.pnl < 0:
+                current_streak += 1
+            else:
+                if current_streak > 0:
+                    consecutive_losses.append(current_streak)
+                current_streak = 0
+        if current_streak > 0:
+            consecutive_losses.append(current_streak)
+
+        max_consecutive = max(consecutive_losses) if consecutive_losses else 0
+
+        # 손실 거래의 평균 보유 기간
+        avg_loss_holding_hours = np.mean([
+            t.holding_period.total_seconds() / 3600
+            for t in losing_trades
+        ]) if losing_trades else 0
+
+        # 손실 거래 발생 시간대 분석 (있으면)
+        loss_timestamps = []
+        for t in losing_trades:
+            if hasattr(t, 'exit_time') and t.exit_time:
+                loss_timestamps.append(t.exit_time)
+
+        return {
+            'has_losses': True,
+            'total_loss_count': len(losing_trades),
+            'total_loss_amount': sum(t.pnl for t in losing_trades),
+            'avg_loss_per_trade': np.mean([t.pnl for t in losing_trades]),
+
+            # 최악의 손실 거래 상세
+            'worst_loss': {
+                'pnl': worst_trade.pnl,
+                'pnl_pct': (worst_trade.pnl / (worst_trade.entry_price * worst_trade.size) * 100)
+                    if worst_trade.entry_price and worst_trade.size else 0,
+                'entry_price': worst_trade.entry_price,
+                'exit_price': worst_trade.exit_price,
+                'holding_hours': worst_trade.holding_period.total_seconds() / 3600
+                    if hasattr(worst_trade, 'holding_period') else 0,
+                'entry_time': str(worst_trade.entry_time) if hasattr(worst_trade, 'entry_time') else None,
+                'exit_time': str(worst_trade.exit_time) if hasattr(worst_trade, 'exit_time') else None,
+            },
+
+            # 연속 손실 분석
+            'max_consecutive_losses': max_consecutive,
+            'avg_loss_holding_hours': avg_loss_holding_hours,
+
+            # AI 프롬프트용 경고 메시지
+            'warning_message': (
+                f"주의: 최악 손실 {worst_trade.pnl:,.0f}원 발생. "
+                f"연속 손실 최대 {max_consecutive}회. "
+                f"손실 거래 평균 보유: {avg_loss_holding_hours:.1f}시간."
+            )
+        }
 
 
 

@@ -566,19 +566,19 @@ docker-compose down
 
 ```bash
 # 전체 서비스 시작 (PostgreSQL, Backend, Scheduler, Grafana 등)
-docker-compose -f docker-compose.full-stack.yml up -d
+docker-compose up -d
 
 # 스케줄러 로그만 확인
-docker-compose -f docker-compose.full-stack.yml logs scheduler -f
+docker-compose logs scheduler -f
 
 # 전체 로그 확인
-docker-compose -f docker-compose.full-stack.yml logs -f
+docker-compose logs -f
 
 # 서비스 상태
-docker-compose -f docker-compose.full-stack.yml ps
+docker-compose ps
 
 # 중지
-docker-compose -f docker-compose.full-stack.yml down
+docker-compose down
 ```
 
 **접속 정보:**
@@ -772,7 +772,7 @@ pipeline = create_spot_trading_pipeline(
 
 # 의존성 재설치
 pip install -r requirements.txt
-pip install -r requirements-api.txt
+# requirements-api.txt가 requirements.txt에 통합됨
 ```
 
 ### Q2. Docker에서 에러가 발생해요

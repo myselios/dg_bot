@@ -90,10 +90,10 @@ docker-compose logs -f trading-bot
 
 ```powershell
 # 전체 스택 실행 (PostgreSQL, Backend, Scheduler, Grafana 등)
-docker-compose -f docker-compose.full-stack.yml up -d
+docker-compose up -d
 
 # 로그 확인
-docker-compose -f docker-compose.full-stack.yml logs -f
+docker-compose logs -f
 ```
 
 **포함 서비스:**
@@ -210,13 +210,13 @@ docker-compose logs -f data-collector
 
 ```powershell
 # 전체 스택 실행
-docker-compose -f docker-compose.full-stack.yml up -d
+docker-compose up -d
 
 # 스케줄러 로그 확인
-docker-compose -f docker-compose.full-stack.yml logs -f scheduler
+docker-compose logs -f scheduler
 
 # 전체 서비스 상태 확인
-docker-compose -f docker-compose.full-stack.yml ps
+docker-compose ps
 ```
 
 **사용 시나리오:**
@@ -272,7 +272,7 @@ docker-compose restart trading-bot
 docker-compose restart scheduler
 
 # 전체 스택 재시작
-docker-compose -f docker-compose.full-stack.yml restart
+docker-compose restart
 
 # 코드 변경 후 재시작
 docker-compose restart trading-bot
@@ -291,7 +291,7 @@ docker-compose stop scheduler
 docker-compose down
 
 # 전체 스택 중지
-docker-compose -f docker-compose.full-stack.yml down
+docker-compose down
 
 # 볼륨까지 제거 (데이터 삭제 주의!)
 docker-compose down -v
@@ -530,7 +530,7 @@ sqlalchemy.exc.OperationalError: could not connect to server
 docker-compose ps postgres
 
 # 전체 스택으로 실행 (depends_on 설정)
-docker-compose -f docker-compose.full-stack.yml up -d
+docker-compose up -d
 
 # 또는 PostgreSQL 먼저 시작
 docker-compose up -d postgres
@@ -726,13 +726,13 @@ docker load < scheduler_image.tar.gz
 
 ```bash
 # 전체 스택 배포
-docker-compose -f docker-compose.full-stack.yml up -d
+docker-compose up -d
 
 # 상태 확인
-docker-compose -f docker-compose.full-stack.yml ps
+docker-compose ps
 
 # 로그 모니터링
-docker-compose -f docker-compose.full-stack.yml logs -f
+docker-compose logs -f
 
 # 헬스체크
 docker inspect --format='{{.State.Health.Status}}' bitcoin-scheduler
@@ -749,7 +749,7 @@ docker inspect --format='{{.State.Health.Status}}' bitcoin-scheduler
 docker-compose down
 
 # 전체 스택 중지 및 제거
-docker-compose -f docker-compose.full-stack.yml down
+docker-compose down
 
 # 이미지까지 제거
 docker-compose down --rmi all

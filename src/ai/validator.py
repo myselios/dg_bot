@@ -8,6 +8,7 @@ GPT-4의 응답을 맹목적으로 신뢰하지 않고, 룰 기반 검증을 통
 """
 from typing import Dict, Any, Optional, Tuple
 from ..utils.logger import Logger
+from ..config.settings import TrendFilterConfig
 
 
 class AIDecisionValidator:
@@ -200,32 +201,37 @@ class AIDecisionValidator:
         """
         복합 트렌드 필터 (ADX + 거래량 + 볼린저 밴드)
 
-        검증 조건:
-        1. ADX >= 25: 강한 트렌드 확인
-        2. 거래량 >= 평균의 1.5배
-        3. 볼린저 밴드 확장 중 (BB Width > 4%)
+        검증 조건 (설정값 참조):
+        1. ADX >= MIN_ADX: 강한 트렌드 확인
+        2. 거래량 >= 평균의 MIN_VOLUME_RATIO배
+        3. 볼린저 밴드 확장 중 (BB Width > MIN_BB_WIDTH_PCT%)
         """
         if ai_decision != 'buy':
             return True, "매수 신호 아님", None
 
+        # 설정값 로드
+        min_adx = TrendFilterConfig.MIN_ADX
+        min_volume_ratio = TrendFilterConfig.MIN_VOLUME_RATIO
+        min_bb_width_pct = TrendFilterConfig.MIN_BB_WIDTH_PCT
+
         # 1. ADX 트렌드 강도 체크
         adx = indicators.get('adx', 0)
-        if adx < 25:
-            reason = f"❌ 트렌드 강도 부족: ADX {adx:.1f} < 25"
+        if adx < min_adx:
+            reason = f"❌ 트렌드 강도 부족: ADX {adx:.1f} < {min_adx}"
             Logger.print_warning(reason)
             return False, reason, 'hold'
 
         # 2. 거래량 체크
         volume_ratio = indicators.get('volume_ratio', 0)
-        if volume_ratio < 1.5:
-            reason = f"❌ 거래량 부족: {volume_ratio:.2f}x < 1.5x"
+        if volume_ratio < min_volume_ratio:
+            reason = f"❌ 거래량 부족: {volume_ratio:.2f}x < {min_volume_ratio}x"
             Logger.print_warning(reason)
             return False, reason, 'hold'
 
         # 3. 볼린저 밴드 확장 체크
         bb_width_pct = indicators.get('bb_width_pct', 0)
-        if bb_width_pct < 4.0:
-            reason = f"❌ 볼린저 밴드 수축: {bb_width_pct:.2f}% < 4%"
+        if bb_width_pct < min_bb_width_pct:
+            reason = f"❌ 볼린저 밴드 수축: {bb_width_pct:.2f}% < {min_bb_width_pct}%"
             Logger.print_warning(reason)
             return False, reason, 'hold'
 

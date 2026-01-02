@@ -651,10 +651,10 @@ python main.py
 
 # 확인 방법:
 # 1. 스케줄러 시작
-docker-compose -f docker-compose.full-stack.yml up -d scheduler
+docker-compose up -d scheduler
 
 # 2. 로그 확인
-docker-compose -f docker-compose.full-stack.yml logs scheduler -f | grep "리스크"
+docker-compose logs scheduler -f | grep "리스크"
 
 # 출력 예시:
 # "🛡️ 리스크 체크 시작"

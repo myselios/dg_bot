@@ -1,41 +1,70 @@
 sequenceDiagram
     participant BackendScheduler as Backend Scheduler<br/>(core/scheduler.py)
-    participant API as Backend API<br/>(POST /trades/)
-    participant TradeService as TradeService<br/>(backend/services/trade.py)
-    participant DB as PostgreSQL<br/>(trades 테이블)
-    participant Schema as Pydantic Schema<br/>(TradeCreate)
+    participant Schema as Pydantic Schema<br/>(TradeCreate/AIDecisionCreate)
+    participant API as Backend API<br/>(endpoints/trades.py)
+    participant DB as PostgreSQL<br/>(trades/ai_decisions 테이블)
+    participant Session as DB Session<br/>(get_db)
 
-    BackendScheduler->>Schema: TradeCreate 객체 생성
-    Note over Schema: trade_id: str<br/>symbol: str<br/>side: "buy" | "sell"<br/>price: float<br/>amount: float<br/>total: float<br/>fee: float<br/>status: "completed"
+    Note over BackendScheduler: 거래 사이클 완료 후
 
-    BackendScheduler->>API: POST /api/v1/trades/
-    API->>API: Validation<br/>(Pydantic 자동 검증)
+    alt 거래 실행됨 (buy/sell) + trade_id 존재
 
-    alt Validation Failed
-        API-->>BackendScheduler: 422 Unprocessable Entity<br/>{detail: validation_errors}
+        Note over BackendScheduler: 1. Trade 레코드 저장
+
+        BackendScheduler->>Schema: TradeCreate 객체 생성
+        Note over Schema: trade_id: str<br/>symbol: str<br/>side: "buy" | "sell"<br/>price: Decimal<br/>amount: Decimal<br/>total: Decimal<br/>fee: Decimal<br/>status: "completed"|"failed"
+
+        BackendScheduler->>Session: async for db in get_db()
+        Session-->>BackendScheduler: DB 세션
+
+        BackendScheduler->>API: create_trade(trade_data, db)
+        API->>API: Pydantic 자동 검증
+
+        alt 검증 실패
+            API-->>BackendScheduler: ValidationError
+        end
+
+        API->>DB: INSERT INTO trades
+        DB->>DB: Commit Transaction
+
+        alt 중복 거래 ID
+            DB-->>API: IntegrityError
+            API-->>BackendScheduler: "이미 존재하는 거래 ID"
+        else 기타 DB 오류
+            DB-->>API: DatabaseError
+            API->>DB: Rollback
+            API-->>BackendScheduler: 500 Internal Server Error
+        end
+
+        DB-->>API: Row Inserted
+        API->>API: Refresh 객체
+        API-->>BackendScheduler: TradeResponse
+
     end
 
-    API->>TradeService: create_trade(db, trade_create)
-    TradeService->>TradeService: Trade 모델 인스턴스 생성
+    Note over BackendScheduler: 2. AI Decision 저장 (모든 결정)
 
-    Note over TradeService: db_trade = Trade(<br/>  id=uuid4(),<br/>  trade_id=trade_create.trade_id,<br/>  symbol=trade_create.symbol,<br/>  side=trade_create.side,<br/>  price=trade_create.price,<br/>  amount=trade_create.amount,<br/>  total=trade_create.total,<br/>  fee=trade_create.fee,<br/>  status=trade_create.status,<br/>  created_at=datetime.now()<br/>)
+    BackendScheduler->>Schema: AIDecisionCreate 객체 생성
+    Note over Schema: symbol: str<br/>decision: "buy"|"sell"|"hold"<br/>confidence: Decimal (0-100)<br/>reason: str (max 500자)<br/>market_data: Dict (선택)
 
-    TradeService->>DB: INSERT INTO trades
-    DB->>DB: Commit Transaction
+    BackendScheduler->>Session: async for db in get_db()
+    Session-->>BackendScheduler: DB 세션
 
-    alt Database Error
-        DB-->>TradeService: IntegrityError /<br/>DatabaseError
-        TradeService-->>API: 500 Internal Server Error
-        API-->>BackendScheduler: Error Response
+    BackendScheduler->>DB: AIDecision 모델 생성
+    Note over DB: db_ai_decision = AIDecision(<br/>  **ai_decision_data.model_dump()<br/>)
+
+    BackendScheduler->>DB: db.add(db_ai_decision)
+    BackendScheduler->>DB: await db.commit()
+    BackendScheduler->>DB: await db.refresh(db_ai_decision)
+
+    alt DB 오류
+        DB-->>BackendScheduler: Exception
+        BackendScheduler->>DB: await db.rollback()
+        BackendScheduler->>BackendScheduler: 에러 로깅
+    else 성공
+        DB-->>BackendScheduler: AI Decision 저장 완료
+        BackendScheduler->>BackendScheduler: 로깅: "AI 판단 DB 저장 완료"
     end
 
-    DB-->>TradeService: Row Inserted
-    TradeService->>TradeService: Refresh 객체<br/>(DB 생성 필드 로드)
-    TradeService-->>API: Trade 객체 반환
-    API->>API: TradeResponse 스키마 변환
-    API-->>BackendScheduler: 201 Created<br/>TradeResponse
-
-    BackendScheduler->>BackendScheduler: 응답 확인 및 로깅
-
-
+    Note over BackendScheduler: 저장 완료 후 알림/메트릭 전송
 

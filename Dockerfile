@@ -22,13 +22,9 @@ RUN wget https://github.com/TA-Lib/ta-lib/releases/download/v0.4.0/ta-lib-0.4.0-
     cd .. && \
     rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
 
-# Python 의존성 파일 복사
+# Python 의존성 파일 복사 및 설치
 COPY requirements.txt .
-COPY requirements-api.txt .
-
-# Python 패키지 설치
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir -r requirements-api.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # 애플리케이션 코드 복사
 COPY . .

@@ -1,74 +1,110 @@
 sequenceDiagram
-    participant Scheduler as Scheduler<br/>(any module)
-    participant ErrorHandler as ErrorHandler<br/>(예외 처리)
+    participant Pipeline as TradingPipeline<br/>(any stage)
+    participant Stage as BasePipelineStage<br/>(스테이지)
+    participant ErrorHandler as handle_error()<br/>(에러 핸들러)
     participant Logger as Logger<br/>(logs/)
     participant Metrics as Prometheus<br/>(error_counter)
     participant Telegram as Telegram<br/>(에러 알림)
+    participant Sentry as Sentry<br/>(에러 트래킹)
     participant Retry as Retry Logic<br/>(재시도)
 
-    Scheduler->>Scheduler: 거래 작업 실행
+    Pipeline->>Stage: stage.execute(context)
+    Stage->>Stage: 비즈니스 로직 실행
 
     alt Upbit API Error
-        Scheduler->>ErrorHandler: UpbitAPIException
-        ErrorHandler->>Logger: ERROR 로그 기록<br/>(api_call.log)
-        ErrorHandler->>Metrics: upbit_api_errors.inc(<br/>error_type='rate_limit'<br/>)
+        Stage->>ErrorHandler: UpbitAPIException
+        ErrorHandler->>Logger: ERROR 로그 기록<br/>(timestamp, error_type)
+        ErrorHandler->>Metrics: upbit_api_errors.inc(<br/>error_type='rate_limit')
 
         alt Retryable Error (429, 503)
             ErrorHandler->>Retry: exponential_backoff()
             Retry->>Retry: wait(2^attempt seconds)
-            Retry->>Scheduler: 재시도 (최대 3회)
+            Retry->>Stage: 재시도 (최대 3회)
 
             alt 재시도 성공
-                Scheduler->>Logger: INFO: 재시도 성공
+                Stage->>Logger: INFO: 재시도 성공
             else 재시도 실패
-                ErrorHandler->>Telegram: 에러 알림 전송
-                ErrorHandler->>Scheduler: raise Exception
+                ErrorHandler->>Telegram: notify_error()
+                ErrorHandler->>Stage: StageResult(action='stop')
             end
         else Non-Retryable Error (400, 401)
             ErrorHandler->>Telegram: 긴급 알림 전송
-            ErrorHandler->>Scheduler: raise Exception
+            ErrorHandler->>Sentry: capture_exception()
+            ErrorHandler->>Stage: StageResult(action='stop')
         end
 
     else Database Error
-        Scheduler->>ErrorHandler: DatabaseException
+        Stage->>ErrorHandler: DatabaseException
         ErrorHandler->>Logger: ERROR 로그 기록<br/>(database.log)
         ErrorHandler->>Metrics: db_errors.inc()
 
         alt Connection Error
             ErrorHandler->>Retry: reconnect()
             Retry->>Retry: wait(5 seconds)
-            Retry->>Scheduler: 재연결 시도
+            Retry->>Stage: 재연결 시도
         else Integrity Error
             ErrorHandler->>Logger: CRITICAL: 데이터 무결성 오류
             ErrorHandler->>Telegram: 긴급 알림
-            ErrorHandler->>Scheduler: raise Exception
+            ErrorHandler->>Sentry: capture_exception()
+            ErrorHandler->>Stage: StageResult(action='stop')
         end
 
     else AI Service Error
-        Scheduler->>ErrorHandler: AIServiceException
+        Stage->>ErrorHandler: AIServiceException
         ErrorHandler->>Logger: WARNING 로그 기록
         ErrorHandler->>Metrics: ai_errors.inc()
 
         alt GPT API Timeout
             ErrorHandler->>Retry: retry_with_timeout()
-            Retry->>Scheduler: 타임아웃 연장 재시도
+            Retry->>Stage: 타임아웃 연장 재시도
         else GPT API Rate Limit
-            ErrorHandler->>Scheduler: fallback_decision()<br/>(규칙 기반 판단)
-            ErrorHandler->>Telegram: AI 서비스 다운 알림
+            Note over ErrorHandler: Fallback: 규칙 기반 판단
+            ErrorHandler->>Stage: _check_rule_based_exits()
+            ErrorHandler->>Telegram: AI 서비스 제한 알림
+        else JSON Parse Error
+            ErrorHandler->>Logger: AI 응답 파싱 실패
+            ErrorHandler->>Stage: PositionAction(HOLD)<br/>(안전하게 유지)
         end
 
+    else Pipeline Stage Error
+        Stage->>ErrorHandler: Exception in stage.execute()
+        ErrorHandler->>Stage: stage.handle_error(context, e)
+        Note over Stage: StageResult(<br/>  success=False,<br/>  action='stop',<br/>  message=error_msg,<br/>  metadata={'error': str(e)}<br/>)
+
+        ErrorHandler->>Logger: ERROR: 스테이지 오류
+        ErrorHandler->>Metrics: stage_errors.inc(<br/>stage_name=stage.name)
+        ErrorHandler->>Telegram: notify_error()
+
+        opt Sentry 활성화
+            ErrorHandler->>Sentry: capture_exception()
+            Note over Sentry: 컨텍스트 포함:<br/>- stage_name<br/>- ticker<br/>- trading_mode
+        end
+
+        ErrorHandler-->>Pipeline: StageResult(action='stop')
+        Pipeline->>Pipeline: _create_error_response()
+
     else Network Error
-        Scheduler->>ErrorHandler: NetworkException
+        Stage->>ErrorHandler: NetworkException
         ErrorHandler->>Logger: ERROR 로그 기록
         ErrorHandler->>Metrics: network_errors.inc()
         ErrorHandler->>Retry: exponential_backoff()
-        Retry->>Scheduler: 재시도
+        Retry->>Stage: 재시도
 
     else Unknown Error
-        Scheduler->>ErrorHandler: Exception
+        Stage->>ErrorHandler: Exception (unknown)
         ErrorHandler->>Logger: CRITICAL 로그 기록<br/>(전체 스택 트레이스)
         ErrorHandler->>Metrics: unknown_errors.inc()
         ErrorHandler->>Telegram: 긴급 알림 전송<br/>(관리자 호출)
-        ErrorHandler->>Scheduler: 안전 모드 전환<br/>(거래 중단)
+        ErrorHandler->>Sentry: capture_exception()
+
+        alt 포지션 있음
+            ErrorHandler->>Stage: 포지션 유지 (안전 모드)
+        else 포지션 없음
+            ErrorHandler->>Stage: 거래 스킵 (안전 모드)
+        end
+
+        ErrorHandler-->>Pipeline: StageResult(action='stop')
     end
+
+    Note over Pipeline: 에러 발생 시<br/>pipeline_status='failed'<br/>반환
 

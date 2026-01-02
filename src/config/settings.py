@@ -144,6 +144,73 @@ class APIConfig:
             )
 
 
+class StrategyConfig:
+    """전략 설정 (ATR 기반 변동성 돌파)"""
+    # ATR 설정
+    ATR_PERIOD = get_env_int("STRATEGY_ATR_PERIOD", 14, min_value=5, max_value=50)
+
+    # 동적 K값 설정 (변동성 구간별)
+    K_VALUE_LOW_VOL = get_env_float("STRATEGY_K_VALUE_LOW_VOL", 2.0, min_value=0.5, max_value=5.0)  # ATR < 2%
+    K_VALUE_MED_VOL = get_env_float("STRATEGY_K_VALUE_MED_VOL", 1.5, min_value=0.5, max_value=5.0)  # 2% <= ATR < 4%
+    K_VALUE_HIGH_VOL = get_env_float("STRATEGY_K_VALUE_HIGH_VOL", 1.0, min_value=0.5, max_value=5.0)  # ATR >= 4%
+    K_VALUE_DEFAULT = get_env_float("STRATEGY_K_VALUE_DEFAULT", 0.5, min_value=0.1, max_value=3.0)  # 고정 K값
+
+    # 스탑로스/테이크프로핏 ATR 배수
+    STOP_LOSS_ATR_MULTIPLIER = get_env_float("STRATEGY_STOP_LOSS_ATR_MULTIPLIER", 2.0, min_value=0.5, max_value=5.0)
+    TAKE_PROFIT_ATR_MULTIPLIER = get_env_float("STRATEGY_TAKE_PROFIT_ATR_MULTIPLIER", 3.0, min_value=1.0, max_value=10.0)
+
+    # 동적 K값 사용 여부
+    USE_DYNAMIC_K = os.getenv("STRATEGY_USE_DYNAMIC_K", "false").lower() == "true"
+
+    @classmethod
+    def validate(cls):
+        """전략 설정 검증"""
+        if cls.ATR_PERIOD < 5:
+            raise ConfigurationError("ATR_PERIOD", "ATR 기간은 최소 5 이상이어야 합니다")
+
+
+class TrendFilterConfig:
+    """트렌드 필터 설정"""
+    # ADX 설정
+    MIN_ADX = get_env_float("TREND_FILTER_MIN_ADX", 25.0, min_value=10.0, max_value=50.0)
+
+    # 거래량 설정
+    MIN_VOLUME_RATIO = get_env_float("TREND_FILTER_MIN_VOLUME_RATIO", 1.5, min_value=1.0, max_value=5.0)
+
+    # 볼린저 밴드 설정
+    MIN_BB_WIDTH_PCT = get_env_float("TREND_FILTER_MIN_BB_WIDTH_PCT", 4.0, min_value=1.0, max_value=20.0)
+    BB_PERIOD = get_env_int("TREND_FILTER_BB_PERIOD", 20, min_value=10, max_value=50)
+
+    @classmethod
+    def validate(cls):
+        """트렌드 필터 설정 검증"""
+        if cls.MIN_ADX < 10:
+            raise ConfigurationError("MIN_ADX", "최소 ADX는 10 이상이어야 합니다")
+        if cls.MIN_VOLUME_RATIO < 1.0:
+            raise ConfigurationError("MIN_VOLUME_RATIO", "거래량 비율은 1.0 이상이어야 합니다")
+
+
+class SlippageConfig:
+    """슬리피지 설정"""
+    # 최대 허용 슬리피지
+    MAX_SLIPPAGE_PCT = get_env_float("SLIPPAGE_MAX_PCT", 1.0, min_value=0.1, max_value=5.0)
+
+    # 경고 슬리피지 임계값
+    WARNING_SLIPPAGE_PCT = get_env_float("SLIPPAGE_WARNING_PCT", 0.3, min_value=0.1, max_value=2.0)
+
+    # 백테스팅 기본 슬리피지
+    BACKTEST_DEFAULT_SLIPPAGE = get_env_float("SLIPPAGE_BACKTEST_DEFAULT", 0.001, min_value=0.0, max_value=0.01)
+
+    # 분할 주문 임계값 (이 금액 이상이면 분할 주문 권장)
+    SPLIT_ORDER_THRESHOLD_KRW = get_env_int("SLIPPAGE_SPLIT_THRESHOLD", 5000000, min_value=1000000)  # 500만원
+
+    @classmethod
+    def validate(cls):
+        """슬리피지 설정 검증"""
+        if cls.MAX_SLIPPAGE_PCT < cls.WARNING_SLIPPAGE_PCT:
+            raise ConfigurationError("MAX_SLIPPAGE_PCT", "최대 슬리피지는 경고 슬리피지보다 커야 합니다")
+
+
 # 설정 초기화 시 검증
 def validate_all_configs():
     """모든 설정 검증"""
@@ -151,4 +218,7 @@ def validate_all_configs():
     DataConfig.validate()
     AIConfig.validate()
     APIConfig.validate()
+    StrategyConfig.validate()
+    TrendFilterConfig.validate()
+    SlippageConfig.validate()
 

@@ -1,0 +1,105 @@
+sequenceDiagram
+    participant Adaptive as AdaptiveRiskCheckStage<br/>(adaptive_stage.py)
+    participant Portfolio as PortfolioManager<br/>(portfolio_manager.py)
+    participant PosAnalyzer as PositionAnalyzer<br/>(position_analyzer.py)
+    participant AI as OpenAI GPT<br/>(AI 분석)
+    participant Trading as TradingService<br/>(거래 실행)
+    participant Upbit as Upbit API
+
+    Note over Adaptive: MANAGEMENT 모드<br/>(포지션 보유 중)
+
+    Adaptive->>Portfolio: get_portfolio_status()
+    Portfolio-->>Adaptive: PortfolioStatus<br/>(positions: List[PortfolioPosition])
+
+    loop 각 포지션
+        Adaptive->>Adaptive: Position 객체 생성
+        Note over Adaptive: Position:<br/>- ticker<br/>- entry_price<br/>- current_price<br/>- amount<br/>- entry_time
+
+        Adaptive->>Adaptive: _collect_position_market_data()
+        Note over Adaptive: market_data:<br/>- current_price<br/>- technical_indicators<br/>- volume_analysis
+
+        Adaptive->>PosAnalyzer: analyze(position, market_data)
+
+        Note over PosAnalyzer: ══════════════════════<br/>1단계: 규칙 기반 체크 (무료)<br/>══════════════════════
+
+        PosAnalyzer->>PosAnalyzer: _check_rule_based_exits()
+
+        alt 손절 조건 (profit_rate <= -5%)
+            PosAnalyzer-->>Adaptive: PositionAction(EXIT)<br/>trigger="stop_loss"
+        else 익절 조건 (profit_rate >= +10%)
+            PosAnalyzer-->>Adaptive: PositionAction(EXIT)<br/>trigger="take_profit"
+        else Fakeout 감지 (3봉 내 -2%)
+            PosAnalyzer-->>Adaptive: PositionAction(EXIT)<br/>trigger="fakeout"
+        else 타임아웃 (24시간 + 수익 < 2%)
+            PosAnalyzer-->>Adaptive: PositionAction(EXIT)<br/>trigger="timeout"
+        else ADX 약화 (ADX < 20, 6시간+)
+            PosAnalyzer-->>Adaptive: PositionAction(EXIT)<br/>trigger="adx_weak"
+        else 트레일링 스탑 조정 (profit >= 5%)
+            PosAnalyzer-->>Adaptive: PositionAction(ADJUST_STOP)<br/>trigger="trailing_adjustment"
+        else 규칙 미발동
+            Note over PosAnalyzer: ══════════════════════<br/>2단계: AI 필요 여부 판단<br/>══════════════════════
+
+            PosAnalyzer->>PosAnalyzer: _check_needs_ai_analysis()
+
+            alt 애매한 수익 구간 (2-8%)
+                Note over PosAnalyzer: AI 분석 필요
+            else 추세 약화 조짐 (ADX 20-30)
+                Note over PosAnalyzer: AI 분석 필요
+            else 거래량 감소 중
+                Note over PosAnalyzer: AI 분석 필요
+            else RSI 다이버전스 감지
+                Note over PosAnalyzer: AI 분석 필요
+            else 부분 익절 판단 (profit >= 10%)
+                Note over PosAnalyzer: AI 분석 필요
+            else 명확한 상황
+                PosAnalyzer-->>Adaptive: PositionAction(HOLD)<br/>ai_used=False
+            end
+
+            opt AI 분석 필요
+                Note over PosAnalyzer: ══════════════════════<br/>3단계: AI 분석 (유료)<br/>══════════════════════
+
+                PosAnalyzer->>AI: chat.completions.create()
+                Note over AI: 시스템 프롬프트:<br/>- 포지션 매니저 역할<br/>- HOLD/EXIT/PARTIAL_EXIT/ADJUST_STOP
+
+                AI-->>PosAnalyzer: JSON 응답
+                PosAnalyzer->>PosAnalyzer: _parse_ai_decision()
+                PosAnalyzer-->>Adaptive: PositionAction(AI 판단)<br/>ai_used=True
+            end
+        end
+
+        Note over Adaptive: 액션 실행
+
+        alt EXIT (전량 청산)
+            Adaptive->>Adaptive: _execute_exit()
+            Adaptive->>Trading: execute_sell(ticker)
+            Trading->>Upbit: POST /v1/orders (side=ask)
+            Upbit-->>Trading: 주문 결과
+            Trading-->>Adaptive: 청산 완료
+            Adaptive->>Portfolio: record_trade_result()
+
+        else PARTIAL_EXIT (부분 청산)
+            Adaptive->>Adaptive: _execute_partial_exit()
+            Note over Adaptive: sell_amount = amount * exit_ratio
+            Adaptive->>Trading: execute_sell(ticker, amount)
+            Trading->>Upbit: POST /v1/orders
+            Upbit-->>Trading: 주문 결과
+            Trading-->>Adaptive: 부분 청산 완료
+
+        else ADJUST_STOP (스탑 조정)
+            Adaptive->>Adaptive: 스탑 가격 업데이트
+            Note over Adaptive: new_stop_loss 저장
+
+        else HOLD (유지)
+            Adaptive->>Adaptive: 액션 기록만
+        end
+    end
+
+    Note over Adaptive: 포지션 관리 완료
+
+    alt 추가 진입 가능
+        Adaptive->>Adaptive: trading_mode = 'entry'
+        Adaptive-->>Adaptive: StageResult(action='continue')
+    else 최대 포지션 도달
+        Adaptive-->>Adaptive: StageResult(action='skip')
+    end
+

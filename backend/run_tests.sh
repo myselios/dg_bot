@@ -21,7 +21,7 @@ fi
 # 의존성 확인
 echo ""
 echo "📦 Checking dependencies..."
-pip install -q -r ../requirements-api.txt
+pip install -q -r ../requirements.txt
 
 # 테스트 실행 옵션
 TEST_TYPE=${1:-all}

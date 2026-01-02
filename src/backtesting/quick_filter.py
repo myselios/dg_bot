@@ -17,21 +17,38 @@ from ..utils.logger import Logger
 
 @dataclass
 class QuickBacktestConfig:
-    """빠른 백테스팅 설정"""
+    """빠른 백테스팅 설정 (퀀트 기준 강화)"""
     days: int = 730  # 백테스팅에 사용할 일수 (기본값: 2년, 로컬 데이터가 있으면 모두 사용)
     use_local_data: bool = True  # 로컬 데이터 사용 여부
     initial_capital: float = 10_000_000  # 초기 자본
     commission: float = 0.0005  # 수수료 (0.05%)
     slippage: float = 0.0001  # 슬리피지 (0.01%)
-    
-    # 룰 기반 필터링 조건 (변동성 돌파 전략 특성 반영)
-    # 돌파 매매는 승률이 낮아도 손익비로 먹는 전략이므로 승률 기준 완화
-    min_return: float = 3.0  # 최소 수익률 (%)
-    min_win_rate: float = 35.0  # 최소 승률 (%) - 돌파 전략 특성상 낮음
-    min_profit_factor: float = 1.3  # 최소 손익비 (Profit Factor)
-    min_sharpe_ratio: float = 0.8  # 최소 Sharpe Ratio
-    max_drawdown: float = 20.0  # 최대 낙폭 (%) - 돌파 전략 특성상 높음
-    min_trades: int = 3  # 최소 거래 수 (통계적 유의성)
+
+    # ============================================================
+    # 필터링 조건 (퀀트/헤지펀드 기준으로 강화)
+    # ============================================================
+
+    # 1. 수익성 지표 (Profitability)
+    min_return: float = 15.0  # 최소 수익률 (%) - 2년간 15% (연 7.5%)
+    min_win_rate: float = 38.0  # 최소 승률 (%) - 돌파 전략 특성상 낮지만 약간 상향
+    min_profit_factor: float = 1.8  # 최소 손익비 - 수수료/슬리피지 고려 시 1.5 이상 필요
+
+    # 2. 위험조정 수익률 (Risk-Adjusted Returns) - 핵심!
+    min_sharpe_ratio: float = 1.0  # 최소 Sharpe - 기관 기준 1.0 미만은 투자 부적격
+    min_sortino_ratio: float = 1.2  # 최소 Sortino - 하방 리스크 고려
+    min_calmar_ratio: float = 0.8  # 최소 Calmar (수익률/최대낙폭)
+
+    # 3. 리스크 관리 (Risk Management)
+    max_drawdown: float = 15.0  # 최대 낙폭 (%) - 15% 초과 시 심리적 압박 큼
+    max_consecutive_losses: int = 5  # 최대 연속 손실 - 5회 초과 시 전략 재검토 필요
+    max_volatility: float = 50.0  # 최대 연율 변동성 (%) - 너무 높으면 위험
+
+    # 4. 통계적 유의성 (Statistical Significance)
+    min_trades: int = 20  # 최소 거래 수 - 20회 이상이어야 통계적 의미
+
+    # 5. 거래 품질 (Trade Quality)
+    min_avg_win_loss_ratio: float = 1.3  # 평균 수익/평균 손실 비율
+    max_avg_holding_hours: float = 168.0  # 최대 평균 보유 시간 (7일) - 너무 길면 자본 효율 저하
 
 
 @dataclass
@@ -309,33 +326,61 @@ class QuickBacktestFilter:
     
     def _check_filters(self, metrics: Dict[str, Any]) -> Dict[str, bool]:
         """
-        필터링 조건 체크 (변동성 돌파 전략 특성 반영)
-        
-        돌파 매매는 승률이 낮아도 손익비로 수익을 내는 전략이므로:
-        - 승률 기준 완화 (35%)
-        - 손익비 강화 (1.3 이상)
-        - 최대 낙폭 허용 범위 확대 (20%)
-        
+        필터링 조건 체크 (퀀트/헤지펀드 기준 강화)
+
+        12가지 조건을 모두 통과해야 실전 거래 진행:
+        - 수익성: 수익률, 승률, 손익비
+        - 위험조정수익: Sharpe, Sortino, Calmar
+        - 리스크관리: 낙폭, 연속손실, 변동성
+        - 통계유의성: 최소 거래 수
+        - 거래품질: 평균손익비, 보유시간
+
         Args:
             metrics: 성능 지표 딕셔너리
-            
+
         Returns:
             각 필터링 조건별 통과 여부 딕셔너리
         """
+        # 지표 추출
         total_return = metrics.get('total_return', 0)
         win_rate = metrics.get('win_rate', 0)
         profit_factor = metrics.get('profit_factor', 0)
         sharpe_ratio = metrics.get('sharpe_ratio', 0)
-        max_dd = abs(metrics.get('max_drawdown', 0))  # 음수이므로 절댓값 사용
+        sortino_ratio = metrics.get('sortino_ratio', 0)
+        calmar_ratio = metrics.get('calmar_ratio', 0)
+        max_dd = abs(metrics.get('max_drawdown', 0))
+        volatility = metrics.get('volatility', 0)
+        max_consecutive_losses = metrics.get('max_consecutive_losses', 0)
         total_trades = metrics.get('total_trades', 0)
-        
+        avg_win = metrics.get('avg_win', 0)
+        avg_loss = abs(metrics.get('avg_loss', 1))  # 0 방지
+        avg_holding_hours = metrics.get('avg_holding_period_hours', 0)
+
+        # 평균 수익/손실 비율 계산
+        avg_win_loss_ratio = avg_win / avg_loss if avg_loss > 0 else 0
+
         return {
+            # 1. 수익성 지표 (Profitability)
             'return': total_return >= self.config.min_return,
             'win_rate': win_rate >= self.config.min_win_rate,
             'profit_factor': profit_factor >= self.config.min_profit_factor,
+
+            # 2. 위험조정 수익률 (Risk-Adjusted Returns)
             'sharpe_ratio': sharpe_ratio >= self.config.min_sharpe_ratio,
+            'sortino_ratio': sortino_ratio >= self.config.min_sortino_ratio,
+            'calmar_ratio': calmar_ratio >= self.config.min_calmar_ratio,
+
+            # 3. 리스크 관리 (Risk Management)
             'max_drawdown': max_dd <= self.config.max_drawdown,
-            'min_trades': total_trades >= self.config.min_trades
+            'max_consecutive_losses': max_consecutive_losses <= self.config.max_consecutive_losses,
+            'volatility': volatility <= self.config.max_volatility,
+
+            # 4. 통계적 유의성 (Statistical Significance)
+            'min_trades': total_trades >= self.config.min_trades,
+
+            # 5. 거래 품질 (Trade Quality)
+            'avg_win_loss_ratio': avg_win_loss_ratio >= self.config.min_avg_win_loss_ratio,
+            'avg_holding_hours': avg_holding_hours <= self.config.max_avg_holding_hours,
         }
     
     def _generate_reason(
@@ -367,50 +412,86 @@ class QuickBacktestFilter:
         filter_results: Dict[str, bool]
     ) -> List[str]:
         """
-        실패한 필터링 조건 추출
-        
+        실패한 필터링 조건 추출 (12가지 조건)
+
         Args:
             metrics: 성능 지표 딕셔너리
             filter_results: 필터링 결과 딕셔너리
-            
+
         Returns:
             실패한 조건 설명 리스트
         """
         failed_conditions = []
-        
+
+        # 1. 수익성 지표
         if not filter_results.get('return', False):
             failed_conditions.append(
                 f"수익률 {metrics.get('total_return', 0):.2f}% < {self.config.min_return}%"
             )
-        
+
         if not filter_results.get('win_rate', False):
             failed_conditions.append(
                 f"승률 {metrics.get('win_rate', 0):.2f}% < {self.config.min_win_rate}%"
             )
-        
+
+        if not filter_results.get('profit_factor', False):
+            failed_conditions.append(
+                f"손익비 {metrics.get('profit_factor', 0):.2f} < {self.config.min_profit_factor}"
+            )
+
+        # 2. 위험조정 수익률
         if not filter_results.get('sharpe_ratio', False):
             failed_conditions.append(
-                f"Sharpe Ratio {metrics.get('sharpe_ratio', 0):.2f} < {self.config.min_sharpe_ratio}"
+                f"Sharpe {metrics.get('sharpe_ratio', 0):.2f} < {self.config.min_sharpe_ratio}"
             )
-        
+
+        if not filter_results.get('sortino_ratio', False):
+            failed_conditions.append(
+                f"Sortino {metrics.get('sortino_ratio', 0):.2f} < {self.config.min_sortino_ratio}"
+            )
+
+        if not filter_results.get('calmar_ratio', False):
+            failed_conditions.append(
+                f"Calmar {metrics.get('calmar_ratio', 0):.2f} < {self.config.min_calmar_ratio}"
+            )
+
+        # 3. 리스크 관리
         if not filter_results.get('max_drawdown', False):
             max_dd = abs(metrics.get('max_drawdown', 0))
             failed_conditions.append(
-                f"Max Drawdown {max_dd:.2f}% > {self.config.max_drawdown}%"
+                f"낙폭 {max_dd:.2f}% > {self.config.max_drawdown}%"
             )
-        
-        if not filter_results.get('profit_factor', False):
-            profit_factor = metrics.get('profit_factor', 0)
+
+        if not filter_results.get('max_consecutive_losses', False):
             failed_conditions.append(
-                f"Profit Factor {profit_factor:.2f} < {self.config.min_profit_factor}"
+                f"연속손실 {metrics.get('max_consecutive_losses', 0)}회 > {self.config.max_consecutive_losses}회"
             )
-        
+
+        if not filter_results.get('volatility', False):
+            failed_conditions.append(
+                f"변동성 {metrics.get('volatility', 0):.2f}% > {self.config.max_volatility}%"
+            )
+
+        # 4. 통계적 유의성
         if not filter_results.get('min_trades', False):
-            total_trades = metrics.get('total_trades', 0)
             failed_conditions.append(
-                f"총 거래 수 {total_trades} < {self.config.min_trades}"
+                f"거래수 {metrics.get('total_trades', 0)} < {self.config.min_trades}"
             )
-        
+
+        # 5. 거래 품질
+        if not filter_results.get('avg_win_loss_ratio', False):
+            avg_win = metrics.get('avg_win', 0)
+            avg_loss = abs(metrics.get('avg_loss', 1))
+            ratio = avg_win / avg_loss if avg_loss > 0 else 0
+            failed_conditions.append(
+                f"평균손익비 {ratio:.2f} < {self.config.min_avg_win_loss_ratio}"
+            )
+
+        if not filter_results.get('avg_holding_hours', False):
+            failed_conditions.append(
+                f"보유시간 {metrics.get('avg_holding_period_hours', 0):.1f}h > {self.config.max_avg_holding_hours}h"
+            )
+
         return failed_conditions
     
     def _print_results(
@@ -420,28 +501,76 @@ class QuickBacktestFilter:
         passed: bool,
         is_rule_based: bool = False
     ):
-        """결과 출력"""
+        """결과 출력 (12가지 필터 조건)"""
         strategy_type = "룰 기반" if is_rule_based else "AI 기반"
         Logger.print_header(f"📊 {strategy_type} 백테스팅 결과")
-        
+
+        # 평균 손익 비율 계산
+        avg_win = metrics.get('avg_win', 0)
+        avg_loss = abs(metrics.get('avg_loss', 1))
+        avg_win_loss_ratio = avg_win / avg_loss if avg_loss > 0 else 0
+
         # 성능 지표 출력
-        print(f"총 수익률: {metrics.get('total_return', 0):.2f}%")
-        print(f"승률: {metrics.get('win_rate', 0):.2f}%")
-        print(f"손익비: {metrics.get('profit_factor', 0):.2f}")
-        print(f"Sharpe Ratio: {metrics.get('sharpe_ratio', 0):.2f}")
-        print(f"Max Drawdown: {abs(metrics.get('max_drawdown', 0)):.2f}%")
-        print(f"총 거래 수: {metrics.get('total_trades', 0)}")
-        
-        print("\n필터링 조건:")
-        print(f"  ✅ 수익률 > {self.config.min_return}%: {'✅ 통과' if filter_results.get('return') else '❌ 실패'}")
-        print(f"  ✅ 승률 > {self.config.min_win_rate}%: {'✅ 통과' if filter_results.get('win_rate') else '❌ 실패'}")
-        print(f"  ✅ 손익비 > {self.config.min_profit_factor}: {'✅ 통과' if filter_results.get('profit_factor') else '❌ 실패'}")
-        print(f"  ✅ Sharpe Ratio > {self.config.min_sharpe_ratio}: {'✅ 통과' if filter_results.get('sharpe_ratio') else '❌ 실패'}")
-        print(f"  ✅ Max Drawdown < {self.config.max_drawdown}%: {'✅ 통과' if filter_results.get('max_drawdown') else '❌ 실패'}")
-        print(f"  ✅ 최소 거래 수 > {self.config.min_trades}: {'✅ 통과' if filter_results.get('min_trades') else '❌ 실패'}")
-        
-        print(f"\n최종 결과: {'✅ 조건 통과 - 실전 거래 진행' if passed else '❌ 조건 미달 - 거래 중단'}")
+        print("=" * 50)
+        print("📈 수익성 지표")
+        print(f"  총 수익률: {metrics.get('total_return', 0):.2f}%")
+        print(f"  승률: {metrics.get('win_rate', 0):.2f}%")
+        print(f"  손익비 (Profit Factor): {metrics.get('profit_factor', 0):.2f}")
+
+        print("\n📊 위험조정 수익률")
+        print(f"  Sharpe Ratio: {metrics.get('sharpe_ratio', 0):.2f}")
+        print(f"  Sortino Ratio: {metrics.get('sortino_ratio', 0):.2f}")
+        print(f"  Calmar Ratio: {metrics.get('calmar_ratio', 0):.2f}")
+
+        print("\n🛡️ 리스크 지표")
+        print(f"  Max Drawdown: {abs(metrics.get('max_drawdown', 0)):.2f}%")
+        print(f"  연속 손실: {metrics.get('max_consecutive_losses', 0)}회")
+        print(f"  연율 변동성: {metrics.get('volatility', 0):.2f}%")
+
+        print("\n📋 거래 통계")
+        print(f"  총 거래 수: {metrics.get('total_trades', 0)}")
+        print(f"  평균 수익/손실 비율: {avg_win_loss_ratio:.2f}")
+        print(f"  평균 보유 시간: {metrics.get('avg_holding_period_hours', 0):.1f}시간")
+        print("=" * 50)
+
+        # 필터링 조건 체크 (12가지)
+        print("\n🔍 필터링 조건 (12가지):")
+
+        print("\n  [수익성]")
+        self._print_filter_line("수익률", metrics.get('total_return', 0), ">=", self.config.min_return, "%", filter_results.get('return'))
+        self._print_filter_line("승률", metrics.get('win_rate', 0), ">=", self.config.min_win_rate, "%", filter_results.get('win_rate'))
+        self._print_filter_line("손익비", metrics.get('profit_factor', 0), ">=", self.config.min_profit_factor, "", filter_results.get('profit_factor'))
+
+        print("\n  [위험조정수익]")
+        self._print_filter_line("Sharpe", metrics.get('sharpe_ratio', 0), ">=", self.config.min_sharpe_ratio, "", filter_results.get('sharpe_ratio'))
+        self._print_filter_line("Sortino", metrics.get('sortino_ratio', 0), ">=", self.config.min_sortino_ratio, "", filter_results.get('sortino_ratio'))
+        self._print_filter_line("Calmar", metrics.get('calmar_ratio', 0), ">=", self.config.min_calmar_ratio, "", filter_results.get('calmar_ratio'))
+
+        print("\n  [리스크관리]")
+        self._print_filter_line("낙폭", abs(metrics.get('max_drawdown', 0)), "<=", self.config.max_drawdown, "%", filter_results.get('max_drawdown'))
+        self._print_filter_line("연속손실", metrics.get('max_consecutive_losses', 0), "<=", self.config.max_consecutive_losses, "회", filter_results.get('max_consecutive_losses'))
+        self._print_filter_line("변동성", metrics.get('volatility', 0), "<=", self.config.max_volatility, "%", filter_results.get('volatility'))
+
+        print("\n  [통계유의성]")
+        self._print_filter_line("거래수", metrics.get('total_trades', 0), ">=", self.config.min_trades, "", filter_results.get('min_trades'))
+
+        print("\n  [거래품질]")
+        self._print_filter_line("평균손익비", avg_win_loss_ratio, ">=", self.config.min_avg_win_loss_ratio, "", filter_results.get('avg_win_loss_ratio'))
+        self._print_filter_line("보유시간", metrics.get('avg_holding_period_hours', 0), "<=", self.config.max_avg_holding_hours, "h", filter_results.get('avg_holding_hours'))
+
+        # 통과/실패 개수
+        passed_count = sum(1 for v in filter_results.values() if v)
+        total_count = len(filter_results)
+
+        print(f"\n📋 통과: {passed_count}/{total_count}")
+        print(f"\n{'='*50}")
+        print(f"최종 결과: {'✅ 조건 통과 - 실전 거래 진행' if passed else '❌ 조건 미달 - 거래 중단'}")
         print(Logger._separator() + "\n")
+
+    def _print_filter_line(self, name: str, value: float, op: str, threshold: float, unit: str, passed: bool):
+        """필터 조건 한 줄 출력"""
+        status = "✅" if passed else "❌"
+        print(f"    {status} {name}: {value:.2f}{unit} {op} {threshold}{unit}")
     
     def _print_metrics_summary(self, metrics: Dict[str, Any], strategy_type: str) -> None:
         """
