@@ -10,12 +10,12 @@
 - AI 분석
 - AI 판단 검증
 
-마이그레이션 전략:
+Clean Architecture Migration (2026-01-03):
 - Container가 있으면 AnalyzeMarketUseCase 사용 (클린 아키텍처)
-- Container가 없으면 ai_service 사용 (레거시 호환)
+- Container가 없으면 Port를 통해 레거시 서비스 사용 (하위 호환성)
 """
 from decimal import Decimal
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple
 
 from src.trading.pipeline.base_stage import BasePipelineStage, PipelineContext, StageResult
 from src.trading.indicators import TechnicalIndicators
@@ -38,6 +38,24 @@ class AnalysisStage(BasePipelineStage):
 
     def __init__(self):
         super().__init__(name="Analysis")
+
+    def _get_ai_service(self, context: PipelineContext) -> Any:
+        """
+        Container 또는 context에서 AI 서비스 인스턴스 획득
+
+        Container가 있으면 AIPort에서 추출,
+        없으면 context의 레거시 서비스 사용 (하위 호환성)
+
+        Returns:
+            ai_service 인스턴스
+        """
+        if context.container:
+            # Container에서 AIPort 획득 후 내부 레거시 서비스 추출
+            ai_port = context.container.get_ai_port()
+            return getattr(ai_port, '_service', context.ai_service)
+        else:
+            # 레거시 방식 (하위 호환성)
+            return context.ai_service
 
     async def execute(self, context: PipelineContext) -> StageResult:
         """
@@ -281,6 +299,9 @@ class AnalysisStage(BasePipelineStage):
 
     def _perform_ai_analysis_legacy(self, context: PipelineContext) -> StageResult:
         """레거시 서비스를 통한 AI 분석 수행"""
+        # AI 서비스 획득
+        ai_service = self._get_ai_service(context)
+
         # 백테스팅 결과 요약
         backtest_summary = {
             'passed': context.backtest_result.passed,
@@ -290,7 +311,7 @@ class AnalysisStage(BasePipelineStage):
         }
 
         # AI 분석 데이터 준비
-        analysis_data = context.ai_service.prepare_analysis_data(
+        analysis_data = ai_service.prepare_analysis_data(
             context.chart_data,
             context.orderbook_summary,
             context.current_status,
@@ -304,7 +325,7 @@ class AnalysisStage(BasePipelineStage):
         )
 
         # AI 분석 수행
-        context.ai_result = context.ai_service.analyze(context.ticker, analysis_data)
+        context.ai_result = ai_service.analyze(context.ticker, analysis_data)
 
         if context.ai_result is None:
             Logger.print_error("AI 분석을 수행할 수 없습니다.")

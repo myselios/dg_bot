@@ -315,3 +315,101 @@ test 'component should call dependency':
 
 ## Supporting Files Reference
 - [plan-template.md](plan-template.md) - Complete plan document template
+
+---
+
+## Step 6: Post-Planning Documentation Governance (Mandatory)
+
+⚠️ **This step runs automatically AFTER all phases are completed.**  
+A feature is NOT considered complete until this step passes.
+
+### Purpose
+Ensure documentation reflects **current system reality**, not completed plans or outdated intentions.
+
+This prevents:
+- Documentation drift
+- Accumulation of obsolete `.md` files
+- Mismatch between code and docs
+
+---
+
+### Documentation Governance Workflow
+
+#### 6.1 Docs Inventory
+- Scan `docs/` directory
+- Classify all `.md` files as:
+  - `ACTIVE` – accurate and current
+  - `UPDATE` – partially outdated
+  - `DELETE` – obsolete or misleading
+
+---
+
+#### 6.2 Planning Docs Resolution
+When `PLAN_<feature-name>.md` is 100% complete:
+
+- [ ] Planning docs are NOT treated as active documentation
+- [ ] Key decisions are extracted into canonical docs
+- [ ] Completed plans are deleted or archived
+
+Rule:
+> Planning documents describe intent.  
+> Documentation describes reality.
+
+---
+
+#### 6.3 Docs vs Code Validation
+Validate documentation against:
+- Current code paths
+- Runtime behavior
+- Architecture & configuration
+
+If documentation contradicts code → **documentation must be updated or deleted**.
+
+---
+
+#### 6.4 Canonical Docs Update
+Ensure the following are accurate and singular:
+
+- `ARCHITECTURE.md`
+- `SYSTEM_FLOW.md`
+- `DOMAIN_LOGIC.md`
+- `DECISIONS.md`
+
+Rules:
+- No duplication
+- No speculative or future-tense language
+- Code behavior always wins
+
+---
+
+#### 6.5 Enforcement Actions
+- [ ] Delete obsolete docs
+- [ ] Update outdated sections
+- [ ] Merge duplicate docs
+- [ ] Normalize terminology
+- [ ] Remove “will / planned” language
+
+---
+
+#### 6.6 Documentation Change Log
+Generate:
+
+
+Include:
+- Deleted files (with reason)
+- Updated files (summary)
+- Extracted architectural or domain decisions
+
+---
+
+## Global Definition of Done (Updated)
+
+A feature is DONE only when ALL conditions are met:
+
+- [ ] All planned phases completed
+- [ ] All quality gates passed
+- [ ] Tests pass with required coverage
+- [ ] **Documentation governance completed**
+- [ ] Docs reflect current system behavior
+
+⛔ Skipping documentation governance invalidates feature completion.

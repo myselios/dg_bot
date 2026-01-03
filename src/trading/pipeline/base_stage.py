@@ -84,6 +84,28 @@ class PipelineContext:
         if self.metadata is None:
             self.metadata = {}
 
+    # --- Port Accessor Methods ---
+    # Container를 통해 Port에 접근하는 메서드들입니다.
+    # 스테이지에서 직접 Port 인터페이스를 사용할 수 있도록 합니다.
+
+    def get_exchange_port(self):
+        """ExchangePort 인스턴스 반환"""
+        if self.container:
+            return self.container.get_exchange_port()
+        return None
+
+    def get_market_data_port(self):
+        """MarketDataPort 인스턴스 반환"""
+        if self.container:
+            return self.container.get_market_data_port()
+        return None
+
+    def get_ai_port(self):
+        """AIPort 인스턴스 반환"""
+        if self.container:
+            return self.container.get_ai_port()
+        return None
+
 
 @dataclass
 class StageResult:

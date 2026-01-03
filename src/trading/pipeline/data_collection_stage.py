@@ -8,8 +8,12 @@
 - 현재 상태
 - 포지션 정보
 - 공포탐욕지수
+
+Clean Architecture Migration (2026-01-03):
+- Container가 있으면 Port를 통해 서비스 접근
+- Container가 없으면 context의 레거시 서비스 사용 (하위 호환성)
 """
-from typing import Dict, Optional
+from typing import Dict, Optional, Any, Tuple
 from src.trading.pipeline.base_stage import BasePipelineStage, PipelineContext, StageResult
 from src.trading.indicators import TechnicalIndicators
 from src.position.service import PositionService
@@ -21,6 +25,8 @@ class DataCollectionStage(BasePipelineStage):
     데이터 수집 스테이지
 
     거래 판단에 필요한 모든 시장 데이터 및 기술적 지표를 수집합니다.
+
+    Container가 제공되면 Port를 통해 레거시 서비스에 접근합니다.
     """
 
     def __init__(self):
@@ -78,12 +84,18 @@ class DataCollectionStage(BasePipelineStage):
         Args:
             context: 파이프라인 컨텍스트
         """
-        balances = context.upbit_client.get_balances()
+        # 레거시 서비스 직접 사용 (하위 호환성)
+        upbit_client = context.upbit_client
+        if not upbit_client:
+            Logger.print_warning("upbit_client를 사용할 수 없습니다")
+            return
+
+        balances = upbit_client.get_balances()
         if balances:
             target_currency = context.ticker.split('-')[1] if '-' in context.ticker else None
             Logger.print_investment_status(
                 balances,
-                context.upbit_client,
+                upbit_client,
                 target_currency=target_currency
             )
 
@@ -97,7 +109,18 @@ class DataCollectionStage(BasePipelineStage):
         Returns:
             StageResult: 수집 결과
         """
-        chart_data_with_btc = context.data_collector.get_chart_data_with_btc(context.ticker)
+        # 레거시 서비스 직접 사용 (하위 호환성)
+        data_collector = context.data_collector
+        if not data_collector:
+            Logger.print_error("data_collector를 사용할 수 없습니다")
+            return StageResult(
+                success=False,
+                action='stop',
+                message="데이터 수집기 없음",
+                metadata={'error': 'data_collector를 사용할 수 없습니다'}
+            )
+
+        chart_data_with_btc = data_collector.get_chart_data_with_btc(context.ticker)
 
         if chart_data_with_btc is None:
             Logger.print_error("차트 데이터를 가져올 수 없어 프로그램을 종료합니다.")
@@ -128,8 +151,13 @@ class DataCollectionStage(BasePipelineStage):
         Args:
             context: 파이프라인 컨텍스트
         """
-        context.orderbook = context.data_collector.get_orderbook(context.ticker)
-        context.orderbook_summary = context.data_collector.get_orderbook_summary(
+        # 레거시 서비스 직접 사용 (하위 호환성)
+        data_collector = context.data_collector
+        if not data_collector:
+            return
+
+        context.orderbook = data_collector.get_orderbook(context.ticker)
+        context.orderbook_summary = data_collector.get_orderbook_summary(
             context.orderbook
         )
 
@@ -140,10 +168,15 @@ class DataCollectionStage(BasePipelineStage):
         Args:
             context: 파이프라인 컨텍스트
         """
+        # 레거시 서비스 직접 사용 (하위 호환성)
+        upbit_client = context.upbit_client
+        if not upbit_client:
+            return
+
         context.current_status = {
-            "krw_balance": context.upbit_client.get_balance("KRW"),
-            "coin_balance": context.upbit_client.get_balance(context.ticker),
-            "current_price": context.upbit_client.get_current_price(context.ticker)
+            "krw_balance": upbit_client.get_balance("KRW"),
+            "coin_balance": upbit_client.get_balance(context.ticker),
+            "current_price": upbit_client.get_current_price(context.ticker)
         }
 
     def _collect_fear_greed_index(self, context: PipelineContext) -> None:
@@ -153,7 +186,12 @@ class DataCollectionStage(BasePipelineStage):
         Args:
             context: 파이프라인 컨텍스트
         """
-        fear_greed_index = context.data_collector.get_fear_greed_index()
+        # 레거시 서비스 직접 사용 (하위 호환성)
+        data_collector = context.data_collector
+        if not data_collector:
+            return
+
+        fear_greed_index = data_collector.get_fear_greed_index()
 
         if fear_greed_index:
             Logger.print_header("😨😍 공포탐욕지수")
@@ -181,5 +219,10 @@ class DataCollectionStage(BasePipelineStage):
         Args:
             context: 파이프라인 컨텍스트
         """
-        position_service = PositionService(context.upbit_client)
+        # 레거시 서비스 직접 사용 (하위 호환성)
+        upbit_client = context.upbit_client
+        if not upbit_client:
+            return
+
+        position_service = PositionService(upbit_client)
         context.position_info = position_service.get_detailed_position(context.ticker)

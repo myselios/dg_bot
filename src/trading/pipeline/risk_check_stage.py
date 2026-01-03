@@ -5,8 +5,12 @@
 - 손절/익절 체크
 - Circuit Breaker 체크
 - 거래 빈도 제한 체크
+
+Clean Architecture Migration (2026-01-03):
+- Container가 있으면 Port를 통해 서비스 접근
+- Container가 없으면 context의 레거시 서비스 사용 (하위 호환성)
 """
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 from src.trading.pipeline.base_stage import BasePipelineStage, PipelineContext, StageResult
 from src.risk.manager import RiskManager, RiskLimits
 from src.position.service import PositionService
@@ -100,9 +104,20 @@ class RiskCheckStage(BasePipelineStage):
         Returns:
             StageResult: 체크 결과
         """
-        position_service = PositionService(context.upbit_client)
+        # 레거시 서비스 직접 사용 (하위 호환성)
+        upbit_client = context.upbit_client
+        trading_service = context.trading_service
+
+        if not upbit_client:
+            return StageResult(
+                success=True,
+                action='continue',
+                message="upbit_client 없음 - 포지션 체크 스킵"
+            )
+
+        position_service = PositionService(upbit_client)
         position_info = position_service.get_detailed_position(context.ticker)
-        current_price = context.upbit_client.get_current_price(context.ticker)
+        current_price = upbit_client.get_current_price(context.ticker)
 
         position_check = context.risk_manager.check_position_limits(
             position_info, current_price
@@ -112,7 +127,9 @@ class RiskCheckStage(BasePipelineStage):
         # 손절 발동
         if position_check['action'] == 'stop_loss':
             Logger.print_error(f"🚨 손절 발동: {position_check['reason']}")
-            sell_result = context.trading_service.execute_sell(context.ticker)
+            sell_result = None
+            if trading_service:
+                sell_result = trading_service.execute_sell(context.ticker)
             context.risk_manager.record_trade(position_check['pnl_pct'])
 
             return StageResult(
@@ -131,7 +148,9 @@ class RiskCheckStage(BasePipelineStage):
         # 익절 발동
         elif position_check['action'] == 'take_profit':
             Logger.print_success(f"💰 익절 발동: {position_check['reason']}")
-            sell_result = context.trading_service.execute_sell(context.ticker)
+            sell_result = None
+            if trading_service:
+                sell_result = trading_service.execute_sell(context.ticker)
             context.risk_manager.record_trade(position_check['pnl_pct'])
 
             return StageResult(

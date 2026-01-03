@@ -14,6 +14,7 @@ import pytest
 from decimal import Decimal
 from unittest.mock import MagicMock, AsyncMock, patch
 from datetime import datetime
+from dataclasses import dataclass
 
 from src.trading.pipeline.execution_stage import ExecutionStage
 from src.trading.pipeline.base_stage import PipelineContext, StageResult
@@ -24,18 +25,55 @@ from src.domain.entities.trade import OrderSide
 from src.domain.value_objects.money import Money, Currency
 
 
+@dataclass
+class MockBalanceInfo:
+    """Mock BalanceInfo for testing"""
+    available: Money
+    locked: Money = None
+
+    def __post_init__(self):
+        if self.locked is None:
+            self.locked = Money(Decimal("0"), self.available.currency)
+
+
+def create_mock_exchange_port(current_price: float = 50000000, krw_balance: float = 1000000, coin_balance: float = 0.002):
+    """ExchangePort 모킹 헬퍼 함수"""
+    mock_port = MagicMock()
+
+    # Async 메서드들 설정
+    mock_port.get_current_price = AsyncMock(
+        return_value=Money(Decimal(str(current_price)), Currency.KRW)
+    )
+    mock_port.get_balance = AsyncMock(
+        side_effect=lambda currency: MockBalanceInfo(
+            available=Money(
+                Decimal(str(krw_balance if currency == "KRW" else coin_balance)),
+                Currency.KRW if currency == "KRW" else Currency.KRW
+            )
+        )
+    )
+
+    return mock_port
+
+
 class TestExecutionStageWithUseCase:
     """ExecutionStage + UseCase 통합 테스트"""
 
     @pytest.fixture
-    def mock_container(self):
-        """Container with mock UseCase"""
+    def mock_exchange_port(self):
+        """Mock ExchangePort for async methods"""
+        return create_mock_exchange_port()
+
+    @pytest.fixture
+    def mock_container(self, mock_exchange_port):
+        """Container with mock UseCase and ExchangePort"""
         mock_use_case = MagicMock(spec=ExecuteTradeUseCase)
         mock_use_case.execute_buy = AsyncMock()
         mock_use_case.execute_sell = AsyncMock()
 
         container = MagicMock(spec=Container)
         container.get_execute_trade_use_case.return_value = mock_use_case
+        container.get_exchange_port.return_value = mock_exchange_port
 
         return container, mock_use_case
 
@@ -52,7 +90,7 @@ class TestExecutionStageWithUseCase:
             trading_service=MagicMock(),
         )
 
-        # Mock 반환값 설정
+        # Mock 반환값 설정 (레거시 호환성용)
         context.upbit_client.get_current_price.return_value = 50000000
         context.upbit_client.get_balance.return_value = 1000000
 
@@ -241,8 +279,11 @@ class TestExecutionStageErrorHandling:
             )
         )
 
+        mock_exchange_port = create_mock_exchange_port()
+
         container = MagicMock(spec=Container)
         container.get_execute_trade_use_case.return_value = mock_use_case
+        container.get_exchange_port.return_value = mock_exchange_port
 
         return container
 
@@ -276,8 +317,11 @@ class TestExecutionStageErrorHandling:
         mock_use_case = MagicMock(spec=ExecuteTradeUseCase)
         mock_use_case.execute_buy = AsyncMock(side_effect=Exception("네트워크 오류"))
 
+        mock_exchange_port = create_mock_exchange_port()
+
         container = MagicMock(spec=Container)
         container.get_execute_trade_use_case.return_value = mock_use_case
+        container.get_exchange_port.return_value = mock_exchange_port
 
         context = PipelineContext(
             ticker="KRW-BTC",
@@ -318,8 +362,11 @@ class TestExecutionStageMoneyConversion:
             )
         )
 
+        mock_exchange_port = create_mock_exchange_port()
+
         container = MagicMock(spec=Container)
         container.get_execute_trade_use_case.return_value = mock_use_case
+        container.get_exchange_port.return_value = mock_exchange_port
 
         context = PipelineContext(
             ticker="KRW-BTC",

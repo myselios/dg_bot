@@ -6,13 +6,13 @@ AI 분석 결과를 기반으로 실제 거래를 실행합니다.
 - 거래 시간 및 손익 기록
 - 거래 결과 반환
 
-마이그레이션 전략:
+Clean Architecture Migration (2026-01-03):
 - Container가 있으면 ExecuteTradeUseCase 사용 (클린 아키텍처)
-- Container가 없으면 trading_service 사용 (레거시 호환)
+- Container가 없으면 Port를 통해 레거시 서비스 사용 (하위 호환성)
 """
 from datetime import datetime
 from decimal import Decimal
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 from src.trading.pipeline.base_stage import BasePipelineStage, PipelineContext, StageResult
 from src.position.service import PositionService
@@ -33,6 +33,7 @@ class ExecutionStage(BasePipelineStage):
     def __init__(self):
         super().__init__(name="Execution")
 
+
     async def execute(self, context: PipelineContext) -> StageResult:
         """
         거래 실행 (비동기)
@@ -44,8 +45,8 @@ class ExecutionStage(BasePipelineStage):
             StageResult: 실행 결과
         """
         try:
-            # 현재 가격 및 잔고 출력
-            self._print_current_status(context)
+            # 현재 가격 및 잔고 출력 (비동기)
+            await self._print_current_status(context)
 
             # AI 결정에 따라 거래 실행
             decision = context.ai_result.get("decision", "hold")
@@ -61,22 +62,32 @@ class ExecutionStage(BasePipelineStage):
                     f"알 수 없는 판단: '{decision}' - 아무 작업도 수행하지 않습니다."
                 )
 
-            # 거래 결과 생성
-            return self._create_result(context)
+            # 거래 결과 생성 (비동기)
+            return await self._create_result(context)
 
         except Exception as e:
             return self.handle_error(context, e)
 
-    def _print_current_status(self, context: PipelineContext) -> None:
+    async def _print_current_status(self, context: PipelineContext) -> None:
         """
-        현재 가격 및 잔고 출력
+        현재 가격 및 잔고 출력 (비동기)
 
         Args:
             context: 파이프라인 컨텍스트
         """
-        current_price = context.upbit_client.get_current_price(context.ticker)
-        krw_balance = context.upbit_client.get_balance("KRW")
-        coin_balance = context.upbit_client.get_balance(context.ticker)
+        # Port를 통해 데이터 조회
+        exchange_port = context.get_exchange_port()
+        if not exchange_port:
+            Logger.print_warning("ExchangePort를 사용할 수 없습니다")
+            return
+
+        current_price_money = await exchange_port.get_current_price(context.ticker)
+        krw_balance_info = await exchange_port.get_balance("KRW")
+        coin_balance_info = await exchange_port.get_balance(context.ticker.split("-")[1])
+
+        current_price = float(current_price_money.amount)
+        krw_balance = float(krw_balance_info.available.amount)
+        coin_balance = float(coin_balance_info.available.amount)
 
         if current_price:
             print(f"현재 {context.ticker} 가격: {current_price:,.0f}원")
@@ -112,8 +123,12 @@ class ExecutionStage(BasePipelineStage):
 
         use_case = context.container.get_execute_trade_use_case()
 
+        # Port를 통해 잔고 조회
+        exchange_port = context.get_exchange_port()
+        krw_balance_info = await exchange_port.get_balance("KRW")
+        krw_balance = float(krw_balance_info.available.amount)
+
         # 매수 금액 결정 (설정값 또는 보유 현금의 일부)
-        krw_balance = context.upbit_client.get_balance("KRW")
         buy_amount = self._calculate_buy_amount(krw_balance)
 
         # Money 객체로 변환
@@ -127,7 +142,10 @@ class ExecutionStage(BasePipelineStage):
 
     def _execute_buy_legacy(self, context: PipelineContext) -> None:
         """레거시 서비스를 통한 매수 실행"""
-        context.trade_result = context.trading_service.execute_buy(context.ticker)
+        # 레거시 서비스 직접 사용 (하위 호환성)
+        trading_service = context.trading_service
+        if trading_service:
+            context.trade_result = trading_service.execute_buy(context.ticker)
 
     def _calculate_buy_amount(self, krw_balance: float) -> float:
         """매수 금액 계산"""
@@ -157,9 +175,9 @@ class ExecutionStage(BasePipelineStage):
         else:
             self._execute_sell_legacy(context)
 
-        # 손익 기록
+        # 손익 기록 (비동기)
         if context.risk_manager and context.position_info:
-            self._record_pnl(context)
+            await self._record_pnl(context)
 
     async def _execute_sell_with_use_case(self, context: PipelineContext) -> None:
         """UseCase를 통한 매도 실행"""
@@ -173,7 +191,10 @@ class ExecutionStage(BasePipelineStage):
 
     def _execute_sell_legacy(self, context: PipelineContext) -> None:
         """레거시 서비스를 통한 매도 실행"""
-        context.trade_result = context.trading_service.execute_sell(context.ticker)
+        # 레거시 서비스 직접 사용 (하위 호환성)
+        trading_service = context.trading_service
+        if trading_service:
+            context.trade_result = trading_service.execute_sell(context.ticker)
 
     def _execute_hold(self, context: PipelineContext) -> None:
         """
@@ -182,8 +203,10 @@ class ExecutionStage(BasePipelineStage):
         Args:
             context: 파이프라인 컨텍스트
         """
-        if context.trading_service:
-            context.trading_service.execute_hold()
+        # 레거시 서비스 직접 사용 (하위 호환성)
+        trading_service = context.trading_service
+        if trading_service:
+            trading_service.execute_hold()
 
     def _convert_order_response_to_dict(self, response) -> Dict[str, Any]:
         """
@@ -214,23 +237,29 @@ class ExecutionStage(BasePipelineStage):
 
         return result
 
-    def _record_pnl(self, context: PipelineContext) -> None:
+    async def _record_pnl(self, context: PipelineContext) -> None:
         """
-        손익률 기록
+        손익률 기록 (비동기)
 
         Args:
             context: 파이프라인 컨텍스트
         """
+        # Port를 통해 현재 가격 조회
+        exchange_port = context.get_exchange_port()
+        if not exchange_port:
+            return
+
         avg_buy_price = context.position_info.get('avg_buy_price', 0)
-        current_price = context.upbit_client.get_current_price(context.ticker)
+        current_price_money = await exchange_port.get_current_price(context.ticker)
+        current_price = float(current_price_money.amount)
 
         if avg_buy_price > 0 and current_price:
             pnl_pct = ((current_price - avg_buy_price) / avg_buy_price) * 100
             context.risk_manager.record_trade(pnl_pct)
 
-    def _create_result(self, context: PipelineContext) -> StageResult:
+    async def _create_result(self, context: PipelineContext) -> StageResult:
         """
-        거래 결과 생성
+        거래 결과 생성 (비동기)
 
         Args:
             context: 파이프라인 컨텍스트
@@ -238,8 +267,16 @@ class ExecutionStage(BasePipelineStage):
         Returns:
             StageResult: 거래 결과
         """
-        current_price = context.upbit_client.get_current_price(context.ticker)
-        coin_balance = context.upbit_client.get_balance(context.ticker)
+        # Port를 통해 현재 가격 및 잔고 조회
+        exchange_port = context.get_exchange_port()
+        current_price = 0
+        coin_balance = 0
+
+        if exchange_port:
+            current_price_money = await exchange_port.get_current_price(context.ticker)
+            coin_balance_info = await exchange_port.get_balance(context.ticker.split("-")[1])
+            current_price = float(current_price_money.amount)
+            coin_balance = float(coin_balance_info.available.amount)
 
         # 검증 결과 추출
         validation_reason = ""

@@ -91,10 +91,34 @@ class DataConfig:
 
 
 class AIConfig:
-    """AI 설정"""
+    """
+    AI 설정
+
+    ⚠️ 변경 시 업데이트 필요:
+    - src/infrastructure/adapters/ai/enhanced_openai_adapter.py
+    - src/container.py
+    - docs/guide/ARCHITECTURE.md
+    - docs/plans/PLAN_ai_refactoring_clean_architecture.md
+    """
+    # Model settings
     MODEL = get_env_str("AI_MODEL", "gpt-5.2")
     TEMPERATURE = get_env_float("AI_TEMPERATURE", 0.7, min_value=0.0, max_value=2.0)
-    
+    TIMEOUT_SECONDS = get_env_int("AI_TIMEOUT_SECONDS", 30)
+    MAX_RETRIES = get_env_int("AI_MAX_RETRIES", 3)
+
+    # Rate limiting
+    RATE_LIMIT_PER_MINUTE = get_env_int("AI_RATE_LIMIT_PER_MINUTE", 20)
+
+    # Circuit breaker
+    CIRCUIT_BREAKER_THRESHOLD = get_env_int("AI_CIRCUIT_BREAKER_THRESHOLD", 5)
+    CIRCUIT_BREAKER_TIMEOUT = get_env_float("AI_CIRCUIT_BREAKER_TIMEOUT", 60.0)
+
+    # Prompt version
+    PROMPT_VERSION = get_env_str("AI_PROMPT_VERSION", "v2.0.0")
+
+    # API Key (delegated from APIConfig for convenience)
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
     @classmethod
     def validate(cls):
         """AI 설정 검증"""
@@ -211,6 +235,104 @@ class SlippageConfig:
             raise ConfigurationError("MAX_SLIPPAGE_PCT", "최대 슬리피지는 경고 슬리피지보다 커야 합니다")
 
 
+class ArchitectureConfig:
+    """
+    아키텍처 모드 설정
+
+    MODE 값:
+    - 'legacy': 레거시 서비스 직접 사용 (현재 기본값)
+    - 'clean': 클린 아키텍처 UseCase/Port 사용
+    - 'hybrid': Container 존재 시 UseCase, 없으면 레거시
+
+    ⚠️ 중요: 이 값을 변경할 때 Container, Pipeline Stage 동작이 달라집니다.
+    """
+    # 유효한 모드 목록
+    VALID_MODES = ['legacy', 'clean', 'hybrid']
+
+    # 현재 아키텍처 모드 (환경 변수로 오버라이드 가능)
+    MODE = get_env_str("ARCHITECTURE_MODE", "legacy")
+
+    @classmethod
+    def validate(cls):
+        """아키텍처 설정 검증"""
+        if cls.MODE not in cls.VALID_MODES:
+            raise ConfigurationError(
+                "ARCHITECTURE_MODE",
+                f"유효하지 않은 모드입니다: {cls.MODE}. 유효한 모드: {', '.join(cls.VALID_MODES)}"
+            )
+
+    @classmethod
+    def is_legacy_mode(cls) -> bool:
+        """레거시 모드인지 확인"""
+        return cls.MODE == 'legacy'
+
+    @classmethod
+    def is_clean_mode(cls) -> bool:
+        """클린 아키텍처 모드인지 확인"""
+        return cls.MODE == 'clean'
+
+    @classmethod
+    def is_hybrid_mode(cls) -> bool:
+        """하이브리드 모드인지 확인"""
+        return cls.MODE == 'hybrid'
+
+    @classmethod
+    def should_use_container(cls) -> bool:
+        """Container/UseCase를 사용해야 하는지 확인"""
+        return cls.MODE in ['clean', 'hybrid']
+
+
+class SchedulerConfig:
+    """
+    스케줄러 설정 (CronTrigger 기반)
+
+    ⚠️ 중요: 캔들 마감 후 데이터 안정화를 위해 버퍼 시간을 적용합니다.
+    - 1시간봉: 매시 정각 마감 → TRADING_JOB_MINUTE분에 실행
+    - 15분봉: 매 15분 마감 → POSITION_JOB_MINUTES에 실행
+
+    변경 시 업데이트 필요:
+    - docs/guide/SCHEDULER_GUIDE.md
+    - backend/app/core/scheduler.py (add_jobs 함수)
+    """
+    # 버퍼 시간 (분) - 캔들 마감 후 데이터 안정화 대기
+    BUFFER_MINUTES = get_env_int("SCHEDULER_BUFFER_MINUTES", 1, min_value=0, max_value=5)
+
+    # 트레이딩 작업 실행 분 (매시 N분)
+    TRADING_JOB_MINUTE = get_env_int("SCHEDULER_TRADING_JOB_MINUTE", 1, min_value=0, max_value=59)
+
+    # 포지션 관리 작업 실행 분 (15분 주기 + 버퍼)
+    # 기본값: "1,16,31,46" (정각+1분, 15분+1분, 30분+1분, 45분+1분)
+    POSITION_JOB_MINUTES = get_env_str("SCHEDULER_POSITION_JOB_MINUTES", "1,16,31,46")
+
+    # 포트폴리오 스냅샷 실행 분 (매시 N분)
+    PORTFOLIO_JOB_MINUTE = get_env_int("SCHEDULER_PORTFOLIO_JOB_MINUTE", 1, min_value=0, max_value=59)
+
+    # 일일 리포트 실행 시간
+    DAILY_REPORT_HOUR = get_env_int("SCHEDULER_DAILY_REPORT_HOUR", 9, min_value=0, max_value=23)
+    DAILY_REPORT_MINUTE = get_env_int("SCHEDULER_DAILY_REPORT_MINUTE", 0, min_value=0, max_value=59)
+
+    # 즉시 실행 여부 (개발/테스트용)
+    RUN_IMMEDIATELY = os.getenv("SCHEDULER_RUN_IMMEDIATELY", "true").lower() == "true"
+
+    @classmethod
+    def validate(cls):
+        """스케줄러 설정 검증"""
+        # POSITION_JOB_MINUTES 형식 검증
+        try:
+            minutes = [int(m.strip()) for m in cls.POSITION_JOB_MINUTES.split(",")]
+            for m in minutes:
+                if m < 0 or m > 59:
+                    raise ConfigurationError(
+                        "SCHEDULER_POSITION_JOB_MINUTES",
+                        f"분 값은 0-59 사이여야 합니다: {m}"
+                    )
+        except ValueError:
+            raise ConfigurationError(
+                "SCHEDULER_POSITION_JOB_MINUTES",
+                f"올바른 형식이 아닙니다: {cls.POSITION_JOB_MINUTES}. 예: '1,16,31,46'"
+            )
+
+
 class ScannerConfig:
     """
     멀티코인 스캐닝 설정
@@ -266,5 +388,7 @@ def validate_all_configs():
     StrategyConfig.validate()
     TrendFilterConfig.validate()
     SlippageConfig.validate()
+    SchedulerConfig.validate()
     ScannerConfig.validate()
+    ArchitectureConfig.validate()
 

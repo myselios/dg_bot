@@ -1,11 +1,27 @@
 """
 백테스팅 엔진
+
+Clean Architecture 통합:
+- ExecutionPort를 통한 체결 시뮬레이션
+- use_intrabar_stops 옵션으로 현실적인 스탑/익절 시뮬레이션
 """
-from typing import List
+from typing import List, Optional
 from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
 import pandas as pd
+
 from .strategy import Strategy
 from .portfolio import Portfolio
+from src.application.ports.outbound.execution_port import (
+    ExecutionPort,
+    CandleData,
+)
+from src.infrastructure.adapters.execution import (
+    SimpleExecutionAdapter,
+    IntrabarExecutionAdapter,
+)
+from src.domain.value_objects import Money
 
 
 @dataclass
@@ -35,7 +51,9 @@ class Backtester:
         slippage_model: dict = None,  # 슬리피지 모델 (오더북 기반)
         use_split_orders: bool = False,  # 분할 주문 사용 여부
         execute_on_next_open: bool = True,  # True: 다음 봉 시가 체결 (현실적), False: 현재 봉 종가 체결
-        data_interval: str = 'day'    # 데이터 간격 ('day', 'minute60', 'minute15', 등) - 연율화 계산용
+        data_interval: str = 'day',   # 데이터 간격 ('day', 'minute60', 'minute15', 등) - 연율화 계산용
+        use_intrabar_stops: bool = False,  # True: 봉 내 스탑/익절 체크 (현실적), False: 종가 기준
+        execution_adapter: Optional[ExecutionPort] = None  # 커스텀 어댑터 (테스트용)
     ):
         self.strategy = strategy
         self.data = data
@@ -46,6 +64,15 @@ class Backtester:
         self.use_split_orders = use_split_orders
         self.execute_on_next_open = execute_on_next_open  # Look-Ahead Bias 방지 옵션
         self.data_interval = data_interval  # 데이터 간격 (성과 지표 연율화용)
+        self.use_intrabar_stops = use_intrabar_stops  # 봉 내 스탑/익절 체크 옵션
+
+        # ExecutionPort 어댑터 설정
+        if execution_adapter is not None:
+            self._execution_adapter = execution_adapter
+        elif use_intrabar_stops:
+            self._execution_adapter = IntrabarExecutionAdapter()
+        else:
+            self._execution_adapter = SimpleExecutionAdapter()
 
         # 슬리피지 모델 설정
         if slippage_model is None:
@@ -56,14 +83,137 @@ class Backtester:
             }
         else:
             self.slippage_model = slippage_model
-        
+
         # 상태 관리
         self.portfolio = Portfolio(initial_capital)
         self.orders = []
         self.trades = []
         self.equity_curve = []
         self.slippage_statistics = []  # 슬리피지 통계
-        
+
+        # 현재 포지션의 스탑/익절 가격 추적
+        self._current_stop_loss: Optional[float] = None
+        self._current_take_profit: Optional[float] = None
+        self._current_entry_price: Optional[float] = None
+
+    def _create_candle_data(self, bar: pd.Series) -> CandleData:
+        """pandas Series를 CandleData로 변환"""
+        timestamp = bar.name if isinstance(bar.name, datetime) else datetime.now()
+        return CandleData(
+            timestamp=timestamp,
+            open=Money.krw(Decimal(str(bar['open']))),
+            high=Money.krw(Decimal(str(bar['high']))),
+            low=Money.krw(Decimal(str(bar['low']))),
+            close=Money.krw(Decimal(str(bar['close']))),
+            volume=Decimal(str(bar.get('volume', 0)))
+        )
+
+    def _check_intrabar_exit(self, current_bar: pd.Series) -> bool:
+        """
+        봉 내 스탑/익절 체크
+
+        Returns:
+            bool: 청산 발생 여부
+        """
+        # 포지션 없으면 체크 불필요
+        position = self.portfolio.positions.get(self.ticker)
+        if not position or position.size <= 0:
+            return False
+
+        # 스탑/익절 가격 없으면 체크 불필요
+        if self._current_stop_loss is None and self._current_take_profit is None:
+            return False
+
+        candle = self._create_candle_data(current_bar)
+
+        # 스탑 체크
+        stop_triggered = False
+        if self._current_stop_loss is not None:
+            stop_price = Money.krw(Decimal(str(self._current_stop_loss)))
+            stop_triggered = self._execution_adapter.check_stop_loss_triggered(
+                stop_price, candle
+            )
+
+        # 익절 체크
+        tp_triggered = False
+        if self._current_take_profit is not None:
+            tp_price = Money.krw(Decimal(str(self._current_take_profit)))
+            tp_triggered = self._execution_adapter.check_take_profit_triggered(
+                tp_price, candle
+            )
+
+        if not stop_triggered and not tp_triggered:
+            return False
+
+        # 청산 가격 결정
+        if stop_triggered and tp_triggered:
+            # 둘 다 트리거된 경우 - IntrabarExecutionAdapter는 worst-case 가정
+            if hasattr(self._execution_adapter, 'get_exit_priority'):
+                stop_price = Money.krw(Decimal(str(self._current_stop_loss)))
+                tp_price = Money.krw(Decimal(str(self._current_take_profit)))
+                priority = self._execution_adapter.get_exit_priority(
+                    stop_price, tp_price, candle
+                )
+                if priority == "stop_loss":
+                    exit_price = self._execution_adapter.get_stop_loss_execution_price(
+                        stop_price, candle
+                    )
+                    exit_reason = "stop_loss"
+                else:
+                    exit_price = self._execution_adapter.get_take_profit_execution_price(
+                        tp_price, candle
+                    )
+                    exit_reason = "take_profit"
+            else:
+                # 기본: 스탑 우선 (worst-case)
+                stop_price = Money.krw(Decimal(str(self._current_stop_loss)))
+                exit_price = self._execution_adapter.get_stop_loss_execution_price(
+                    stop_price, candle
+                )
+                exit_reason = "stop_loss"
+        elif stop_triggered:
+            stop_price = Money.krw(Decimal(str(self._current_stop_loss)))
+            exit_price = self._execution_adapter.get_stop_loss_execution_price(
+                stop_price, candle
+            )
+            exit_reason = "stop_loss"
+        else:  # tp_triggered
+            tp_price = Money.krw(Decimal(str(self._current_take_profit)))
+            exit_price = self._execution_adapter.get_take_profit_execution_price(
+                tp_price, candle
+            )
+            exit_reason = "take_profit"
+
+        # 청산 실행
+        exit_price_float = float(exit_price.amount)
+        trade = self.portfolio.close_position(
+            symbol=self.ticker,
+            price=exit_price_float,
+            commission=self.commission,
+            slippage=0  # 이미 ExecutionPort에서 처리
+        )
+
+        if trade:
+            self.trades.append(trade)
+            self.orders.append({
+                'action': 'sell',
+                'price': exit_price_float,
+                'actual_price': exit_price_float,
+                'size': trade.size,
+                'timestamp': current_bar.name,
+                'exit_reason': exit_reason,
+                'intrabar_exit': True
+            })
+
+            # 스탑/익절 상태 초기화
+            self._current_stop_loss = None
+            self._current_take_profit = None
+            self._current_entry_price = None
+
+            return True
+
+        return False
+
     def run(self) -> BacktestResult:
         """
         백테스트 실행
@@ -97,6 +247,13 @@ class Backtester:
             # 1. 현재 시점 데이터 추출
             current_bar = self.data.iloc[:i+1]
             current_bar_data = current_bar.iloc[-1]
+
+            # 1.5. 봉 내 스탑/익절 체크 (use_intrabar_stops 모드)
+            if self.use_intrabar_stops:
+                exited = self._check_intrabar_exit(current_bar_data)
+                if exited:
+                    # 스탑/익절로 청산되면 대기 신호 취소
+                    pending_signal = None
 
             # 2. 대기 중인 신호가 있으면 현재 봉 시가로 체결 (execute_on_next_open 모드)
             if self.execute_on_next_open and pending_signal is not None:
@@ -197,7 +354,12 @@ class Backtester:
                     'timestamp': current_bar.name,
                     'slippage_info': slippage_info
                 })
-                
+
+                # 스탑/익절 가격 추적 (use_intrabar_stops 모드용)
+                self._current_entry_price = actual_price
+                self._current_stop_loss = getattr(signal, 'stop_loss', None)
+                self._current_take_profit = getattr(signal, 'take_profit', None)
+
                 # 슬리피지 통계 기록
                 self._record_slippage(slippage_info, current_bar.name)
             except Exception as e:
@@ -236,7 +398,12 @@ class Backtester:
                     'timestamp': current_bar.name,
                     'slippage_info': slippage_info
                 })
-                
+
+                # 스탑/익절 상태 초기화
+                self._current_stop_loss = None
+                self._current_take_profit = None
+                self._current_entry_price = None
+
                 # 슬리피지 통계 기록
                 if slippage_info:
                     self._record_slippage(slippage_info, current_bar.name)

@@ -1,18 +1,97 @@
 """
 APScheduler 설정 및 관리
 주기적인 트레이딩 작업을 스케줄링합니다.
+
+Clean Architecture Migration (2026-01-03):
+- Container를 통해 TradingOrchestrator 사용
+- main.py 의존성 제거 (계층 분리)
+- 레거시 서비스 추출 없이 Port/UseCase 직접 사용
 """
 import asyncio
 import logging
 import pandas as pd
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 
 from backend.app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Container 싱글톤 (Clean Architecture)
+# ============================================================================
+_container = None
+
+
+def get_container():
+    """
+    Container 싱글톤 인스턴스 반환
+
+    레거시 서비스를 래핑하여 클린 아키텍처와 호환성 유지
+    PostgreSQL session_factory를 전달하여 Lock/Idempotency 지원
+    """
+    global _container
+    if _container is None:
+        from src.container import Container
+        from src.api.upbit_client import UpbitClient
+        from src.data.collector import DataCollector
+        from src.ai.service import AIService
+        from backend.app.db.session import AsyncSessionLocal
+
+        # 레거시 서비스 생성 (한 번만)
+        upbit_client = UpbitClient()
+        ai_service = AIService()
+        data_collector = DataCollector()
+
+        # Container로 래핑 (PostgreSQL session_factory 전달)
+        _container = Container.create_from_legacy(
+            upbit_client=upbit_client,
+            ai_service=ai_service,
+            data_collector=data_collector,
+            session_factory=AsyncSessionLocal,
+        )
+        logger.info("✅ Container 싱글톤 초기화 완료 (Lock/Idempotency 활성화)")
+
+    return _container
+
+
+def get_trading_orchestrator():
+    """
+    TradingOrchestrator 인스턴스 반환
+
+    Container를 통해 TradingOrchestrator를 획득합니다.
+    main.py 의존성 없이 거래 사이클을 실행할 수 있습니다.
+    """
+    container = get_container()
+    return container.get_trading_orchestrator()
+
+
+def get_upbit_client():
+    """
+    UpbitClient 인스턴스 반환 (텔레그램 로깅용)
+
+    Container 내부의 LegacyExchangeAdapter에서 UpbitClient를 추출합니다.
+    """
+    container = get_container()
+    # LegacyExchangeAdapter._client에서 추출
+    if container._exchange_port and hasattr(container._exchange_port, '_client'):
+        return container._exchange_port._client
+    return None
+
+
+def get_data_collector():
+    """
+    DataCollector 인스턴스 반환 (텔레그램 로깅용)
+
+    Container 내부의 LegacyMarketDataAdapter에서 DataCollector를 추출합니다.
+    """
+    container = get_container()
+    # LegacyMarketDataAdapter._collector에서 추출
+    if container._market_data_port and hasattr(container._market_data_port, '_collector'):
+        return container._market_data_port._collector
+    return None
+
 
 # 전역 스케줄러 인스턴스
 scheduler = AsyncIOScheduler(
@@ -28,20 +107,20 @@ scheduler = AsyncIOScheduler(
 async def trading_job():
     """
     주기적 트레이딩 작업 (1시간마다)
-    
+
     실행 순서:
-    1. 서비스 초기화
-    2. execute_trading_cycle() 호출
-    3. 결과 DB 저장 (TODO)
-    4. Telegram 알림 전송
-    5. 메트릭 기록
+    1. Lock 획득 (동시 실행 방지)
+    2. TradingOrchestrator 초기화
+    3. execute_trading_cycle() 호출
+    4. 결과 DB 저장
+    5. Telegram 알림 전송
+    6. 메트릭 기록
+
+    Clean Architecture:
+    - main.py 의존성 제거
+    - TradingOrchestrator를 통해 거래 사이클 실행
+    - Lock/Idempotency로 안정성 확보
     """
-    # Import는 함수 내부에서 수행 (순환 참조 방지)
-    from main import execute_trading_cycle
-    from src.api.upbit_client import UpbitClient
-    from src.data.collector import DataCollector
-    from src.trading.service import TradingService
-    from src.ai.service import AIService
     from src.config.settings import TradingConfig
     from backend.app.services.notification import (
         notify_trade,
@@ -60,20 +139,30 @@ async def trading_job():
         scheduler_job_failure_total
     )
     from time import time
-    
+
     job_start_time = time()
-    
+
+    # Container 및 Lock/Idempotency Port 획득
+    container = get_container()
+    lock_port = container.get_lock_port()
+    lock_acquired = False
+
     try:
+        # Lock 획득 시도 (trading_cycle 락)
+        lock_acquired = await lock_port.acquire("trading_cycle", timeout_seconds=600)
+        if not lock_acquired:
+            logger.warning("⚠️ trading_cycle 락 획득 실패 - 다른 작업이 실행 중입니다")
+            scheduler_job_failure_total.labels(job_name='trading_job').inc()
+            return
+
+        logger.info("🔒 trading_cycle 락 획득 완료")
         logger.info(f"[{datetime.now()}] 트레이딩 작업 시작")
-        
-        # 1. 서비스 초기화
+
+        # 1. TradingOrchestrator 초기화 (Clean Architecture)
         ticker = TradingConfig.TICKER
-        upbit_client = UpbitClient()
-        data_collector = DataCollector()
-        trading_service = TradingService(upbit_client)
-        ai_service = AIService()
-        
-        logger.info(f"✅ 서비스 초기화 완료 (심볼: {ticker})")
+        orchestrator = get_trading_orchestrator()
+
+        logger.info(f"✅ TradingOrchestrator 초기화 완료 (심볼: {ticker})")
 
         # 📱 1) 사이클 시작 알림 (스캐닝 시작 전)
         try:
@@ -91,12 +180,19 @@ async def trading_job():
         try:
             # 기술적 지표 import (함수 내부에서 import하여 순환 참조 방지)
             from src.trading.indicators import TechnicalIndicators
-            
+
+            # Container에서 레거시 서비스 추출 (텔레그램 로그용)
+            upbit_client = get_upbit_client()
+            data_collector = get_data_collector()
+
+            if not upbit_client or not data_collector:
+                raise RuntimeError("레거시 서비스를 가져올 수 없습니다")
+
             current_price = upbit_client.get_current_price(ticker)
             orderbook = upbit_client.get_orderbook(ticker)
             chart_data = data_collector.collect_market_data(
-                ticker, 
-                interval='day', 
+                ticker,
+                interval='day',
                 count=60
             )
             
@@ -174,9 +270,11 @@ async def trading_job():
                 # 선택된 코인의 현재가 정보 추가
                 if selected_coin and 'current_price' not in bt_market_data:
                     try:
-                        coin_price = upbit_client.get_current_price(bt_ticker)
-                        if coin_price:
-                            bt_market_data['current_price'] = coin_price
+                        _upbit_client = get_upbit_client()
+                        if _upbit_client:
+                            coin_price = _upbit_client.get_current_price(bt_ticker)
+                            if coin_price:
+                                bt_market_data['current_price'] = coin_price
                     except Exception:
                         pass
 
@@ -191,21 +289,19 @@ async def trading_job():
             except Exception as e:
                 logger.warning(f"백테스팅 알림 전송 실패: {e}", exc_info=True)
 
-        # 3. 거래 사이클 실행 (하이브리드 파이프라인) - 10분 타임아웃
+        # 3. 거래 사이클 실행 (TradingOrchestrator 사용) - 10분 타임아웃
         TRADING_CYCLE_TIMEOUT = 600  # 10분
+
+        # 콜백 설정
+        orchestrator.set_on_backtest_complete(on_backtest_complete_callback)
 
         try:
             result = await asyncio.wait_for(
-                execute_trading_cycle(
+                orchestrator.execute_trading_cycle(
                     ticker=ticker,
-                    upbit_client=upbit_client,
-                    data_collector=data_collector,
-                    trading_service=trading_service,
-                    ai_service=ai_service,
                     trading_type='spot',
                     enable_scanning=True,  # 멀티코인 스캐닝 활성화
                     max_positions=3,
-                    on_backtest_complete=on_backtest_complete_callback
                 ),
                 timeout=TRADING_CYCLE_TIMEOUT
             )
@@ -339,23 +435,28 @@ async def trading_job():
             
             # 포트폴리오 정보 수집 (텔레그램 로그용) - 실제 선택된 코인 사용
             try:
+                # Container에서 레거시 서비스 추출
+                _upbit_client = get_upbit_client()
+                if not _upbit_client:
+                    raise RuntimeError("UpbitClient를 가져올 수 없습니다")
+
                 # 전체 잔고 조회 (get_balances 사용)
-                balances = upbit_client.get_balances()
+                balances = _upbit_client.get_balances()
 
                 # KRW 잔고 찾기
                 krw_balance = 0.0
                 crypto_balance = 0.0
                 crypto_currency = actual_symbol  # 실제 선택된 코인 심볼 사용
-                
+
                 if balances:
                     for balance in balances:
                         if balance['currency'] == 'KRW':
                             krw_balance = float(balance['balance'])
                         elif balance['currency'] == crypto_currency:
                             crypto_balance = float(balance['balance'])
-                
+
                 # 현재가 조회 - 실제 선택된 코인
-                current_price = upbit_client.get_current_price(actual_ticker)
+                current_price = _upbit_client.get_current_price(actual_ticker)
                 
                 total_value = krw_balance + (crypto_balance * current_price if current_price else 0)
                 
@@ -478,6 +579,12 @@ async def trading_job():
         # 실패 메트릭
         scheduler_job_failure_total.labels(job_name='trading_job').inc()
 
+    finally:
+        # Lock 해제 (반드시 실행)
+        if lock_acquired:
+            await lock_port.release("trading_cycle")
+            logger.info("🔓 trading_cycle 락 해제 완료")
+
 
 async def position_management_job():
     """
@@ -485,11 +592,12 @@ async def position_management_job():
 
     기존 포지션의 손절/익절을 관리합니다.
     포지션이 없으면 즉시 종료합니다 (진입 로직 없음).
+
+    Clean Architecture:
+    - main.py 의존성 제거
+    - TradingOrchestrator를 통해 포지션 관리 실행
+    - Lock으로 trading_job과 상호 배제
     """
-    from main import execute_position_management_cycle
-    from src.api.upbit_client import UpbitClient
-    from src.data.collector import DataCollector
-    from src.trading.service import TradingService
     from backend.app.services.notification import notify_error
     from backend.app.services.metrics import (
         scheduler_job_duration_seconds,
@@ -500,20 +608,28 @@ async def position_management_job():
 
     job_start_time = time()
 
+    # Container 및 Lock Port 획득
+    container = get_container()
+    lock_port = container.get_lock_port()
+    lock_acquired = False
+
     try:
+        # Lock 획득 시도 (trading_cycle 락 - trading_job과 동일한 락 사용)
+        # 60초 타임아웃으로 trading_job이 끝날 때까지 대기
+        lock_acquired = await lock_port.acquire("trading_cycle", timeout_seconds=60)
+        if not lock_acquired:
+            logger.warning("⚠️ trading_cycle 락 획득 실패 - trading_job이 실행 중입니다. 스킵합니다.")
+            scheduler_job_success_total.labels(job_name='position_management_job').inc()
+            return
+
+        logger.info("🔒 position_management 락 획득 완료")
         logger.info(f"[{datetime.now()}] 포지션 관리 작업 시작 (15분 주기)")
 
-        # 서비스 초기화
-        upbit_client = UpbitClient()
-        data_collector = DataCollector()
-        trading_service = TradingService(upbit_client)
+        # TradingOrchestrator 초기화 (Clean Architecture)
+        orchestrator = get_trading_orchestrator()
 
         # 포지션 관리 사이클 실행
-        result = await execute_position_management_cycle(
-            upbit_client=upbit_client,
-            data_collector=data_collector,
-            trading_service=trading_service
-        )
+        result = await orchestrator.execute_position_management()
 
         # 결과 처리
         duration = time() - job_start_time
@@ -564,6 +680,12 @@ async def position_management_job():
             )
         except Exception as telegram_error:
             logger.warning(f"에러 알림 전송 실패: {telegram_error}")
+
+    finally:
+        # Lock 해제 (반드시 실행)
+        if lock_acquired:
+            await lock_port.release("trading_cycle")
+            logger.info("🔓 position_management 락 해제 완료")
 
 
 async def portfolio_snapshot_job():
@@ -664,79 +786,109 @@ async def daily_report_job():
 
 
 def add_jobs():
-    """스케줄러에 작업 추가"""
-    
+    """
+    스케줄러에 작업 추가 (CronTrigger 기반)
+
+    CronTrigger를 사용하여 캔들 마감 시점에 정렬된 실행을 보장합니다.
+    버퍼 시간(기본 1분)은 캔들 데이터 안정화를 위해 적용됩니다.
+
+    실행 시점:
+    - trading_job: 매시 01분 (1시간봉 마감 + 1분 버퍼)
+    - position_management_job: :01, :16, :31, :46 (15분봉 마감 + 1분 버퍼)
+    - portfolio_snapshot_job: 매시 01분
+    - daily_report_job: 매일 09:00
+    """
+    from src.config.settings import SchedulerConfig
+
     if not settings.SCHEDULER_ENABLED:
         logger.warning("스케줄러가 비활성화되어 있습니다.")
         return
-    
-    # 현재 시각 (즉시 실행을 위해)
-    now = datetime.now()
-    
-    # 1. 트레이딩 작업 (1시간마다 실행 - 진입 탐색용)
+
+    # 1. 트레이딩 작업 (매시 N분 - 1시간봉 마감 + 버퍼)
     scheduler.add_job(
         trading_job,
-        trigger=IntervalTrigger(
-            minutes=settings.SCHEDULER_INTERVAL_MINUTES,
-            start_date=now  # 즉시 실행
+        trigger=CronTrigger(
+            minute=SchedulerConfig.TRADING_JOB_MINUTE,
+            timezone="Asia/Seoul"
         ),
         id="trading_job",
-        name="트레이딩 작업 - 진입 탐색 (1시간)",
+        name=f"트레이딩 작업 - 진입 탐색 (매시 {SchedulerConfig.TRADING_JOB_MINUTE:02d}분)",
         replace_existing=True,
     )
-    logger.info(f"✅ 트레이딩 작업 등록됨 (주기: {settings.SCHEDULER_INTERVAL_MINUTES}분 = 1시간, 즉시 실행)")
+    logger.info(f"✅ 트레이딩 작업 등록됨 (CronTrigger: 매시 {SchedulerConfig.TRADING_JOB_MINUTE:02d}분)")
 
-    # 2. 포지션 관리 작업 (15분마다 실행 - 손절/익절 관리용)
+    # 2. 포지션 관리 작업 (15분봉 마감 + 버퍼)
     scheduler.add_job(
         position_management_job,
-        trigger=IntervalTrigger(
-            minutes=15,
-            start_date=now  # 즉시 실행
+        trigger=CronTrigger(
+            minute=SchedulerConfig.POSITION_JOB_MINUTES,
+            timezone="Asia/Seoul"
         ),
         id="position_management_job",
-        name="포지션 관리 작업 - 손절/익절 (15분)",
+        name=f"포지션 관리 작업 - 손절/익절 (:{SchedulerConfig.POSITION_JOB_MINUTES})",
         replace_existing=True,
     )
-    logger.info("✅ 포지션 관리 작업 등록됨 (주기: 15분, 즉시 실행)")
-    
-    # 3. 포트폴리오 스냅샷 (매 시간, 즉시 실행)
+    logger.info(f"✅ 포지션 관리 작업 등록됨 (CronTrigger: :{SchedulerConfig.POSITION_JOB_MINUTES})")
+
+    # 3. 포트폴리오 스냅샷 (매시 N분)
     scheduler.add_job(
         portfolio_snapshot_job,
-        trigger=IntervalTrigger(
-            hours=1,
-            start_date=now  # 즉시 실행
+        trigger=CronTrigger(
+            minute=SchedulerConfig.PORTFOLIO_JOB_MINUTE,
+            timezone="Asia/Seoul"
         ),
         id="portfolio_snapshot_job",
-        name="포트폴리오 스냅샷 저장",
+        name=f"포트폴리오 스냅샷 저장 (매시 {SchedulerConfig.PORTFOLIO_JOB_MINUTE:02d}분)",
         replace_existing=True,
     )
-    logger.info("✅ 포트폴리오 스냅샷 작업 등록됨 (주기: 1시간, 즉시 실행)")
-    
-    # 4. 일일 리포트 (매일 오전 9시)
+    logger.info(f"✅ 포트폴리오 스냅샷 작업 등록됨 (CronTrigger: 매시 {SchedulerConfig.PORTFOLIO_JOB_MINUTE:02d}분)")
+
+    # 4. 일일 리포트 (매일 N시 M분)
     scheduler.add_job(
         daily_report_job,
-        trigger=CronTrigger(hour=9, minute=0, timezone="Asia/Seoul"),
+        trigger=CronTrigger(
+            hour=SchedulerConfig.DAILY_REPORT_HOUR,
+            minute=SchedulerConfig.DAILY_REPORT_MINUTE,
+            timezone="Asia/Seoul"
+        ),
         id="daily_report_job",
-        name="일일 리포트 전송",
+        name=f"일일 리포트 전송 (매일 {SchedulerConfig.DAILY_REPORT_HOUR:02d}:{SchedulerConfig.DAILY_REPORT_MINUTE:02d})",
         replace_existing=True,
     )
-    logger.info("✅ 일일 리포트 작업 등록됨 (시간: 매일 09:00)")
+    logger.info(f"✅ 일일 리포트 작업 등록됨 (CronTrigger: 매일 {SchedulerConfig.DAILY_REPORT_HOUR:02d}:{SchedulerConfig.DAILY_REPORT_MINUTE:02d})")
 
 
 def start_scheduler():
-    """스케줄러 시작"""
+    """
+    스케줄러 시작
+
+    SCHEDULER_RUN_IMMEDIATELY 설정이 true인 경우:
+    - 스케줄러 시작 직후 trading_job을 즉시 실행
+    - 개발/테스트 환경에서 유용
+
+    프로덕션에서는 SCHEDULER_RUN_IMMEDIATELY=false로 설정하여
+    CronTrigger 스케줄에 따라 실행되도록 함
+    """
+    from src.config.settings import SchedulerConfig
+
     if scheduler.running:
         logger.warning("스케줄러가 이미 실행 중입니다.")
         return
-    
+
     add_jobs()
     scheduler.start()
-    logger.info("✅ 스케줄러 시작됨")
-    
-    # 스케줄러 시작 직후 트레이딩 작업 즉시 실행
-    logger.info("🚀 트레이딩 작업 즉시 실행 중...")
-    scheduler.modify_job('trading_job', next_run_time=datetime.now())
-    logger.info("✅ 트레이딩 작업이 즉시 실행되도록 예약됨")
+    logger.info("✅ 스케줄러 시작됨 (CronTrigger 기반)")
+
+    # 즉시 실행 옵션 (개발/테스트용)
+    if SchedulerConfig.RUN_IMMEDIATELY:
+        logger.info("🚀 즉시 실행 모드 활성화 - 트레이딩 작업 즉시 실행")
+        scheduler.modify_job('trading_job', next_run_time=datetime.now())
+        logger.info("✅ 트레이딩 작업이 즉시 실행되도록 예약됨")
+    else:
+        # 다음 실행 시간 로깅
+        trading_job_info = scheduler.get_job('trading_job')
+        if trading_job_info and trading_job_info.next_run_time:
+            logger.info(f"⏰ 다음 트레이딩 작업 실행 예정: {trading_job_info.next_run_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 
 def stop_scheduler():

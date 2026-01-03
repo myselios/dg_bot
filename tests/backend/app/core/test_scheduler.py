@@ -45,9 +45,28 @@ class TestSchedulerConfiguration:
         assert job_defaults.get('misfire_grace_time') == 60
 
 
+def create_mock_orchestrator(result):
+    """TradingOrchestrator Mock 생성 헬퍼"""
+    mock_orchestrator = MagicMock()
+    mock_orchestrator.execute_trading_cycle = AsyncMock(return_value=result)
+    mock_orchestrator.set_on_backtest_complete = MagicMock()
+    return mock_orchestrator
+
+
+def create_mock_container():
+    """Container Mock 생성 헬퍼 (Lock/Idempotency 포함)"""
+    mock_lock_port = MagicMock()
+    mock_lock_port.acquire = AsyncMock(return_value=True)
+    mock_lock_port.release = AsyncMock()
+
+    mock_container = MagicMock()
+    mock_container.get_lock_port.return_value = mock_lock_port
+    return mock_container
+
+
 class TestTradingJob:
     """트레이딩 작업 테스트"""
-    
+
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_trading_job_success(self):
@@ -62,53 +81,69 @@ class TestTradingJob:
             'amount': 0.001,
             'total': 50000
         }
-        
-        # trading_job 함수 내부에서 import되는 모듈들을 패치
-        with patch('main.execute_trading_cycle', new_callable=AsyncMock) as mock_execute, \
-             patch('src.api.upbit_client.UpbitClient'), \
-             patch('src.data.collector.DataCollector'), \
-             patch('src.trading.service.TradingService'), \
-             patch('src.ai.service.AIService'), \
-             patch('backend.app.services.notification.notify_trade', new_callable=AsyncMock), \
+
+        mock_orchestrator = create_mock_orchestrator(mock_result)
+        mock_container = create_mock_container()
+
+        # TradingOrchestrator와 Container를 패치
+        with patch('backend.app.core.scheduler.get_container', return_value=mock_container), \
+             patch('backend.app.core.scheduler.get_trading_orchestrator', return_value=mock_orchestrator), \
+             patch('backend.app.core.scheduler.get_upbit_client', return_value=MagicMock()), \
+             patch('backend.app.core.scheduler.get_data_collector', return_value=MagicMock()), \
+             patch('backend.app.services.notification.notify_cycle_start', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_scan_result', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_backtest_and_signals', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_ai_decision', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_portfolio_status', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_error', new_callable=AsyncMock), \
              patch('backend.app.services.metrics.record_ai_decision'), \
-             patch('backend.app.services.metrics.scheduler_job_success_total'):
-            
-            mock_execute.return_value = mock_result
-            
+             patch('backend.app.services.metrics.record_trade'), \
+             patch('backend.app.services.metrics.scheduler_job_success_total'), \
+             patch('backend.app.services.metrics.scheduler_job_duration_seconds'), \
+             patch('backend.app.db.session.get_db', return_value=iter([])):
+
             # When: 트레이딩 작업 실행
             await trading_job()
-            
+
             # Then: execute_trading_cycle이 호출되었는지 확인
-            mock_execute.assert_called_once()
+            mock_orchestrator.execute_trading_cycle.assert_called_once()
     
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_trading_job_hold_decision_no_notification(self):
-        """Hold 결정 시 Telegram 알림이 전송되지 않는지 확인"""
-        # Given: Hold 결정 결과
+        """Hold 결정 시 거래 알림이 전송되지 않는지 확인 (trade_id 없음)"""
+        # Given: Hold 결정 결과 (거래 없음)
         mock_result = {
             'status': 'success',
             'decision': 'hold',
             'confidence': 'medium',
             'reason': 'Market is stable'
         }
-        
-        with patch('main.execute_trading_cycle', new_callable=AsyncMock) as mock_execute, \
-             patch('src.api.upbit_client.UpbitClient'), \
-             patch('src.data.collector.DataCollector'), \
-             patch('src.trading.service.TradingService'), \
-             patch('src.ai.service.AIService'), \
-             patch('backend.app.services.notification.notify_trade', new_callable=AsyncMock) as mock_notify, \
+
+        mock_orchestrator = create_mock_orchestrator(mock_result)
+        mock_container = create_mock_container()
+
+        with patch('backend.app.core.scheduler.get_container', return_value=mock_container), \
+             patch('backend.app.core.scheduler.get_trading_orchestrator', return_value=mock_orchestrator), \
+             patch('backend.app.core.scheduler.get_upbit_client', return_value=MagicMock()), \
+             patch('backend.app.core.scheduler.get_data_collector', return_value=MagicMock()), \
+             patch('backend.app.services.notification.notify_cycle_start', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_scan_result', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_backtest_and_signals', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_ai_decision', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_portfolio_status', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_error', new_callable=AsyncMock), \
              patch('backend.app.services.metrics.record_ai_decision'), \
-             patch('backend.app.services.metrics.scheduler_job_success_total'):
-            
-            mock_execute.return_value = mock_result
-            
+             patch('backend.app.services.metrics.record_trade') as mock_record_trade, \
+             patch('backend.app.services.metrics.scheduler_job_success_total'), \
+             patch('backend.app.services.metrics.scheduler_job_duration_seconds'), \
+             patch('backend.app.db.session.get_db', return_value=iter([])):
+
             # When: 트레이딩 작업 실행
             await trading_job()
-            
-            # Then: notify_trade가 호출되지 않았는지 확인
-            mock_notify.assert_not_called()
+
+            # Then: record_trade가 호출되지 않았는지 확인 (hold는 거래 없음)
+            mock_record_trade.assert_not_called()
     
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -119,20 +154,23 @@ class TestTradingJob:
             'status': 'failed',
             'error': 'Network timeout'
         }
-        
-        with patch('main.execute_trading_cycle', new_callable=AsyncMock) as mock_execute, \
-             patch('src.api.upbit_client.UpbitClient'), \
-             patch('src.data.collector.DataCollector'), \
-             patch('src.trading.service.TradingService'), \
-             patch('src.ai.service.AIService'), \
+
+        mock_orchestrator = create_mock_orchestrator(mock_result)
+        mock_container = create_mock_container()
+
+        with patch('backend.app.core.scheduler.get_container', return_value=mock_container), \
+             patch('backend.app.core.scheduler.get_trading_orchestrator', return_value=mock_orchestrator), \
+             patch('backend.app.core.scheduler.get_upbit_client', return_value=MagicMock()), \
+             patch('backend.app.core.scheduler.get_data_collector', return_value=MagicMock()), \
+             patch('backend.app.services.notification.notify_cycle_start', new_callable=AsyncMock), \
              patch('backend.app.services.notification.notify_error', new_callable=AsyncMock) as mock_notify_error, \
-             patch('backend.app.services.metrics.scheduler_job_failure_total') as mock_failure_metric:
-            
-            mock_execute.return_value = mock_result
-            
+             patch('backend.app.services.metrics.scheduler_job_failure_total') as mock_failure_metric, \
+             patch('backend.app.services.metrics.scheduler_job_duration_seconds'), \
+             patch('backend.app.db.session.get_db', return_value=iter([])):
+
             # When: 트레이딩 작업 실행
             await trading_job()
-            
+
             # Then: 에러 알림 및 메트릭이 기록되었는지 확인
             mock_notify_error.assert_called_once()
             assert mock_failure_metric.labels.called
@@ -142,19 +180,24 @@ class TestTradingJob:
     async def test_trading_job_exception_handling(self):
         """트레이딩 작업 중 예외 발생 시 처리 확인"""
         # Given: 예외 발생 설정
-        with patch('main.execute_trading_cycle', new_callable=AsyncMock) as mock_execute, \
-             patch('src.api.upbit_client.UpbitClient'), \
-             patch('src.data.collector.DataCollector'), \
-             patch('src.trading.service.TradingService'), \
-             patch('src.ai.service.AIService'), \
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_trading_cycle = AsyncMock(side_effect=Exception("Unexpected error"))
+        mock_orchestrator.set_on_backtest_complete = MagicMock()
+        mock_container = create_mock_container()
+
+        with patch('backend.app.core.scheduler.get_container', return_value=mock_container), \
+             patch('backend.app.core.scheduler.get_trading_orchestrator', return_value=mock_orchestrator), \
+             patch('backend.app.core.scheduler.get_upbit_client', return_value=MagicMock()), \
+             patch('backend.app.core.scheduler.get_data_collector', return_value=MagicMock()), \
+             patch('backend.app.services.notification.notify_cycle_start', new_callable=AsyncMock), \
              patch('backend.app.services.notification.notify_error', new_callable=AsyncMock) as mock_notify_error, \
-             patch('backend.app.services.metrics.scheduler_job_failure_total'):
-            
-            mock_execute.side_effect = Exception("Unexpected error")
-            
+             patch('backend.app.services.metrics.scheduler_job_failure_total'), \
+             patch('backend.app.services.metrics.scheduler_job_duration_seconds'), \
+             patch('backend.app.db.session.get_db', return_value=iter([])):
+
             # When: 트레이딩 작업 실행 (예외가 발생해도 프로그램이 중단되지 않아야 함)
             await trading_job()
-            
+
             # Then: 에러 알림이 전송되었는지 확인
             mock_notify_error.assert_called_once()
 
@@ -319,7 +362,7 @@ class TestCriticalIssues:
     async def test_c1_trade_saved_via_api(self):
         """
         C-1: 거래 저장 시 API를 통해 저장되는지 확인
-        
+
         다이어그램 04-database-save-flow.mmd와 일치:
         - TradeCreate 스키마 사용
         - API 함수 호출 (create_trade)
@@ -338,25 +381,42 @@ class TestCriticalIssues:
             'trade_id': 'test-trade-123',
             'trade_success': True
         }
-        
-        with patch('main.execute_trading_cycle', new_callable=AsyncMock) as mock_execute, \
-             patch('src.api.upbit_client.UpbitClient'), \
-             patch('src.data.collector.DataCollector'), \
-             patch('src.trading.service.TradingService'), \
-             patch('src.ai.service.AIService'), \
+
+        mock_orchestrator = create_mock_orchestrator(mock_result)
+        mock_container = create_mock_container()
+
+        # Mock DB 세션 (async generator)
+        async def mock_get_db():
+            mock_db = MagicMock()
+            mock_db.add = MagicMock()
+            mock_db.commit = AsyncMock()
+            mock_db.refresh = AsyncMock()
+            mock_db.rollback = AsyncMock()
+            yield mock_db
+
+        with patch('backend.app.core.scheduler.get_container', return_value=mock_container), \
+             patch('backend.app.core.scheduler.get_trading_orchestrator', return_value=mock_orchestrator), \
+             patch('backend.app.core.scheduler.get_upbit_client', return_value=MagicMock()), \
+             patch('backend.app.core.scheduler.get_data_collector', return_value=MagicMock()), \
+             patch('backend.app.services.notification.notify_cycle_start', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_scan_result', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_backtest_and_signals', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_ai_decision', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_portfolio_status', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_error', new_callable=AsyncMock), \
              patch('backend.app.api.v1.endpoints.trades.create_trade', new_callable=AsyncMock) as mock_create_trade, \
-             patch('backend.app.services.notification.notify_trade', new_callable=AsyncMock), \
              patch('backend.app.services.metrics.record_ai_decision'), \
-             patch('backend.app.services.metrics.scheduler_job_success_total'):
-            
-            mock_execute.return_value = mock_result
-            
+             patch('backend.app.services.metrics.record_trade'), \
+             patch('backend.app.services.metrics.scheduler_job_success_total'), \
+             patch('backend.app.services.metrics.scheduler_job_duration_seconds'), \
+             patch('backend.app.db.session.get_db', side_effect=mock_get_db):
+
             # When: 트레이딩 작업 실행
             await trading_job()
-            
+
             # Then: create_trade API 함수가 호출되었는지 확인
             mock_create_trade.assert_called_once()
-            
+
             # TradeCreate 스키마로 데이터가 전달되었는지 확인
             call_args = mock_create_trade.call_args
             trade_data = call_args[0][0]  # 첫 번째 인자
@@ -383,24 +443,42 @@ class TestCriticalIssues:
             'trade_id': 'duplicate-trade-123',
             'trade_success': True
         }
-        
-        with patch('main.execute_trading_cycle', new_callable=AsyncMock) as mock_execute, \
-             patch('src.api.upbit_client.UpbitClient'), \
-             patch('src.data.collector.DataCollector'), \
-             patch('src.trading.service.TradingService'), \
-             patch('src.ai.service.AIService'), \
+
+        mock_orchestrator = create_mock_orchestrator(mock_result)
+        mock_container = create_mock_container()
+
+        # Mock DB 세션 (async generator)
+        async def mock_get_db():
+            mock_db = MagicMock()
+            mock_db.add = MagicMock()
+            mock_db.commit = AsyncMock()
+            mock_db.refresh = AsyncMock()
+            mock_db.rollback = AsyncMock()
+            yield mock_db
+
+        with patch('backend.app.core.scheduler.get_container', return_value=mock_container), \
+             patch('backend.app.core.scheduler.get_trading_orchestrator', return_value=mock_orchestrator), \
+             patch('backend.app.core.scheduler.get_upbit_client', return_value=MagicMock()), \
+             patch('backend.app.core.scheduler.get_data_collector', return_value=MagicMock()), \
+             patch('backend.app.services.notification.notify_cycle_start', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_scan_result', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_backtest_and_signals', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_ai_decision', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_portfolio_status', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_error', new_callable=AsyncMock), \
              patch('backend.app.api.v1.endpoints.trades.create_trade', new_callable=AsyncMock) as mock_create_trade, \
-             patch('backend.app.services.notification.notify_trade', new_callable=AsyncMock), \
              patch('backend.app.services.metrics.record_ai_decision'), \
-             patch('backend.app.services.metrics.scheduler_job_success_total'):
-            
-            mock_execute.return_value = mock_result
+             patch('backend.app.services.metrics.record_trade'), \
+             patch('backend.app.services.metrics.scheduler_job_success_total'), \
+             patch('backend.app.services.metrics.scheduler_job_duration_seconds'), \
+             patch('backend.app.db.session.get_db', side_effect=mock_get_db):
+
             # API에서 중복 오류 발생
             mock_create_trade.side_effect = Exception("이미 존재하는 거래 ID입니다.")
-            
+
             # When: 트레이딩 작업 실행 (예외가 발생해도 프로그램은 계속 실행되어야 함)
             await trading_job()
-            
+
             # Then: create_trade가 호출되었고, 예외가 처리되었는지 확인
             mock_create_trade.assert_called_once()
     
@@ -560,7 +638,7 @@ class TestHighPriorityIssues:
     async def test_h2_trade_metrics_recorded_on_success(self):
         """
         H-2: 거래 성공 시 거래 메트릭이 기록되는지 확인
-        
+
         다이어그램 01-overall-system-flow.mmd:
         - record_trade() 호출 확인
         - AI 판단 + 거래 메트릭 모두 기록
@@ -578,23 +656,39 @@ class TestHighPriorityIssues:
             'trade_id': 'test-trade-456',
             'trade_success': True
         }
-        
-        with patch('main.execute_trading_cycle', new_callable=AsyncMock) as mock_execute, \
-             patch('src.api.upbit_client.UpbitClient'), \
-             patch('src.data.collector.DataCollector'), \
-             patch('src.trading.service.TradingService'), \
-             patch('src.ai.service.AIService'), \
+
+        mock_orchestrator = create_mock_orchestrator(mock_result)
+        mock_container = create_mock_container()
+
+        # Mock DB 세션 (async generator)
+        async def mock_get_db():
+            mock_db = MagicMock()
+            mock_db.add = MagicMock()
+            mock_db.commit = AsyncMock()
+            mock_db.refresh = AsyncMock()
+            mock_db.rollback = AsyncMock()
+            yield mock_db
+
+        with patch('backend.app.core.scheduler.get_container', return_value=mock_container), \
+             patch('backend.app.core.scheduler.get_trading_orchestrator', return_value=mock_orchestrator), \
+             patch('backend.app.core.scheduler.get_upbit_client', return_value=MagicMock()), \
+             patch('backend.app.core.scheduler.get_data_collector', return_value=MagicMock()), \
+             patch('backend.app.services.notification.notify_cycle_start', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_scan_result', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_backtest_and_signals', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_ai_decision', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_portfolio_status', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_error', new_callable=AsyncMock), \
              patch('backend.app.api.v1.endpoints.trades.create_trade', new_callable=AsyncMock), \
-             patch('backend.app.services.notification.notify_trade', new_callable=AsyncMock), \
              patch('backend.app.services.metrics.record_ai_decision') as mock_ai_metric, \
              patch('backend.app.services.metrics.record_trade') as mock_trade_metric, \
-             patch('backend.app.services.metrics.scheduler_job_success_total'):
-            
-            mock_execute.return_value = mock_result
-            
+             patch('backend.app.services.metrics.scheduler_job_success_total'), \
+             patch('backend.app.services.metrics.scheduler_job_duration_seconds'), \
+             patch('backend.app.db.session.get_db', side_effect=mock_get_db):
+
             # When: 트레이딩 작업 실행
             await trading_job()
-            
+
             # Then: AI 판단 메트릭과 거래 메트릭 모두 기록되었는지 확인
             mock_ai_metric.assert_called_once()
             mock_trade_metric.assert_called_once_with(
@@ -617,22 +711,38 @@ class TestHighPriorityIssues:
             'confidence': 'medium',
             'reason': 'Market is stable'
         }
-        
-        with patch('main.execute_trading_cycle', new_callable=AsyncMock) as mock_execute, \
-             patch('src.api.upbit_client.UpbitClient'), \
-             patch('src.data.collector.DataCollector'), \
-             patch('src.trading.service.TradingService'), \
-             patch('src.ai.service.AIService'), \
-             patch('backend.app.services.notification.notify_trade', new_callable=AsyncMock), \
+
+        mock_orchestrator = create_mock_orchestrator(mock_result)
+        mock_container = create_mock_container()
+
+        # Mock DB 세션 (async generator)
+        async def mock_get_db():
+            mock_db = MagicMock()
+            mock_db.add = MagicMock()
+            mock_db.commit = AsyncMock()
+            mock_db.refresh = AsyncMock()
+            mock_db.rollback = AsyncMock()
+            yield mock_db
+
+        with patch('backend.app.core.scheduler.get_container', return_value=mock_container), \
+             patch('backend.app.core.scheduler.get_trading_orchestrator', return_value=mock_orchestrator), \
+             patch('backend.app.core.scheduler.get_upbit_client', return_value=MagicMock()), \
+             patch('backend.app.core.scheduler.get_data_collector', return_value=MagicMock()), \
+             patch('backend.app.services.notification.notify_cycle_start', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_scan_result', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_backtest_and_signals', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_ai_decision', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_portfolio_status', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_error', new_callable=AsyncMock), \
              patch('backend.app.services.metrics.record_ai_decision') as mock_ai_metric, \
              patch('backend.app.services.metrics.record_trade') as mock_trade_metric, \
-             patch('backend.app.services.metrics.scheduler_job_success_total'):
-            
-            mock_execute.return_value = mock_result
-            
+             patch('backend.app.services.metrics.scheduler_job_success_total'), \
+             patch('backend.app.services.metrics.scheduler_job_duration_seconds'), \
+             patch('backend.app.db.session.get_db', side_effect=mock_get_db):
+
             # When: 트레이딩 작업 실행
             await trading_job()
-            
+
             # Then: AI 판단 메트릭만 기록되고, 거래 메트릭은 기록되지 않음
             mock_ai_metric.assert_called_once()
             mock_trade_metric.assert_not_called()
@@ -656,23 +766,39 @@ class TestHighPriorityIssues:
             'trade_id': 'test-trade-789',
             'trade_success': False  # 거래 실패
         }
-        
-        with patch('main.execute_trading_cycle', new_callable=AsyncMock) as mock_execute, \
-             patch('src.api.upbit_client.UpbitClient'), \
-             patch('src.data.collector.DataCollector'), \
-             patch('src.trading.service.TradingService'), \
-             patch('src.ai.service.AIService'), \
+
+        mock_orchestrator = create_mock_orchestrator(mock_result)
+        mock_container = create_mock_container()
+
+        # Mock DB 세션 (async generator)
+        async def mock_get_db():
+            mock_db = MagicMock()
+            mock_db.add = MagicMock()
+            mock_db.commit = AsyncMock()
+            mock_db.refresh = AsyncMock()
+            mock_db.rollback = AsyncMock()
+            yield mock_db
+
+        with patch('backend.app.core.scheduler.get_container', return_value=mock_container), \
+             patch('backend.app.core.scheduler.get_trading_orchestrator', return_value=mock_orchestrator), \
+             patch('backend.app.core.scheduler.get_upbit_client', return_value=MagicMock()), \
+             patch('backend.app.core.scheduler.get_data_collector', return_value=MagicMock()), \
+             patch('backend.app.services.notification.notify_cycle_start', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_scan_result', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_backtest_and_signals', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_ai_decision', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_portfolio_status', new_callable=AsyncMock), \
+             patch('backend.app.services.notification.notify_error', new_callable=AsyncMock), \
              patch('backend.app.api.v1.endpoints.trades.create_trade', new_callable=AsyncMock), \
-             patch('backend.app.services.notification.notify_trade', new_callable=AsyncMock), \
              patch('backend.app.services.metrics.record_ai_decision') as mock_ai_metric, \
              patch('backend.app.services.metrics.record_trade') as mock_trade_metric, \
-             patch('backend.app.services.metrics.scheduler_job_success_total'):
-            
-            mock_execute.return_value = mock_result
-            
+             patch('backend.app.services.metrics.scheduler_job_success_total'), \
+             patch('backend.app.services.metrics.scheduler_job_duration_seconds'), \
+             patch('backend.app.db.session.get_db', side_effect=mock_get_db):
+
             # When: 트레이딩 작업 실행
             await trading_job()
-            
+
             # Then: AI 판단 메트릭만 기록되고, 거래 메트릭은 기록되지 않음
             mock_ai_metric.assert_called_once()
             mock_trade_metric.assert_not_called()

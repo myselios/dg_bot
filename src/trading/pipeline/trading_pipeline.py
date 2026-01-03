@@ -173,6 +173,11 @@ class TradingPipeline:
             'pipeline_status': 'failed'
         }
 
+    def _get_upbit_client(self, context: PipelineContext):
+        """context에서 upbit_client 획득 (레거시 호환성)"""
+        # 레거시 서비스 직접 사용 (하위 호환성)
+        return context.upbit_client
+
     def _create_final_response(self, context: PipelineContext) -> Dict[str, Any]:
         """
         최종 응답 생성 (모든 스테이지 완료 시)
@@ -183,8 +188,9 @@ class TradingPipeline:
         Returns:
             Dict: 최종 응답
         """
-        current_price = context.upbit_client.get_current_price(context.ticker)
-        coin_balance = context.upbit_client.get_balance(context.ticker)
+        upbit_client = self._get_upbit_client(context)
+        current_price = upbit_client.get_current_price(context.ticker)
+        coin_balance = upbit_client.get_balance(context.ticker)
 
         response = {
             'status': 'success',

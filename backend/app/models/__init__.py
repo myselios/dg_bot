@@ -8,6 +8,9 @@ from backend.app.models.portfolio import PortfolioSnapshot
 from backend.app.models.order import Order
 from backend.app.models.system_log import SystemLog
 from backend.app.models.bot_config import BotConfig
+from backend.app.models.risk_state import RiskState
+from backend.app.models.idempotency_key import IdempotencyKey
+from backend.app.models.decision_record import DecisionRecordModel
 
 __all__ = [
     "Trade",
@@ -16,6 +19,9 @@ __all__ = [
     "Order",
     "SystemLog",
     "BotConfig",
+    "RiskState",
+    "IdempotencyKey",
+    "DecisionRecordModel",
 ]
 
 

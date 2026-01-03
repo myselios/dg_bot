@@ -478,7 +478,156 @@ class PortfolioManager:
 - **역할**: 리스크 상태 영속성 관리 (프로그램 재시작 시 유지)
 - **저장 방식**: JSON 파일 (`data/risk_state.json`)
 
-### 5. AI 분석 시스템 (`src/ai/`)
+### 5. 🆕 AI 클린 아키텍처 (`src/application/`, `src/infrastructure/`)
+
+AI 판단 시스템이 클린 아키텍처로 리팩토링되었습니다 (v4.4.0).
+
+#### 5.1 도메인 Value Objects (`src/domain/value_objects/`)
+
+| Value Object | 역할 | 주요 속성 |
+|-------------|------|----------|
+| `MarketSummary` | 시장 요약 정보 | regime, atr_percent, breakout_strength |
+| `AIDecisionResult` | AI 판단 결과 | decision (ALLOW/BLOCK/HOLD), confidence, reason |
+| `PromptVersion` | 프롬프트 버전 | version, template_hash, prompt_type |
+
+```python
+from src.domain.value_objects import (
+    MarketSummary, MarketRegime, BreakoutStrength,
+    AIDecisionResult, DecisionType,
+    PromptVersion, PromptType,
+)
+
+# 시장 요약 생성
+summary = MarketSummary(
+    ticker="KRW-BTC",
+    regime=MarketRegime.TRENDING_UP,
+    atr_percent=Decimal("2.5"),
+    breakout_strength=BreakoutStrength.STRONG,
+    risk_budget=Decimal("0.02"),
+)
+
+# AI 결정 - ALLOW/BLOCK/HOLD만 (BUY/SELL 아님)
+decision = AIDecisionResult.allow(
+    ticker="KRW-BTC",
+    confidence=85,
+    reason="Strong breakout confirmed",
+)
+```
+
+#### 5.2 Port 인터페이스 (`src/application/ports/outbound/`)
+
+| Port | 역할 | 주요 메서드 |
+|------|------|------------|
+| `PromptPort` | 프롬프트 생성/관리 | `get_current_version()`, `render_prompt()` |
+| `ValidationPort` | 응답/판단 검증 | `validate_response()`, `validate_decision()` |
+| `DecisionRecordPort` | 판단 기록 | `record()`, `link_pnl()`, `get_by_id()` |
+
+#### 5.3 UseCase (`src/application/use_cases/`)
+
+**AnalyzeBreakoutUseCase** - 돌파 분석 통합 유스케이스
+
+```python
+from src.application.use_cases import (
+    AnalyzeBreakoutUseCase,
+    BreakoutAnalysisRequest,
+    BreakoutAnalysisResult,
+)
+
+# UseCase 생성
+use_case = AnalyzeBreakoutUseCase(
+    prompt_port=yaml_prompt_adapter,
+    validation_port=validation_adapter,
+    decision_record_port=decision_record_adapter,
+    ai_client=enhanced_openai_adapter,
+)
+
+# 분석 실행
+result = await use_case.execute(BreakoutAnalysisRequest(
+    ticker="KRW-BTC",
+    current_price=Decimal("50000000"),
+    market_summary=summary,
+))
+
+# result.decision.decision -> DecisionType.ALLOW
+# result.record_id -> DB 기록 ID
+# result.is_override -> 검증에 의해 override 되었는지
+```
+
+#### 5.4 Adapter 구현 (`src/infrastructure/adapters/`)
+
+| Adapter | Port | 기능 |
+|---------|------|------|
+| `YAMLPromptAdapter` | PromptPort | YAML 템플릿 로드, Jinja2 렌더링, 해시 계산 |
+| `ValidationAdapter` | ValidationPort | 응답 형식 검증, RSI/MACD 검증, HOLD override |
+| `DecisionRecordAdapter` | DecisionRecordPort | PostgreSQL 저장, PnL 연결 |
+| `EnhancedOpenAIAdapter` | AIClient | Rate limit, Circuit breaker, Retry, HOLD fallback |
+
+**Rate Limiter & Circuit Breaker**:
+```python
+from src.infrastructure.adapters.ai import (
+    EnhancedOpenAIAdapter,
+    RateLimiter,
+    CircuitBreaker,
+    CircuitState,
+)
+
+# 분당 20회 제한, 5회 연속 실패 시 60초 차단
+adapter = EnhancedOpenAIAdapter(
+    api_key="...",
+    rate_limit_per_minute=20,
+    circuit_breaker_threshold=5,
+    recovery_timeout=60.0,
+)
+
+# Circuit 상태 확인
+if adapter.circuit_breaker.state == CircuitState.OPEN:
+    # 모든 요청 HOLD 반환
+    ...
+```
+
+**검증 & Override**:
+```python
+# ALLOW + overbought RSI → 자동 HOLD 전환
+validation_result = await validation_adapter.validate_decision(
+    decision=AIDecisionResult.allow(...),
+    market_context={"rsi": 80},  # > 75 threshold
+)
+# validation_result.override_decision == DecisionType.HOLD
+```
+
+#### 5.5 프롬프트 템플릿 (`src/infrastructure/prompts/`)
+
+YAML 기반 버전 관리:
+
+```yaml
+# entry.yaml
+name: entry_decision
+version: "2.0.0"
+description: "돌파 진입 허용/차단 판단"
+
+template: |
+  티커: {{ ticker }}
+  현재가: {{ current_price }}
+  시장 상태: {{ market_regime }}
+  ATR%: {{ atr_percent }}
+
+  JSON 형식으로 응답:
+  {"decision": "allow|block|hold", "confidence": 0-100, "reason": "..."}
+
+variables:
+  - ticker
+  - current_price
+  - market_regime
+  - atr_percent
+```
+
+**마이그레이션 가이드**: [MIGRATION_AI_CLEAN_ARCHITECTURE.md](./MIGRATION_AI_CLEAN_ARCHITECTURE.md)
+
+---
+
+### 6. AI 분석 시스템 레거시 (`src/ai/`) - DEPRECATED
+
+> ⚠️ **DEPRECATED**: 새 코드는 `AnalyzeBreakoutUseCase` 사용 권장
 
 #### AIService (`src/ai/service.py`)
 
@@ -1163,7 +1312,49 @@ python -m pytest tests/ --cov=src --cov-report=html
 
 ## 🔄 변경 이력
 
-### v4.2.0 (2026-01-02) - 백테스팅 콜백 시스템 🆕
+### v4.4.0 (2026-01-03) - AI 클린 아키텍처 리팩토링 🆕
+
+**주요 변경사항**:
+
+1. **도메인 모델 정의**
+   - `MarketSummary`: 시장 요약 Value Object (regime, ATR%, 돌파강도)
+   - `AIDecisionResult`: AI 판단 결과 (ALLOW/BLOCK/HOLD)
+   - `PromptVersion`: 프롬프트 버전 관리 (version, hash)
+
+2. **Port 인터페이스**
+   - `PromptPort`: 프롬프트 생성/렌더링
+   - `ValidationPort`: 응답 검증, 결정 검증
+   - `DecisionRecordPort`: 판단 기록, PnL 연결
+
+3. **프롬프트 분리 및 표준화**
+   - YAML 템플릿 기반 프롬프트 관리
+   - `YAMLPromptAdapter`: Jinja2 렌더링, 해시 계산
+
+4. **AI 어댑터 강화**
+   - `EnhancedOpenAIAdapter`: Rate limit, Circuit breaker, Retry
+   - `RateLimiter`: 슬라이딩 윈도우 방식 호출 제한
+   - `CircuitBreaker`: CLOSED/OPEN/HALF_OPEN 상태 관리
+   - 모든 에러 → HOLD fallback
+
+5. **결정 추적성**
+   - `DecisionRecordAdapter`: PostgreSQL 저장
+   - `decision_records` 테이블: prompt_version, params, pnl 연결
+
+6. **검증 로직 통합**
+   - `ValidationAdapter`: 응답 형식, RSI/MACD 검증
+   - ALLOW + overbought RSI → 자동 HOLD override
+
+7. **UseCase 통합**
+   - `AnalyzeBreakoutUseCase`: 돌파 분석 워크플로우 통합
+   - `BreakoutAnalysisRequest/Result`: 표준화된 DTO
+
+**테스트**: 186개 추가 (총 643개), TDD 엄격 준수
+
+**마이그레이션 가이드**: [MIGRATION_AI_CLEAN_ARCHITECTURE.md](./MIGRATION_AI_CLEAN_ARCHITECTURE.md)
+
+---
+
+### v4.2.0 (2026-01-02) - 백테스팅 콜백 시스템
 
 **주요 변경사항**:
 
@@ -1261,8 +1452,8 @@ python -m pytest tests/ --cov=src --cov-report=html
 
 ---
 
-**현재 버전**: 4.3.0
-**마지막 업데이트**: 2026-01-02
-**아키텍처**: Clean Architecture + Multi-Coin Scanning + Dual-Timeframe Pipeline + Portfolio Management
+**현재 버전**: 4.4.0
+**마지막 업데이트**: 2026-01-03
+**아키텍처**: Clean Architecture + AI Refactoring + Multi-Coin Scanning + Dual-Timeframe Pipeline
 **상태**: 프로덕션 준비 완료 ✅
-**문서 상태**: ✨ 듀얼 타임프레임 (1시간 + 15분) 아키텍처 완료
+**문서 상태**: ✨ AI 클린 아키텍처 리팩토링 완료 (Phase 1-7)

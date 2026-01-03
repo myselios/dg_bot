@@ -1,6 +1,11 @@
 """
 진입 분석기 (Entry Analyzer)
 
+.. deprecated:: 4.4.0
+    이 모듈은 레거시 코드입니다.
+    새 코드에서는 AnalyzeBreakoutUseCase를 사용하세요.
+    마이그레이션 가이드: docs/guide/MIGRATION_AI_CLEAN_ARCHITECTURE.md
+
 포지션이 없을 때 사용하는 진입 전용 분석기입니다.
 멀티코인 환경에서 여러 후보 중 최적의 진입 대상을 선정합니다.
 
@@ -37,6 +42,11 @@ class EntrySignal:
 class EntryAnalyzer:
     """
     진입 분석기 클래스
+
+    .. deprecated:: 4.4.0
+        이 클래스는 레거시 코드입니다.
+        새 코드에서는 AnalyzeBreakoutUseCase를 사용하세요.
+        마이그레이션 가이드: docs/guide/MIGRATION_AI_CLEAN_ARCHITECTURE.md
 
     포지션이 없을 때만 사용됩니다.
     변동성 돌파 전략의 진입 조건을 AI로 검증합니다.

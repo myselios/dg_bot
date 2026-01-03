@@ -223,6 +223,18 @@ dg_bot/
 - DI Container for dependency injection
 - Factory methods: `create_from_legacy()`, `create_for_testing()`
 - Provides UseCase instances with injected dependencies
+- Ports: `get_idempotency_port()`, `get_lock_port()` (스케줄러 안정성)
+
+**IdempotencyPort** (`src/application/ports/outbound/idempotency_port.py`):
+- 중복 주문 방지를 위한 Idempotency Key 관리
+- `make_idempotency_key(ticker, timeframe, candle_ts, action)` 헬퍼 함수
+- PostgreSQL 어댑터: `idempotency_keys` 테이블 사용
+- Methods: `check_key()`, `mark_key()`, `cleanup_expired()`
+
+**LockPort** (`src/application/ports/outbound/lock_port.py`):
+- 작업 간 상호 배제를 위한 분산 락
+- PostgreSQL Advisory Lock 사용 (`LOCK_IDS`: trading_cycle=1001, position_management=1002)
+- Methods: `acquire()`, `release()`, `is_locked()`, `lock()` (context manager)
 
 **ExecuteTradeUseCase** (`src/application/use_cases/execute_trade.py`):
 - 거래 실행 비즈니스 로직
@@ -261,18 +273,20 @@ dg_bot/
 - Significantly reduces AI API costs
 
 **Scheduler** (`backend/app/core/scheduler.py`):
-- APScheduler configuration for dual-timeframe jobs
-- `trading_job()` [1시간]: 멀티코인 스캔 + AI 분석 + 진입 탐색
-- `position_management_job()` [15분]: 보유 포지션 손절/익절 관리 (규칙 기반, AI 호출 없음)
-- `portfolio_snapshot_job()` [1시간]: 포트폴리오 스냅샷 DB 저장
+- APScheduler with CronTrigger (캔들 마감 정렬)
+- `trading_job()` [매시 01분]: 멀티코인 스캔 + AI 분석 + 진입 탐색 (Lock 적용)
+- `position_management_job()` [:01,:16,:31,:46]: 보유 포지션 손절/익절 관리 (Lock 적용)
+- `portfolio_snapshot_job()` [매시 01분]: 포트폴리오 스냅샷 DB 저장
 - `daily_report_job()` [09:00]: 일일 리포트 Telegram 전송
-- Handles error recovery, duplicate prevention (max_instances=1)
+- Lock/Idempotency로 중복 실행 및 중복 주문 방지
+- 설정: `SchedulerConfig` (src/config/settings.py)
 
 **Database Models** (`backend/app/models/`):
 - `Trade`: Executed trades
 - `AIDecision`: AI analysis logs
 - `Order`: Order details
 - `Portfolio`: Portfolio snapshots
+- `IdempotencyKey`: 중복 주문 방지용 키 (TTL 기반 만료)
 - All use SQLAlchemy ORM with async sessions
 
 ### Data Flow
@@ -374,6 +388,20 @@ python -m pytest tests/unit/infrastructure/ -v
 [ ] 테스트 통과 확인
 [ ] 회귀 테스트로 유지
 ```
+#### 🧯 Test Debt Recovery Protocol
+
+If any of the following occurs:
+- Test coverage drops
+- TDD is not followed during development
+- Large refactors are required
+- Confidence in changes degrades
+
+You MUST follow:
+- `.claude/skills/test-debt-recovery/TEST_DEBT_RECOVERY.md`
+
+And record the recovery outcome in:
+- `docs/CHANGELOG_TEST_DEBT.md`
+
 
 #### 테스트 구조
 

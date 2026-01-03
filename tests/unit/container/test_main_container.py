@@ -126,6 +126,7 @@ class TestMainInitializationWithContainer:
         """execute_trading_cycle()이 container 인자를 받을 수 있어야 함"""
         # Given: Container와 레거시 서비스들
         from main import execute_trading_cycle
+        from src.application.services.trading_orchestrator import TradingOrchestrator
 
         container = Container.create_for_testing()
 
@@ -144,15 +145,13 @@ class TestMainInitializationWithContainer:
         mock_ai_service = MagicMock()
 
         # When: container 인자와 함께 호출
-        # 이 테스트는 container 인자가 추가된 후에 통과해야 함
-        with patch('main.create_hybrid_trading_pipeline') as mock_pipeline:
-            mock_pipeline_instance = MagicMock()
-            mock_pipeline_instance.execute = AsyncMock(return_value={
+        # TradingOrchestrator.execute_trading_cycle을 패치
+        with patch.object(TradingOrchestrator, 'execute_trading_cycle', new_callable=AsyncMock) as mock_execute:
+            mock_execute.return_value = {
                 'pipeline_status': 'completed',
                 'status': 'success',
                 'decision': 'hold'
-            })
-            mock_pipeline.return_value = mock_pipeline_instance
+            }
 
             result = await execute_trading_cycle(
                 ticker="KRW-BTC",
@@ -169,8 +168,9 @@ class TestMainInitializationWithContainer:
 
     @pytest.mark.asyncio
     async def test_pipeline_context_receives_container(self):
-        """PipelineContext가 container를 받아야 함"""
+        """TradingOrchestrator가 container를 받아야 함"""
         from main import execute_trading_cycle
+        from src.application.services.trading_orchestrator import TradingOrchestrator
 
         container = Container.create_for_testing()
 
@@ -179,48 +179,30 @@ class TestMainInitializationWithContainer:
         mock_trading_service = MagicMock()
         mock_ai_service = MagicMock()
 
-        captured_context = None
+        # TradingOrchestrator.__init__을 패치하여 container 주입 확인
+        with patch.object(TradingOrchestrator, '__init__', return_value=None) as mock_init, \
+             patch.object(TradingOrchestrator, 'execute_trading_cycle', new_callable=AsyncMock) as mock_execute, \
+             patch.object(TradingOrchestrator, 'set_on_backtest_complete'):
 
-        def capture_context(*args, **kwargs):
-            # PipelineContext 생성 캡처
-            original_init = PipelineContext.__init__
+            mock_execute.return_value = {
+                'pipeline_status': 'completed',
+                'status': 'success'
+            }
 
-            def capturing_init(self, *a, **kw):
-                nonlocal captured_context
-                original_init(self, *a, **kw)
-                captured_context = self
+            await execute_trading_cycle(
+                ticker="KRW-BTC",
+                upbit_client=mock_upbit,
+                data_collector=mock_data_collector,
+                trading_service=mock_trading_service,
+                ai_service=mock_ai_service,
+                container=container
+            )
 
-            with patch.object(PipelineContext, '__init__', capturing_init):
-                pipeline = MagicMock()
-                pipeline.execute = AsyncMock(return_value={'pipeline_status': 'completed'})
-                return pipeline
-
-        with patch('main.create_hybrid_trading_pipeline', side_effect=capture_context):
-            with patch('main.PipelineContext') as MockContext:
-                mock_ctx = MagicMock()
-                MockContext.return_value = mock_ctx
-
-                mock_pipeline = MagicMock()
-                mock_pipeline.execute = AsyncMock(return_value={
-                    'pipeline_status': 'completed',
-                    'status': 'success'
-                })
-
-                with patch('main.create_hybrid_trading_pipeline', return_value=mock_pipeline):
-                    await execute_trading_cycle(
-                        ticker="KRW-BTC",
-                        upbit_client=mock_upbit,
-                        data_collector=mock_data_collector,
-                        trading_service=mock_trading_service,
-                        ai_service=mock_ai_service,
-                        container=container
-                    )
-
-                # Then: PipelineContext가 container를 받아야 함
-                MockContext.assert_called_once()
-                call_kwargs = MockContext.call_args.kwargs
-                assert 'container' in call_kwargs
-                assert call_kwargs['container'] is container
+            # Then: TradingOrchestrator.__init__이 container를 받아야 함
+            mock_init.assert_called_once()
+            call_kwargs = mock_init.call_args.kwargs
+            assert 'container' in call_kwargs
+            assert call_kwargs['container'] is container
 
 
 class TestLegacyCompatibility:
@@ -230,20 +212,20 @@ class TestLegacyCompatibility:
     async def test_execute_trading_cycle_works_without_container(self):
         """container 없이도 execute_trading_cycle() 동작 (호환성)"""
         from main import execute_trading_cycle
+        from src.application.services.trading_orchestrator import TradingOrchestrator
 
         mock_upbit = MagicMock()
         mock_data_collector = MagicMock()
         mock_trading_service = MagicMock()
         mock_ai_service = MagicMock()
 
-        with patch('main.create_hybrid_trading_pipeline') as mock_pipeline:
-            mock_pipeline_instance = MagicMock()
-            mock_pipeline_instance.execute = AsyncMock(return_value={
+        # TradingOrchestrator.execute_trading_cycle을 패치
+        with patch.object(TradingOrchestrator, 'execute_trading_cycle', new_callable=AsyncMock) as mock_execute:
+            mock_execute.return_value = {
                 'pipeline_status': 'completed',
                 'status': 'success',
                 'decision': 'hold'
-            })
-            mock_pipeline.return_value = mock_pipeline_instance
+            }
 
             # When: container 없이 호출 (기존 방식)
             result = await execute_trading_cycle(

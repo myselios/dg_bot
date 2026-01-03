@@ -1,7 +1,13 @@
 """
 AI 분석 서비스
+
+.. deprecated:: 4.4.0
+    이 모듈은 레거시 코드입니다.
+    새 코드에서는 AnalyzeBreakoutUseCase를 사용하세요.
+    마이그레이션 가이드: docs/guide/MIGRATION_AI_CLEAN_ARCHITECTURE.md
 """
 import json
+import warnings
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from openai import OpenAI
@@ -16,7 +22,28 @@ from ..trading.indicators import TechnicalIndicators
 
 
 class AIService:
-    """AI 분석 서비스 클래스"""
+    """
+    AI 분석 서비스 클래스
+
+    .. deprecated:: 4.4.0
+        이 클래스는 레거시 코드입니다.
+        새 코드에서는 다음을 사용하세요:
+
+        - AnalyzeBreakoutUseCase: 돌파 분석
+        - EnhancedOpenAIAdapter: AI 호출 (rate limit, circuit breaker)
+        - YAMLPromptAdapter: 프롬프트 관리
+        - ValidationAdapter: 응답 검증
+
+        마이그레이션 가이드: docs/guide/MIGRATION_AI_CLEAN_ARCHITECTURE.md
+
+    Example (New Architecture)::
+
+        from src.container import Container
+
+        container = Container.create_from_legacy(session_factory=db_session_factory)
+        use_case = container.get_analyze_breakout_use_case()
+        result = await use_case.execute(request)
+    """
     
     @staticmethod
     def _format_number(value: Any, format_str: str = ',.0f') -> str:

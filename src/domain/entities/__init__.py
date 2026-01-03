@@ -8,6 +8,7 @@ from src.domain.entities.trade import (
     OrderStatus,
     TradeStatus,
 )
+from src.domain.entities.signal import Signal, SignalAction
 
 __all__ = [
     "Trade",
@@ -17,4 +18,6 @@ __all__ = [
     "OrderType",
     "OrderStatus",
     "TradeStatus",
+    "Signal",
+    "SignalAction",
 ]

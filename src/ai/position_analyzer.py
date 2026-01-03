@@ -1,6 +1,11 @@
 """
 포지션 관리 분석기 (Position Analyzer) - 하이브리드 방식
 
+.. deprecated:: 4.4.0
+    이 모듈은 레거시 코드입니다.
+    새 코드에서는 ManagePositionUseCase와 ValidationAdapter를 사용하세요.
+    마이그레이션 가이드: docs/guide/MIGRATION_AI_CLEAN_ARCHITECTURE.md
+
 포지션이 있을 때 사용하는 관리 전용 분석기입니다.
 규칙 기반 우선 + 애매한 상황에서만 AI 호출하는 하이브리드 방식입니다.
 
@@ -85,6 +90,10 @@ class Position:
 class PositionAnalyzer:
     """
     하이브리드 포지션 관리 분석기
+
+    .. deprecated:: 4.4.0
+        이 클래스는 레거시 코드입니다.
+        마이그레이션 가이드: docs/guide/MIGRATION_AI_CLEAN_ARCHITECTURE.md
 
     1단계: 규칙 기반 체크 (무료, 즉시)
     2단계: 상황 평가 (AI 필요 여부 판단)

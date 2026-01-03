@@ -16,7 +16,7 @@ Mode 2(적응형)와 Mode 3(멀티코인)를 통합한 통합 스테이지입니
     # 스캔 비활성화 (단일 코인)
     stage = HybridRiskCheckStage(enable_scanning=False, fallback_ticker="KRW-BTC")
 """
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 
 from src.trading.pipeline.base_stage import BasePipelineStage, PipelineContext, StageResult
@@ -101,8 +101,16 @@ class HybridRiskCheckStage(BasePipelineStage):
             Logger.print_header("🔄 하이브리드 리스크 체크")
 
             # 1. 포트폴리오 매니저 초기화
+            # 레거시 서비스 직접 사용 (하위 호환성)
+            upbit_client = context.upbit_client
+            if not upbit_client:
+                return StageResult(
+                    success=False,
+                    action='stop',
+                    message="upbit_client를 사용할 수 없습니다"
+                )
             portfolio_manager = PortfolioManager(
-                exchange_client=context.upbit_client,
+                exchange_client=upbit_client,
                 max_positions=self.max_positions
             )
             context.portfolio_manager = portfolio_manager
@@ -610,13 +618,20 @@ class HybridRiskCheckStage(BasePipelineStage):
         market_data = {}
 
         try:
+            # 레거시 서비스 직접 사용 (하위 호환성)
+            upbit_client = context.upbit_client
+            data_collector = context.data_collector
+
+            if not upbit_client:
+                return market_data
+
             # 현재가 조회
-            current_price = context.upbit_client.get_current_price(ticker)
+            current_price = upbit_client.get_current_price(ticker)
             market_data['current_price'] = current_price
 
             # 차트 데이터 (시간봉)
-            if context.data_collector:
-                chart_data = context.data_collector.get_chart_data(ticker)
+            if data_collector:
+                chart_data = data_collector.get_chart_data(ticker)
                 if chart_data:
                     # 기술적 지표 계산
                     from src.trading.indicators import TechnicalIndicators
@@ -655,8 +670,11 @@ class HybridRiskCheckStage(BasePipelineStage):
             실행 결과
         """
         try:
-            if context.trading_service:
-                result = context.trading_service.execute_sell(position.ticker)
+            # 레거시 서비스 직접 사용 (하위 호환성)
+            trading_service = context.trading_service
+
+            if trading_service:
+                result = trading_service.execute_sell(position.ticker)
 
                 # 손익 기록
                 if context.portfolio_manager:
@@ -703,9 +721,12 @@ class HybridRiskCheckStage(BasePipelineStage):
         try:
             sell_amount = position.amount * action.exit_ratio
 
-            if context.trading_service:
+            # 레거시 서비스 직접 사용 (하위 호환성)
+            trading_service = context.trading_service
+
+            if trading_service:
                 # 부분 매도 (수량 지정)
-                result = context.trading_service.execute_sell(
+                result = trading_service.execute_sell(
                     position.ticker,
                     amount=sell_amount
                 )

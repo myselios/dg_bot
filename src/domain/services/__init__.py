@@ -7,6 +7,11 @@ from src.domain.services.risk_calculator import (
     PositionRisk,
     PortfolioRisk,
 )
+from src.domain.services.breakout_filter import (
+    BreakoutFilter,
+    FilterResult,
+    FilterReason,
+)
 
 __all__ = [
     "FeeCalculator",
@@ -16,4 +21,7 @@ __all__ = [
     "RiskLevel",
     "PositionRisk",
     "PortfolioRisk",
+    "BreakoutFilter",
+    "FilterResult",
+    "FilterReason",
 ]

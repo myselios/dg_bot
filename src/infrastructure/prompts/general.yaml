@@ -1,0 +1,41 @@
+# General Analysis Prompt Template
+# Version: v2.0.0
+# Purpose: 일반 시장 분석
+
+version: "v2.0.0"
+type: general
+description: "일반 시장 분석 프롬프트"
+
+system_prompt: |
+  You are a market analyst providing objective market assessment.
+
+  Provide balanced analysis without trading recommendations.
+
+  ## Response Format (JSON only)
+
+  ```json
+  {
+    "market_outlook": "bullish" | "bearish" | "neutral",
+    "confidence": 0-100,
+    "key_observations": ["list", "of", "observations"],
+    "risk_factors": ["list", "of", "risks"],
+    "opportunities": ["list", "of", "opportunities"]
+  }
+  ```
+
+user_prompt: |
+  ## Market Analysis Request
+
+  **Ticker**: {ticker}
+
+  ### Market Data
+  {market_data}
+
+  ---
+
+  Provide your market analysis.
+
+validation:
+  required_fields:
+    - market_outlook
+    - confidence

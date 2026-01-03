@@ -1,23 +1,51 @@
 """
-리스크 상태 관리자 (JSON 파일 기반)
+리스크 상태 관리자
 
 프로그램 재시작 후에도 리스크 관리 상태를 유지합니다.
 - daily_pnl: 일일 손익률 누적
 - daily_trade_count: 일일 거래 횟수
 - last_trade_time: 마지막 거래 시간
 - weekly_pnl: 주간 손익률 누적
+
+지원 스토리지:
+- PostgreSQL (RiskStateRepository 사용) - 권장
+- JSON 파일 (DEPRECATED, 하위 호환용)
 """
 import json
 from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Dict, Optional
+from datetime import datetime, date, timedelta
+from decimal import Decimal
+from typing import Dict, Optional, TYPE_CHECKING
 from ..utils.logger import Logger
+
+if TYPE_CHECKING:
+    from src.infrastructure.adapters.persistence.risk_state_repository import RiskStateRepository
 
 
 class RiskStateManager:
-    """리스크 상태 관리자 (JSON 파일 기반)"""
+    """
+    리스크 상태 관리자
 
+    PostgreSQL Repository 사용 권장 (set_repository로 설정)
+    JSON 파일은 DEPRECATED이며 하위 호환용으로만 유지됩니다.
+    """
+
+    # DEPRECATED: JSON 파일 기반 저장 (하위 호환용)
     STATE_FILE = Path("data/risk_state.json")
+
+    # Repository 인스턴스 (PostgreSQL 사용 시)
+    _repository: Optional["RiskStateRepository"] = None
+
+    @classmethod
+    def set_repository(cls, repository: "RiskStateRepository") -> None:
+        """
+        Repository 설정
+
+        Args:
+            repository: RiskStateRepository 인스턴스
+        """
+        cls._repository = repository
+        Logger.print_info("🗄️ RiskStateManager: PostgreSQL Repository 설정됨")
 
     @staticmethod
     def save_state(state: Dict) -> None:
@@ -159,3 +187,83 @@ class RiskStateManager:
         )
 
         return weekly_pnl
+
+    # --- Async 메서드 (PostgreSQL Repository 사용) ---
+
+    @classmethod
+    async def save_state_async(cls, state: Dict) -> None:
+        """
+        상태 비동기 저장 (PostgreSQL)
+
+        Repository가 설정되지 않은 경우 동기 메서드로 폴백합니다.
+
+        Args:
+            state: 저장할 상태 딕셔너리
+        """
+        if cls._repository is None:
+            # 폴백: JSON 파일 저장
+            cls.save_state(state)
+            return
+
+        from backend.app.schemas.risk_state import RiskStateCreate
+
+        today = date.today()
+        state_data = RiskStateCreate(
+            state_date=today,
+            daily_pnl=Decimal(str(state.get('daily_pnl', 0.0))),
+            daily_trade_count=int(state.get('daily_trade_count', 0)),
+            weekly_pnl=Decimal(str(state.get('weekly_pnl', 0.0))),
+            safe_mode=bool(state.get('safe_mode', False)),
+            safe_mode_reason=str(state.get('safe_mode_reason', '')),
+            last_trade_time=state.get('last_trade_time')
+        )
+
+        await cls._repository.save(state_data)
+        Logger.print_info(f"📝 리스크 상태 저장 완료 (DB): {today}")
+
+    @classmethod
+    async def load_state_async(cls) -> Dict:
+        """
+        오늘 날짜 상태 비동기 로드 (PostgreSQL)
+
+        Repository가 설정되지 않은 경우 동기 메서드로 폴백합니다.
+
+        Returns:
+            오늘 날짜의 상태 딕셔너리 (없으면 기본값)
+        """
+        if cls._repository is None:
+            return cls.load_state()
+
+        today = date.today()
+        record = await cls._repository.load_by_date(today)
+
+        if record:
+            Logger.print_info(f"📂 리스크 상태 로드 (DB): {today}")
+            return record.to_dict()
+
+        # 기본값 반환
+        default_state = {
+            'daily_pnl': 0.0,
+            'daily_trade_count': 0,
+            'last_trade_time': None,
+            'weekly_pnl': 0.0,
+            'safe_mode': False,
+            'safe_mode_reason': ''
+        }
+
+        Logger.print_info(f"📂 리스크 상태 없음 (DB), 기본값 사용: {today}")
+        return default_state
+
+    @classmethod
+    async def calculate_weekly_pnl_async(cls) -> float:
+        """
+        최근 7일간의 손익률 합계 비동기 계산 (PostgreSQL)
+
+        Returns:
+            주간 손익률 합계
+        """
+        if cls._repository is None:
+            return cls.calculate_weekly_pnl()
+
+        weekly_pnl = await cls._repository.calculate_weekly_pnl()
+        return float(weekly_pnl)

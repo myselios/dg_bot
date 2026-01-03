@@ -3,18 +3,15 @@
 
 포지션 유무에 따라 거래 로직을 분기하는 핵심 스테이지입니다.
 
-거래 흐름:
-1. 포트폴리오 상태 확인
-2. 거래 모드 결정 (ENTRY / MANAGEMENT / BLOCKED)
-3. 모드에 따른 분기 처리
+.. deprecated::
+    이 스테이지는 deprecated 되었습니다.
+    대신 HybridRiskCheckStage를 사용하세요.
 
-ENTRY 모드 (포지션 없음 또는 추가 가능):
-- 유동성 스캔 → 백테스팅 → AI 진입 분석 → 실행
-
-MANAGEMENT 모드 (포지션 있음):
-- 규칙 기반 체크 → 필요시 AI 분석 → 청산/유지/조정
+Clean Architecture Migration (2026-01-03):
+- Container가 있으면 Port를 통해 서비스 접근
+- Container가 없으면 context의 레거시 서비스 사용 (하위 호환성)
 """
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 
 from src.trading.pipeline.base_stage import BasePipelineStage, PipelineContext, StageResult
@@ -67,8 +64,16 @@ class AdaptiveRiskCheckStage(BasePipelineStage):
             Logger.print_header("🔄 적응형 리스크 체크")
 
             # 1. 포트폴리오 매니저 초기화
+            # 레거시 서비스 직접 사용 (하위 호환성)
+            upbit_client = context.upbit_client
+            if not upbit_client:
+                return StageResult(
+                    success=False,
+                    action='stop',
+                    message="upbit_client를 사용할 수 없습니다"
+                )
             portfolio_manager = PortfolioManager(
-                exchange_client=context.upbit_client,
+                exchange_client=upbit_client,
                 max_positions=self.max_positions
             )
             context.portfolio_manager = portfolio_manager
@@ -320,13 +325,20 @@ class AdaptiveRiskCheckStage(BasePipelineStage):
         market_data = {}
 
         try:
+            # 레거시 서비스 직접 사용 (하위 호환성)
+            upbit_client = context.upbit_client
+            data_collector = context.data_collector
+
+            if not upbit_client:
+                return market_data
+
             # 현재가 조회
-            current_price = context.upbit_client.get_current_price(ticker)
+            current_price = upbit_client.get_current_price(ticker)
             market_data['current_price'] = current_price
 
             # 차트 데이터 (시간봉)
-            if context.data_collector:
-                chart_data = context.data_collector.get_chart_data(ticker)
+            if data_collector:
+                chart_data = data_collector.get_chart_data(ticker)
                 if chart_data:
                     # 기술적 지표 계산
                     from src.trading.indicators import TechnicalIndicators
@@ -365,8 +377,11 @@ class AdaptiveRiskCheckStage(BasePipelineStage):
             실행 결과
         """
         try:
-            if context.trading_service:
-                result = context.trading_service.execute_sell(position.ticker)
+            # 레거시 서비스 직접 사용 (하위 호환성)
+            trading_service = context.trading_service
+
+            if trading_service:
+                result = trading_service.execute_sell(position.ticker)
 
                 # 손익 기록
                 if context.portfolio_manager:
@@ -413,9 +428,12 @@ class AdaptiveRiskCheckStage(BasePipelineStage):
         try:
             sell_amount = position.amount * action.exit_ratio
 
-            if context.trading_service:
+            # 레거시 서비스 직접 사용 (하위 호환성)
+            trading_service = context.trading_service
+
+            if trading_service:
                 # 부분 매도 (수량 지정)
-                result = context.trading_service.execute_sell(
+                result = trading_service.execute_sell(
                     position.ticker,
                     amount=sell_amount
                 )
