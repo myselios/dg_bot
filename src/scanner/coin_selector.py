@@ -1,14 +1,19 @@
 """
 코인 선택기 (Coin Selector)
 
-유동성 스캔 → 백테스팅 → AI 분석까지의 전체 흐름을 조율합니다.
+유동성 스캔 → Research Pass → AI 분석 → Trading Pass 전체 흐름을 조율합니다.
 
 주요 기능:
 - 유동성 상위 코인 스캔
 - 섹터별 분산 선택 (포트폴리오 다양성 확보)
-- 병렬 백테스팅 필터링
+- 병렬 백테스팅 필터링 (Research Pass - 느슨한 기준)
 - AI 진입 분석 (상위 N개만)
+- Trading Pass 최종 검증 (엄격한 기준 + Expectancy)
 - 최종 진입 코인 선택
+
+⚠️ 2026-01-04 변경: 2단 게이트 파이프라인 통합
+- 3단계: Research Pass (느슨) → 후보 확보 (30-50% 통과율 목표)
+- 4단계: AI 분석 후 Trading Pass (엄격 + Expectancy) → 실거래 보호
 """
 import asyncio
 from dataclasses import dataclass, field
@@ -25,6 +30,7 @@ from src.scanner.sector_mapping import (
     CoinSector
 )
 from src.ai.entry_analyzer import EntryAnalyzer, EntrySignal
+from src.backtesting.quick_filter import QuickBacktestFilter, TradingPassConfig  # 2단 게이트
 from src.config.settings import ScannerConfig
 from src.utils.logger import Logger
 
@@ -35,19 +41,24 @@ class CoinCandidate:
     ticker: str
     symbol: str
     coin_info: Optional[CoinInfo]         # 유동성 정보
-    backtest_score: Optional[BacktestScore]  # 백테스팅 결과
+    backtest_score: Optional[BacktestScore]  # 백테스팅 결과 (Research Pass)
     entry_signal: Optional[EntrySignal]    # AI 진입 분석 결과
     final_score: float                     # 최종 점수
     final_grade: str                       # 최종 등급
     selected: bool                         # 최종 선택 여부
     selection_reason: str                  # 선택/미선택 사유
     analysis_time: datetime = field(default_factory=datetime.now)
+    # 2단 게이트 결과 (2026-01-04 추가)
+    trading_pass_passed: bool = False      # Trading Pass 통과 여부
+    trading_pass_reason: str = ""          # Trading Pass 결과 사유
+    expectancy_R: float = 0.0              # 기대값 (R 단위)
 
     @property
     def is_ready_for_entry(self) -> bool:
-        """진입 준비 완료 여부"""
+        """진입 준비 완료 여부 (Trading Pass 통과 필수)"""
         return (
             self.selected and
+            self.trading_pass_passed and  # ⚠️ Trading Pass 필수
             self.entry_signal is not None and
             self.entry_signal.decision == 'buy'
         )
@@ -275,8 +286,20 @@ class CoinSelector:
         else:
             # AI 분석기 없으면 백테스팅 결과만으로 후보 생성
             Logger.print_info("\n⏭️ 4단계: AI 분석 스킵 (entry_analyzer 없음)")
-            for bt_result in passed_backtests[:self.ai_top_n]:
+            # ai_top_n=0이면 제한 없이 모든 passed_backtests 사용
+            limit = self.ai_top_n if self.ai_top_n > 0 else len(passed_backtests)
+            for bt_result in passed_backtests[:limit]:
                 candidates.append(self._create_candidate(bt_result=bt_result, entry_signal=None))
+
+        # ========================================
+        # 4-1단계: Trading Pass 검증 (2단 게이트)
+        # ========================================
+        Logger.print_info("\n🔐 4-1단계: Trading Pass 검증 (Expectancy 포함)")
+        candidates = self._apply_trading_pass(candidates)
+
+        # Trading Pass 통과 코인 수
+        trading_passed = sum(1 for c in candidates if c.trading_pass_passed)
+        Logger.print_info(f"  Trading Pass 통과: {trading_passed}/{len(candidates)}")
 
         # ========================================
         # 5단계: 최종 선택
@@ -525,3 +548,52 @@ class CoinSelector:
             if len(sector_coins) > 3:
                 coins_str += f" (+{len(sector_coins) - 3})"
             print(f"    {get_sector_korean_name(sector):12}: {count}개 ({coins_str})")
+
+    def _apply_trading_pass(self, candidates: List[CoinCandidate]) -> List[CoinCandidate]:
+        """
+        Trading Pass 검증 적용 (2단 게이트)
+
+        AI 분석 후 Trading Pass를 적용하여 실거래 적합성을 최종 검증합니다.
+        - TradingPassConfig 임계값 사용 (중간 엄격도)
+        - Expectancy Filter 필수 (기대값 양수)
+
+        Args:
+            candidates: 후보 코인 리스트
+
+        Returns:
+            Trading Pass 결과가 업데이트된 후보 리스트
+        """
+        trading_filter = QuickBacktestFilter(TradingPassConfig())
+
+        for candidate in candidates:
+            # 백테스트 결과가 없으면 스킵
+            if not candidate.backtest_score or not candidate.backtest_score.metrics:
+                candidate.trading_pass_passed = False
+                candidate.trading_pass_reason = "백테스트 결과 없음"
+                continue
+
+            # Trading Pass 평가
+            metrics = candidate.backtest_score.metrics
+            pass_result = trading_filter.evaluate_trading_pass(metrics)
+
+            # Expectancy 정보 추출
+            exp_result = trading_filter.check_expectancy_with_metrics(metrics)
+
+            # 결과 업데이트
+            candidate.trading_pass_passed = pass_result.passed
+            candidate.trading_pass_reason = pass_result.reason
+            candidate.expectancy_R = exp_result.get('net_expectancy', 0.0)
+
+            # 로그 출력
+            status = "✅" if pass_result.passed else "❌"
+            Logger.print_info(
+                f"  [{candidate.symbol}] {status} Trading Pass "
+                f"(기대값: {candidate.expectancy_R:.3f}R)"
+            )
+
+            # Trading Pass 실패 시 selected=False로 변경
+            if not pass_result.passed:
+                candidate.selected = False
+                candidate.selection_reason = f"Trading Pass 미통과: {pass_result.reason}"
+
+        return candidates

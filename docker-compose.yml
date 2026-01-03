@@ -89,11 +89,14 @@ services:
       - SENTRY_DSN=${SENTRY_DSN}
       - SENTRY_ENABLED=${SENTRY_ENABLED:-false}
       - SCHEDULER_INTERVAL_MINUTES=${SCHEDULER_INTERVAL_MINUTES:-60}
+      - SCHEDULER_RUN_IMMEDIATELY=true  # 재시작 시 즉시 한 번 실행
     volumes:
       - ./src:/app/src
       - ./backend:/app/backend
       - ./logs:/app/logs
       - ./data:/app/data  # 백테스팅용 historical 데이터 저장
+      - ./scheduler_main.py:/app/scheduler_main.py  # 최신 코드 반영
+      - ./main.py:/app/main.py  # 최신 코드 반영
     command: ["python", "scheduler_main.py"]
     depends_on:
       postgres:
@@ -135,6 +138,8 @@ services:
       - ./backend:/app/backend
       - ./logs:/app/logs
       - ./data:/app/data
+      - ./telegram_bot.py:/app/telegram_bot.py  # 최신 코드 반영
+      - ./main.py:/app/main.py  # 최신 코드 반영
     command: ["python", "telegram_bot.py"]
     depends_on:
       postgres:

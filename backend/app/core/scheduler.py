@@ -882,8 +882,18 @@ def start_scheduler():
     # 즉시 실행 옵션 (개발/테스트용)
     if SchedulerConfig.RUN_IMMEDIATELY:
         logger.info("🚀 즉시 실행 모드 활성화 - 트레이딩 작업 즉시 실행")
-        scheduler.modify_job('trading_job', next_run_time=datetime.now())
-        logger.info("✅ 트레이딩 작업이 즉시 실행되도록 예약됨")
+        # 일회성 즉시 실행 작업 추가 (misfire 방지를 위해 별도 작업으로)
+        from datetime import timedelta
+        scheduler.add_job(
+            trading_job,
+            'date',
+            run_date=datetime.now() + timedelta(seconds=2),
+            id='trading_job_immediate',
+            name='트레이딩 작업 - 즉시 실행 (일회성)',
+            replace_existing=True,
+            misfire_grace_time=60
+        )
+        logger.info("✅ 트레이딩 작업이 2초 후 즉시 실행되도록 예약됨")
     else:
         # 다음 실행 시간 로깅
         trading_job_info = scheduler.get_job('trading_job')
