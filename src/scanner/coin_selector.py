@@ -25,6 +25,7 @@ from src.scanner.sector_mapping import (
     CoinSector
 )
 from src.ai.entry_analyzer import EntryAnalyzer, EntrySignal
+from src.config.settings import ScannerConfig
 from src.utils.logger import Logger
 
 
@@ -99,7 +100,7 @@ class CoinSelector:
         # 섹터 분산 파라미터
         enable_sector_diversification: bool = True,
         one_per_sector: bool = True,
-        exclude_unknown_sector: bool = False
+        exclude_unknown_sector: bool = ScannerConfig.EXCLUDE_UNKNOWN_SECTOR
     ):
         """
         Args:

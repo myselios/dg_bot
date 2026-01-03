@@ -1381,6 +1381,7 @@ python -m pytest tests/ --cov=src --cov-report=html
    - `PostgresLockAdapter`: `pg_advisory_lock` 사용
    - `MemoryIdempotencyAdapter`/`MemoryLockAdapter`: 테스트용
    - `IntrabarExecutionAdapter`: 봉 중간 체결 시뮬레이션
+   - `LiveExecutionAdapter`: 실거래 체결 어댑터
    - `RiskStateRepository`: 리스크 상태 PostgreSQL 저장
 
 4. **Domain Layer 확장**
@@ -1394,9 +1395,17 @@ python -m pytest tests/ --cov=src --cov-report=html
 6. **Container 확장**
    - `get_idempotency_port()`: IdempotencyPort 제공
    - `get_lock_port()`: LockPort 제공
+   - `get_execution_port(mode)`: live/backtest 모드별 ExecutionPort 제공
    - 스케줄러에서 Container 완전 사용
 
-**테스트**: 16,000+ 라인 추가, TDD 엄격 준수
+7. **레거시 코드 완전 제거** ✅
+   - `AIService` 제거: `Container.get_ai_port()`가 `OpenAIAdapter` 기본 반환
+   - `TradingService` 제거: `ExecuteTradeUseCase`로 대체
+   - `Container.create_from_legacy(ai_service=)` deprecated (DeprecationWarning 발생)
+   - `scheduler.py`, `main.py`, `telegram_bot.py` 모두 Container 패턴으로 전환
+   - 레거시 서비스 파일은 호환성을 위해 유지 (deprecated 표시)
+
+**테스트**: 1,351개 통과, TDD 엄격 준수
 
 ---
 

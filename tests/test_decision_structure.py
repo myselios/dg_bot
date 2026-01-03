@@ -120,21 +120,24 @@ class TestPipelineDecisionStructure:
     ):
         """execute_trading_cycle이 Dict를 반환하는지 테스트"""
         from main import execute_trading_cycle
+        from unittest.mock import MagicMock
 
-        with patch('main.create_hybrid_trading_pipeline') as mock_pipeline:
-            mock_result = AsyncMock(return_value={
-                'status': 'success',
-                'decision': 'hold',
-                'pipeline_status': 'completed'
-            })
-            mock_pipeline.return_value.execute = mock_result
+        # Clean Architecture: TradingOrchestrator 모킹
+        mock_result = {
+            'status': 'success',
+            'decision': 'hold',
+            'pipeline_status': 'completed'
+        }
 
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_trading_cycle = AsyncMock(return_value=mock_result)
+        mock_orchestrator.set_on_backtest_complete = MagicMock()
+
+        with patch('src.application.services.trading_orchestrator.TradingOrchestrator', return_value=mock_orchestrator):
             result = await execute_trading_cycle(
                 ticker='KRW-BTC',
                 upbit_client=mock_upbit_client,
                 data_collector=mock_data_collector,
-                trading_service=mock_trading_service,
-                ai_service=mock_ai_service,
                 enable_scanning=False  # 테스트용으로 스캔 비활성화
             )
 

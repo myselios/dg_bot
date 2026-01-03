@@ -248,35 +248,44 @@ class TestContainerLegacyIntegration:
         exchange = container.get_exchange_port()
         assert isinstance(exchange, ExchangePort)
 
-    def test_create_from_legacy_with_ai_service(self):
-        """Should create container with legacy AI adapter."""
+    def test_create_from_legacy_ai_service_deprecated(self):
+        """ai_service parameter is deprecated and ignored."""
+        import warnings
         from src.container import Container
         from src.application.ports.outbound.ai_port import AIPort
+        from src.infrastructure.adapters.ai.openai_adapter import OpenAIAdapter
 
         mock_service = MagicMock()
 
-        container = Container.create_from_legacy(ai_service=mock_service)
+        # ai_service 전달 시 DeprecationWarning 발생
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            container = Container.create_from_legacy(ai_service=mock_service)
+            assert len(w) == 1
+            assert issubclass(w[0].category, DeprecationWarning)
+            assert "ai_service" in str(w[0].message)
 
+        # get_ai_port()는 OpenAIAdapter 반환 (LegacyAIAdapter 아님)
         ai = container.get_ai_port()
         assert isinstance(ai, AIPort)
+        assert isinstance(ai, OpenAIAdapter)
 
     def test_create_from_legacy_with_all_services(self):
-        """Should create container with all legacy adapters."""
+        """Should create container with all legacy adapters (ai_service 제외)."""
         from src.container import Container
 
         mock_upbit = MagicMock()
-        mock_ai = MagicMock()
         mock_collector = MagicMock()
 
+        # ai_service는 deprecated이므로 전달하지 않음
         container = Container.create_from_legacy(
             upbit_client=mock_upbit,
-            ai_service=mock_ai,
             data_collector=mock_collector,
         )
 
         # All should be available
         assert container.get_exchange_port() is not None
-        assert container.get_ai_port() is not None
+        assert container.get_ai_port() is not None  # OpenAIAdapter 반환
         assert container.get_market_data_port() is not None
         assert container.get_persistence_port() is not None
 

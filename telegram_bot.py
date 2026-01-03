@@ -204,26 +204,29 @@ class TelegramBotService:
 
             start_time = datetime.now()
 
-            # 트레이딩 사이클 실행
-            from main import execute_trading_cycle
+            # Clean Architecture: Container를 통한 트레이딩 사이클 실행
+            from src.container import Container
             from src.api.upbit_client import UpbitClient
             from src.data.collector import DataCollector
-            from src.trading.service import TradingService
-            from src.ai.service import AIService
             from src.config.settings import TradingConfig
 
             ticker = TradingConfig.TICKER
             upbit_client = UpbitClient()
             data_collector = DataCollector()
-            trading_service = TradingService(upbit_client)
-            ai_service = AIService()
 
-            result = await execute_trading_cycle(
-                ticker=ticker,
+            # Container 초기화 (AIService, TradingService 불필요)
+            container = Container.create_from_legacy(
                 upbit_client=upbit_client,
-                data_collector=data_collector,
-                trading_service=trading_service,
-                ai_service=ai_service
+                data_collector=data_collector
+            )
+
+            # TradingOrchestrator를 통한 거래 사이클 실행
+            orchestrator = container.get_trading_orchestrator()
+            result = await orchestrator.execute_trading_cycle(
+                ticker=ticker,
+                trading_type='spot',
+                enable_scanning=True,
+                max_positions=3
             )
 
             duration = (datetime.now() - start_time).total_seconds()
@@ -308,8 +311,8 @@ class TelegramBotService:
 ━━━━━━━━━━━━━━━━━━━━
 <b>💰 자산 현황</b>
 ━━━━━━━━━━━━━━━━━━━━
-💵 <b>총 자산:</b> {status.total_value:,.0f} KRW
-💴 <b>가용 현금:</b> {status.available_krw:,.0f} KRW
+💵 <b>총 자산:</b> {status.total_current_value:,.0f} KRW
+💴 <b>가용 현금:</b> {status.krw_balance:,.0f} KRW
 📈 <b>투자 금액:</b> {status.total_invested:,.0f} KRW
 
 🕐 <b>확인 시각:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}

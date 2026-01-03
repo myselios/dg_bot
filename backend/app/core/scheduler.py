@@ -28,30 +28,30 @@ def get_container():
     """
     Container 싱글톤 인스턴스 반환
 
-    레거시 서비스를 래핑하여 클린 아키텍처와 호환성 유지
-    PostgreSQL session_factory를 전달하여 Lock/Idempotency 지원
+    Clean Architecture:
+    - AIService 제거 (Container.get_ai_port()가 OpenAIAdapter 기본 반환)
+    - UpbitClient, DataCollector만 래핑 (레거시 호환성)
+    - PostgreSQL session_factory를 전달하여 Lock/Idempotency 지원
     """
     global _container
     if _container is None:
         from src.container import Container
         from src.api.upbit_client import UpbitClient
         from src.data.collector import DataCollector
-        from src.ai.service import AIService
         from backend.app.db.session import AsyncSessionLocal
 
-        # 레거시 서비스 생성 (한 번만)
+        # 레거시 서비스 생성 (UpbitClient, DataCollector만 유지)
+        # AIService 제거 - Container.get_ai_port()가 OpenAIAdapter 기본 반환
         upbit_client = UpbitClient()
-        ai_service = AIService()
         data_collector = DataCollector()
 
         # Container로 래핑 (PostgreSQL session_factory 전달)
         _container = Container.create_from_legacy(
             upbit_client=upbit_client,
-            ai_service=ai_service,
             data_collector=data_collector,
             session_factory=AsyncSessionLocal,
         )
-        logger.info("✅ Container 싱글톤 초기화 완료 (Lock/Idempotency 활성화)")
+        logger.info("✅ Container 싱글톤 초기화 완료 (Clean Architecture)")
 
     return _container
 

@@ -50,6 +50,7 @@ class Container:
         prompt_port: Optional[PromptPort] = None,
         validation_port: Optional[ValidationPort] = None,
         decision_record_port: Optional[DecisionRecordPort] = None,
+        session_factory=None,
     ):
         """
         Initialize container with optional port overrides.
@@ -64,6 +65,7 @@ class Container:
             prompt_port: Prompt port implementation (uses default if None)
             validation_port: Validation port implementation (uses default if None)
             decision_record_port: Decision record port implementation (uses default if None)
+            session_factory: SQLAlchemy async session factory for PostgreSQL adapters
         """
         self._exchange_port = exchange_port
         self._ai_port = ai_port
@@ -74,6 +76,7 @@ class Container:
         self._prompt_port = prompt_port
         self._validation_port = validation_port
         self._decision_record_port = decision_record_port
+        self._session_factory = session_factory
 
         # Cached use cases
         self._execute_trade_use_case: Optional[ExecuteTradeUseCase] = None
@@ -111,30 +114,41 @@ class Container:
     def create_from_legacy(
         cls,
         upbit_client=None,
-        ai_service=None,
         data_collector=None,
         session_factory=None,
+        ai_service=None,  # DEPRECATED: 무시됨, Container.get_ai_port()가 OpenAIAdapter 반환
     ) -> "Container":
         """
         Create container by wrapping legacy services.
 
         This enables gradual migration from old code to new architecture.
 
+        Clean Architecture (2026-01-03):
+            - ai_service 파라미터 deprecated (무시됨)
+            - get_ai_port()가 OpenAIAdapter를 기본 반환
+
         Args:
             upbit_client: Existing UpbitClient instance
-            ai_service: Existing AIService instance
             data_collector: Existing DataCollector instance
             session_factory: SQLAlchemy async session factory (for PostgreSQL adapters)
+            ai_service: DEPRECATED - 무시됨, 호환성을 위해 유지
 
         Returns:
             Container with legacy bridge adapters
         """
-        from src.infrastructure.adapters.persistence.memory_adapter import InMemoryPersistenceAdapter
+        import warnings
+        if ai_service is not None:
+            warnings.warn(
+                "ai_service parameter is deprecated and ignored. "
+                "Container.get_ai_port() returns OpenAIAdapter by default.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+
         from src.infrastructure.adapters.persistence.memory_idempotency_adapter import InMemoryIdempotencyAdapter
         from src.infrastructure.adapters.persistence.memory_lock_adapter import InMemoryLockAdapter
 
         exchange_port = None
-        ai_port = None
         market_data_port = None
         idempotency_port = None
         lock_port = None
@@ -143,10 +157,6 @@ class Container:
         if upbit_client:
             from src.infrastructure.adapters.legacy_bridge import LegacyExchangeAdapter
             exchange_port = LegacyExchangeAdapter(upbit_client)
-
-        if ai_service:
-            from src.infrastructure.adapters.legacy_bridge import LegacyAIAdapter
-            ai_port = LegacyAIAdapter(ai_service)
 
         if data_collector:
             from src.infrastructure.adapters.legacy_bridge import LegacyMarketDataAdapter
@@ -167,12 +177,14 @@ class Container:
 
         return cls(
             exchange_port=exchange_port,
-            ai_port=ai_port,
+            # ai_port은 None - get_ai_port()가 OpenAIAdapter 기본 반환
             market_data_port=market_data_port,
-            persistence_port=InMemoryPersistenceAdapter(),
+            # persistence_port is NOT set here - let get_persistence_port() handle it
+            # based on session_factory availability
             idempotency_port=idempotency_port,
             lock_port=lock_port,
             decision_record_port=decision_record_port,
+            session_factory=session_factory,  # Pass session_factory for PostgresPersistenceAdapter
         )
 
     # --- Port Getters ---
@@ -201,8 +213,12 @@ class Container:
     def get_persistence_port(self) -> PersistencePort:
         """Get persistence port implementation."""
         if self._persistence_port is None:
-            from src.infrastructure.adapters.persistence.memory_adapter import InMemoryPersistenceAdapter
-            self._persistence_port = InMemoryPersistenceAdapter()
+            if self._session_factory is not None:
+                from src.infrastructure.adapters.persistence.postgres_persistence_adapter import PostgresPersistenceAdapter
+                self._persistence_port = PostgresPersistenceAdapter(session_factory=self._session_factory)
+            else:
+                from src.infrastructure.adapters.persistence.memory_adapter import InMemoryPersistenceAdapter
+                self._persistence_port = InMemoryPersistenceAdapter()
         return self._persistence_port
 
     def get_idempotency_port(self) -> IdempotencyPort:
@@ -304,6 +320,29 @@ class Container:
                 ai_client=ai_client,
             )
         return self._analyze_breakout_use_case
+
+    # --- Execution Port ---
+
+    def get_execution_port(self, mode: str = "live") -> "ExecutionPort":
+        """
+        Get ExecutionPort implementation based on mode.
+
+        Args:
+            mode: "live" for real trading, "backtest" for backtesting
+
+        Returns:
+            ExecutionPort: LiveExecutionAdapter for live, IntrabarExecutionAdapter for backtest
+        """
+        from src.application.ports.outbound.execution_port import ExecutionPort
+
+        if mode == "live":
+            from src.infrastructure.adapters.execution.live_execution_adapter import LiveExecutionAdapter
+            return LiveExecutionAdapter(exchange_port=self.get_exchange_port())
+        elif mode == "backtest":
+            from src.infrastructure.adapters.execution.intrabar_execution_adapter import IntrabarExecutionAdapter
+            return IntrabarExecutionAdapter()
+        else:
+            raise ValueError(f"Unknown execution mode: {mode}. Use 'live' or 'backtest'.")
 
     # --- Application Services ---
 

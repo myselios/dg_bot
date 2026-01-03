@@ -361,7 +361,7 @@ class ScannerConfig:
     # 섹터 분산 설정
     ENABLE_SECTOR_DIVERSIFICATION = os.getenv("SCANNER_ENABLE_SECTOR_DIVERSIFICATION", "true").lower() == "true"
     ONE_PER_SECTOR = os.getenv("SCANNER_ONE_PER_SECTOR", "true").lower() == "true"
-    EXCLUDE_UNKNOWN_SECTOR = os.getenv("SCANNER_EXCLUDE_UNKNOWN_SECTOR", "false").lower() == "true"
+    EXCLUDE_UNKNOWN_SECTOR = os.getenv("SCANNER_EXCLUDE_UNKNOWN_SECTOR", "true").lower() == "true"
 
     @classmethod
     def validate(cls):

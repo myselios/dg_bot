@@ -17,10 +17,11 @@ class TestTelegramBotServiceInitialization:
 
     def test_service_creation(self):
         """서비스 생성 테스트"""
-        with patch.dict(os.environ, {
-            'TELEGRAM_BOT_TOKEN': 'test_token',
-            'TELEGRAM_CHAT_ID': '12345'
-        }):
+        # settings 모듈을 직접 패치 (환경변수는 이미 로드되어 있음)
+        with patch('telegram_bot.settings') as mock_settings:
+            mock_settings.TELEGRAM_BOT_TOKEN = 'test_token'
+            mock_settings.TELEGRAM_CHAT_ID = '12345'
+
             from telegram_bot import TelegramBotService
 
             service = TelegramBotService()
@@ -30,10 +31,10 @@ class TestTelegramBotServiceInitialization:
 
     def test_parse_single_chat_id(self):
         """단일 Chat ID 파싱"""
-        with patch.dict(os.environ, {
-            'TELEGRAM_BOT_TOKEN': 'test_token',
-            'TELEGRAM_CHAT_ID': '12345'
-        }):
+        with patch('telegram_bot.settings') as mock_settings:
+            mock_settings.TELEGRAM_BOT_TOKEN = 'test_token'
+            mock_settings.TELEGRAM_CHAT_ID = '12345'
+
             from telegram_bot import TelegramBotService
 
             service = TelegramBotService()
@@ -56,10 +57,10 @@ class TestTelegramBotServiceInitialization:
 
     def test_authorization_check_valid(self):
         """유효한 Chat ID 권한 검사"""
-        with patch.dict(os.environ, {
-            'TELEGRAM_BOT_TOKEN': 'test_token',
-            'TELEGRAM_CHAT_ID': '12345'
-        }):
+        with patch('telegram_bot.settings') as mock_settings:
+            mock_settings.TELEGRAM_BOT_TOKEN = 'test_token'
+            mock_settings.TELEGRAM_CHAT_ID = '12345'
+
             from telegram_bot import TelegramBotService
 
             service = TelegramBotService()
@@ -69,21 +70,16 @@ class TestTelegramBotServiceInitialization:
 
     def test_authorization_check_empty_allows_all(self):
         """Chat ID 설정이 없으면 모두 허용"""
-        with patch.dict(os.environ, {
-            'TELEGRAM_BOT_TOKEN': 'test_token',
-            'TELEGRAM_CHAT_ID': ''
-        }, clear=False):
+        with patch('telegram_bot.settings') as mock_settings:
+            mock_settings.TELEGRAM_BOT_TOKEN = 'test_token'
+            mock_settings.TELEGRAM_CHAT_ID = ''
+
             from telegram_bot import TelegramBotService
 
-            # settings 모킹
-            with patch('telegram_bot.settings') as mock_settings:
-                mock_settings.TELEGRAM_BOT_TOKEN = 'test_token'
-                mock_settings.TELEGRAM_CHAT_ID = ''
+            service = TelegramBotService()
 
-                service = TelegramBotService()
-
-                assert service._is_authorized(12345) is True
-                assert service._is_authorized(99999) is True
+            assert service._is_authorized(12345) is True
+            assert service._is_authorized(99999) is True
 
 
 class TestTelegramBotCommands:
@@ -105,10 +101,10 @@ class TestTelegramBotCommands:
     @pytest.fixture
     def bot_service(self):
         """테스트용 봇 서비스"""
-        with patch.dict(os.environ, {
-            'TELEGRAM_BOT_TOKEN': 'test_token',
-            'TELEGRAM_CHAT_ID': '12345'
-        }):
+        with patch('telegram_bot.settings') as mock_settings:
+            mock_settings.TELEGRAM_BOT_TOKEN = 'test_token'
+            mock_settings.TELEGRAM_CHAT_ID = '12345'
+
             from telegram_bot import TelegramBotService
             return TelegramBotService()
 
@@ -185,8 +181,8 @@ class TestTelegramBotCommands:
         mock_status.trading_mode.value = 'entry'
         mock_status.positions = []
         mock_status.can_open_new_position = True
-        mock_status.total_value = 1000000
-        mock_status.available_krw = 500000
+        mock_status.total_current_value = 1000000  # Updated attribute name
+        mock_status.krw_balance = 500000  # Updated attribute name
         mock_status.total_invested = 500000
 
         with patch('src.api.upbit_client.UpbitClient'):

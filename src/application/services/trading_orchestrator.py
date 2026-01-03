@@ -7,10 +7,12 @@ main.py에서 분리되어 Scheduler와 독립적으로 테스트 및 실행 가
 주요 책임:
 - 거래 사이클 실행 조율 (HybridTradingPipeline)
 - 포지션 관리 사이클 실행 조율 (PositionManagementPipeline)
+- Idempotency 체크 (중복 주문 방지)
 - Container를 통한 의존성 관리
 - 에러 처리 및 결과 표준화
 """
 from typing import Dict, Any, Optional, Callable, TYPE_CHECKING
+from datetime import datetime, timezone
 
 if TYPE_CHECKING:
     from src.container import Container
@@ -20,7 +22,16 @@ from src.trading.pipeline import (
     create_position_management_pipeline,
     PipelineContext
 )
+from src.application.ports.outbound.idempotency_port import (
+    IdempotencyPort,
+    make_idempotency_key
+)
 from src.utils.logger import Logger
+
+
+class IdempotencyError(Exception):
+    """Idempotency check failure exception."""
+    pass
 
 
 class TradingOrchestrator:
@@ -126,13 +137,57 @@ class TradingOrchestrator:
             }
         """
         try:
-            # 거래 타입 검증
+            # 1. Idempotency 체크 (Fail-close 정책)
+            # 동일 캔들/티커/액션은 1회만 실행
+            try:
+                candle_ts = self._get_current_candle_ts()
+                idempotency_key = make_idempotency_key(
+                    ticker=ticker,
+                    timeframe="1h",
+                    candle_ts=candle_ts,
+                    action="trading_cycle"
+                )
+
+                idempotency_port = self._container.get_idempotency_port()
+                is_duplicate = await idempotency_port.check_key(idempotency_key)
+
+                if is_duplicate:
+                    Logger.print_info(f"🔄 중복 거래 사이클 스킵: {idempotency_key}")
+                    return {
+                        'status': 'skipped',
+                        'decision': 'hold',
+                        'reason': f'Duplicate idempotency key: {idempotency_key}',
+                        'idempotency_key': idempotency_key,
+                        'pipeline_status': 'skipped'
+                    }
+            except IdempotencyError as e:
+                # Idempotency 체크 실패 시 거래 차단 (Fail-close)
+                Logger.print_error(f"Idempotency 체크 실패 - 거래 차단: {e}")
+                return {
+                    'status': 'blocked',
+                    'decision': 'hold',
+                    'reason': f'Idempotency check failed: {e}',
+                    'error': f'Idempotency error: {e}',
+                    'pipeline_status': 'blocked'
+                }
+            except Exception as e:
+                # 기타 예외도 Fail-close
+                Logger.print_error(f"Idempotency 체크 중 예외 - 거래 차단: {e}")
+                return {
+                    'status': 'blocked',
+                    'decision': 'hold',
+                    'reason': f'Idempotency check exception: {e}',
+                    'error': f'Idempotency error: {e}',
+                    'pipeline_status': 'blocked'
+                }
+
+            # 2. 거래 타입 검증
             if trading_type != 'spot':
                 raise NotImplementedError(
                     f"거래 타입 '{trading_type}'는 아직 지원되지 않습니다."
                 )
 
-            # 하이브리드 파이프라인 생성
+            # 3. 하이브리드 파이프라인 생성
             pipeline = create_hybrid_trading_pipeline(
                 # 리스크 관리 파라미터
                 stop_loss_pct=stop_loss_pct,
@@ -167,8 +222,17 @@ class TradingOrchestrator:
                 on_backtest_complete=self._on_backtest_complete
             )
 
-            # 파이프라인 실행
+            # 4. 파이프라인 실행
             result = await pipeline.execute(context)
+
+            # 5. 성공 시 idempotency 키 마킹
+            if result.get('status') in ['success', 'skipped']:
+                try:
+                    await idempotency_port.mark_key(idempotency_key, ttl_hours=24)
+                    result['idempotency_key'] = idempotency_key
+                except Exception as mark_error:
+                    # 마킹 실패는 경고만 (거래는 이미 실행됨)
+                    Logger.print_warning(f"Idempotency 키 마킹 실패 (거래는 완료됨): {mark_error}")
 
             return result
 
@@ -290,3 +354,47 @@ class TradingOrchestrator:
                 return None
         except AttributeError:
             return None
+
+    def _get_current_candle_ts(self, timeframe: str = "1h") -> int:
+        """
+        현재 캔들의 시작 타임스탬프를 계산합니다.
+
+        캔들 마감 정렬을 위해, 현재 시간을 기준으로
+        해당 타임프레임의 캔들 시작 시간을 반환합니다.
+
+        Args:
+            timeframe: 캔들 타임프레임 (기본 "1h")
+
+        Returns:
+            캔들 시작 Unix timestamp (초 단위)
+
+        Examples:
+            >>> # 09:30 에 호출 시
+            >>> ts = self._get_current_candle_ts("1h")
+            >>> # ts는 09:00의 timestamp (현재 캔들의 시작)
+
+            >>> # 09:45에 호출 시
+            >>> ts = self._get_current_candle_ts("15m")
+            >>> # ts는 09:45의 timestamp
+        """
+        now = datetime.now(timezone.utc)
+
+        if timeframe == "1h":
+            # 시간 단위로 내림
+            aligned = now.replace(minute=0, second=0, microsecond=0)
+        elif timeframe == "15m":
+            # 15분 단위로 내림
+            minute = (now.minute // 15) * 15
+            aligned = now.replace(minute=minute, second=0, microsecond=0)
+        elif timeframe == "4h":
+            # 4시간 단위로 내림
+            hour = (now.hour // 4) * 4
+            aligned = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        elif timeframe == "1d":
+            # 일 단위로 내림
+            aligned = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            # 기본: 시간 단위
+            aligned = now.replace(minute=0, second=0, microsecond=0)
+
+        return int(aligned.timestamp())

@@ -4,6 +4,11 @@ AI 자동매매 프로그램 메인 진입점 (Thin Entrypoint)
 이 스크립트는 TradingOrchestrator로 비즈니스 로직을 위임하는
 얇은 진입점(thin entrypoint)입니다.
 
+Clean Architecture (2026-01-03):
+- AIService, TradingService 제거
+- Container를 통해 모든 의존성 주입
+- UpbitClient, DataCollector만 레거시 래핑 유지
+
 스케줄러 통합:
 - execute_trading_cycle(): 스케줄러에서 호출 가능한 거래 사이클 함수 (레거시 호환)
 - execute_position_management_cycle(): 포지션 관리 함수 (레거시 호환)
@@ -11,9 +16,6 @@ AI 자동매매 프로그램 메인 진입점 (Thin Entrypoint)
 
 Note:
     실제 비즈니스 로직은 TradingOrchestrator에 있습니다.
-    이 파일의 함수들은 backward compatibility를 위해 유지됩니다.
-    Phase 4 완료 후 scheduler.py가 TradingOrchestrator를 직접 사용하면
-    이 파일의 레거시 함수들은 deprecated 됩니다.
 """
 import asyncio
 from typing import Dict, Any, TYPE_CHECKING
@@ -23,18 +25,13 @@ if TYPE_CHECKING:
     from src.container import Container
 from src.api.upbit_client import UpbitClient
 from src.data.collector import DataCollector
-from src.trading.service import TradingService
-from src.ai.service import AIService
 from src.utils.logger import Logger
-from src.trading.pipeline import create_hybrid_trading_pipeline, PipelineContext
 
 
 async def execute_trading_cycle(
     ticker: str,
-    upbit_client: UpbitClient,
-    data_collector: DataCollector,
-    trading_service: TradingService,
-    ai_service: AIService,
+    upbit_client: UpbitClient = None,
+    data_collector: DataCollector = None,
     trading_type: str = 'spot',
     enable_scanning: bool = True,
     max_positions: int = 3,
@@ -51,22 +48,22 @@ async def execute_trading_cycle(
     # 클린 아키텍처 의존성 컨테이너
     container: 'Container' = None,
     # 콜백 함수 (백테스팅 완료 후 호출)
-    on_backtest_complete: callable = None
+    on_backtest_complete: callable = None,
+    # 레거시 호환성 (무시됨)
+    **legacy_kwargs
 ) -> Dict[str, Any]:
     """
     한 번의 거래 사이클 실행 (레거시 호환 래퍼)
 
-    Note:
-        이 함수는 backward compatibility를 위해 유지됩니다.
-        내부적으로 TradingOrchestrator를 사용합니다.
-        새 코드에서는 TradingOrchestrator를 직접 사용하세요.
+    Clean Architecture:
+        - AIService, TradingService 파라미터 제거
+        - Container를 통해 모든 의존성 주입
+        - upbit_client, data_collector는 레거시 호환용
 
     Args:
         ticker: 거래 종목
-        upbit_client: Upbit 클라이언트
-        data_collector: 데이터 수집기
-        trading_service: 거래 서비스
-        ai_service: AI 서비스
+        upbit_client: Upbit 클라이언트 (optional, 레거시 호환)
+        data_collector: 데이터 수집기 (optional, 레거시 호환)
         trading_type: 거래 타입
         enable_scanning: 멀티코인 스캐닝 활성화 여부
         max_positions: 최대 동시 포지션 수
@@ -80,6 +77,7 @@ async def execute_trading_cycle(
         final_select_n: 최종 선택 N개
         container: 클린 아키텍처 의존성 컨테이너
         on_backtest_complete: 백테스트 완료 콜백
+        **legacy_kwargs: 레거시 호환성 (ai_service, trading_service 등 무시)
 
     Returns:
         거래 사이클 결과 Dict
@@ -87,9 +85,13 @@ async def execute_trading_cycle(
     # Container가 없으면 레거시 서비스로 생성
     if container is None:
         from src.container import Container
+        # upbit_client, data_collector가 없으면 새로 생성
+        if upbit_client is None:
+            upbit_client = UpbitClient()
+        if data_collector is None:
+            data_collector = DataCollector()
         container = Container.create_from_legacy(
             upbit_client=upbit_client,
-            ai_service=ai_service,
             data_collector=data_collector
         )
 
@@ -121,30 +123,30 @@ async def execute_trading_cycle(
 async def execute_position_management_cycle(
     upbit_client: UpbitClient = None,
     data_collector: DataCollector = None,
-    trading_service: TradingService = None,
     # 리스크 관리 파라미터
     stop_loss_pct: float = -5.0,
     take_profit_pct: float = 10.0,
     max_positions: int = 3,
     # 클린 아키텍처 의존성 컨테이너
-    container: 'Container' = None
+    container: 'Container' = None,
+    # 레거시 호환성 (무시됨)
+    **legacy_kwargs
 ) -> Dict[str, Any]:
     """
     포지션 관리 전용 사이클 실행 (레거시 호환 래퍼)
 
-    Note:
-        이 함수는 backward compatibility를 위해 유지됩니다.
-        내부적으로 TradingOrchestrator를 사용합니다.
-        새 코드에서는 TradingOrchestrator를 직접 사용하세요.
+    Clean Architecture:
+        - trading_service 파라미터 제거
+        - Container를 통해 모든 의존성 주입
 
     Args:
-        upbit_client: Upbit 클라이언트
-        data_collector: 데이터 수집기
-        trading_service: 거래 서비스
+        upbit_client: Upbit 클라이언트 (optional, 레거시 호환)
+        data_collector: 데이터 수집기 (optional, 레거시 호환)
         stop_loss_pct: 손절 비율
         take_profit_pct: 익절 비율
         max_positions: 최대 동시 포지션 수
         container: 클린 아키텍처 의존성 컨테이너
+        **legacy_kwargs: 레거시 호환성 (trading_service 등 무시)
 
     Returns:
         포지션 관리 결과 Dict
@@ -152,9 +154,13 @@ async def execute_position_management_cycle(
     # Container가 없으면 레거시 서비스로 생성
     if container is None:
         from src.container import Container
+        # upbit_client, data_collector가 없으면 새로 생성
+        if upbit_client is None:
+            upbit_client = UpbitClient()
+        if data_collector is None:
+            data_collector = DataCollector()
         container = Container.create_from_legacy(
             upbit_client=upbit_client,
-            ai_service=None,
             data_collector=data_collector
         )
 
@@ -177,17 +183,14 @@ async def main():
     # 프로그램 시작
     Logger.print_program_start(ticker)
 
-    # 클라이언트 및 서비스 초기화 (레거시)
+    # Clean Architecture: Container를 통해 모든 의존성 주입
     upbit_client = UpbitClient()
     data_collector = DataCollector()
-    trading_service = TradingService(upbit_client)
-    ai_service = AIService()
 
-    # Container 초기화
+    # Container 초기화 (AIService, TradingService 불필요)
     from src.container import Container
     container = Container.create_from_legacy(
         upbit_client=upbit_client,
-        ai_service=ai_service,
         data_collector=data_collector
     )
 

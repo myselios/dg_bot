@@ -168,3 +168,108 @@ class TestContainerWithMocks:
         assert container.get_ai_port() is mock_ai
         assert container.get_market_data_port() is mock_market_data
         assert container.get_persistence_port() is mock_persistence
+
+
+class TestContainerPersistenceSelection:
+    """Test Container selects correct PersistencePort based on session_factory."""
+
+    def test_container_uses_inmemory_without_session_factory(self):
+        """Without session_factory, Container should use InMemoryPersistenceAdapter."""
+        from src.container import Container
+        from src.infrastructure.adapters.persistence.memory_adapter import InMemoryPersistenceAdapter
+
+        container = Container()  # No session_factory
+        persistence = container.get_persistence_port()
+
+        assert isinstance(persistence, InMemoryPersistenceAdapter)
+
+    def test_container_uses_postgres_with_session_factory(self):
+        """With session_factory, Container should use PostgresPersistenceAdapter."""
+        from src.container import Container
+        from src.infrastructure.adapters.persistence.postgres_persistence_adapter import PostgresPersistenceAdapter
+
+        mock_session_factory = MagicMock()
+
+        container = Container(session_factory=mock_session_factory)
+        persistence = container.get_persistence_port()
+
+        assert isinstance(persistence, PostgresPersistenceAdapter)
+
+    def test_create_from_legacy_uses_postgres_with_session_factory(self):
+        """create_from_legacy should use PostgresPersistenceAdapter when session_factory is provided."""
+        from src.container import Container
+        from src.infrastructure.adapters.persistence.postgres_persistence_adapter import PostgresPersistenceAdapter
+
+        mock_session_factory = MagicMock()
+
+        container = Container.create_from_legacy(session_factory=mock_session_factory)
+        persistence = container.get_persistence_port()
+
+        assert isinstance(persistence, PostgresPersistenceAdapter)
+
+    def test_create_from_legacy_uses_inmemory_without_session_factory(self):
+        """create_from_legacy should use InMemoryPersistenceAdapter without session_factory."""
+        from src.container import Container
+        from src.infrastructure.adapters.persistence.memory_adapter import InMemoryPersistenceAdapter
+
+        container = Container.create_from_legacy()  # No session_factory
+        persistence = container.get_persistence_port()
+
+        assert isinstance(persistence, InMemoryPersistenceAdapter)
+
+
+class TestContainerExecutionPort:
+    """Test Container.get_execution_port() for live/backtest mode selection."""
+
+    def test_get_execution_port_live_mode_returns_live_adapter(self):
+        """Live mode should return LiveExecutionAdapter."""
+        from src.container import Container
+        from src.infrastructure.adapters.execution.live_execution_adapter import LiveExecutionAdapter
+
+        container = Container()
+        execution_port = container.get_execution_port(mode="live")
+
+        assert isinstance(execution_port, LiveExecutionAdapter)
+
+    def test_get_execution_port_backtest_mode_returns_intrabar_adapter(self):
+        """Backtest mode should return IntrabarExecutionAdapter."""
+        from src.container import Container
+        from src.infrastructure.adapters.execution.intrabar_execution_adapter import IntrabarExecutionAdapter
+
+        container = Container()
+        execution_port = container.get_execution_port(mode="backtest")
+
+        assert isinstance(execution_port, IntrabarExecutionAdapter)
+
+    def test_get_execution_port_invalid_mode_raises_error(self):
+        """Invalid mode should raise ValueError."""
+        from src.container import Container
+        import pytest
+
+        container = Container()
+
+        with pytest.raises(ValueError) as exc_info:
+            container.get_execution_port(mode="invalid")
+
+        assert "Unknown execution mode" in str(exc_info.value)
+
+    def test_get_execution_port_default_is_live(self):
+        """Default mode should be 'live'."""
+        from src.container import Container
+        from src.infrastructure.adapters.execution.live_execution_adapter import LiveExecutionAdapter
+
+        container = Container()
+        execution_port = container.get_execution_port()  # No mode specified
+
+        assert isinstance(execution_port, LiveExecutionAdapter)
+
+    def test_live_adapter_has_exchange_port(self):
+        """LiveExecutionAdapter should have access to ExchangePort."""
+        from src.container import Container
+
+        container = Container()
+        execution_port = container.get_execution_port(mode="live")
+
+        # LiveExecutionAdapter stores exchange_port as _exchange
+        assert hasattr(execution_port, '_exchange')
+        assert execution_port._exchange is not None

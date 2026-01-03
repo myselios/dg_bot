@@ -498,29 +498,24 @@ class TestCriticalIssues:
         """
         from main import execute_trading_cycle
 
-        # 파이프라인 아키텍처에서는 QuickBacktestFilter가 AnalysisStage 내부에서 사용됨
-        # 파이프라인 전체를 mock하여 테스트
-        with patch('main.create_hybrid_trading_pipeline') as mock_pipeline:
-            # 백테스팅 실패 시 파이프라인이 반환할 결과 모의
-            mock_result = {
-                'status': 'success',
-                'decision': 'hold',
-                'reason': '백테스팅 필터링 실패: 수익률 기준 미달',
-                'pipeline_status': 'completed'
-            }
+        # Clean Architecture: TradingOrchestrator 모킹
+        mock_result = {
+            'status': 'success',
+            'decision': 'hold',
+            'reason': '백테스팅 필터링 실패: 수익률 기준 미달',
+            'pipeline_status': 'completed'
+        }
 
-            from unittest.mock import AsyncMock
-            mock_pipeline_instance = Mock()
-            mock_pipeline_instance.execute = AsyncMock(return_value=mock_result)
-            mock_pipeline.return_value = mock_pipeline_instance
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_trading_cycle = AsyncMock(return_value=mock_result)
+        mock_orchestrator.set_on_backtest_complete = MagicMock()
 
+        with patch('src.application.services.trading_orchestrator.TradingOrchestrator', return_value=mock_orchestrator):
             # When: execute_trading_cycle 호출
             result = await execute_trading_cycle(
                 ticker='KRW-ETH',
                 upbit_client=Mock(),
                 data_collector=Mock(),
-                trading_service=Mock(),
-                ai_service=Mock()
             )
 
             # Then: 올바른 구조의 dict 반환 확인
@@ -546,29 +541,25 @@ class TestCriticalIssues:
         """
         from main import execute_trading_cycle
 
-        # 파이프라인 전체를 mock하여 테스트
-        with patch('main.create_hybrid_trading_pipeline') as mock_pipeline:
-            # 차트 데이터 실패 시 파이프라인이 반환할 결과 모의
-            mock_result = {
-                'status': 'failed',
-                'decision': 'hold',
-                'reason': '차트 데이터 조회 실패',
-                'error': '차트 데이터를 가져올 수 없습니다',
-                'pipeline_status': 'failed'
-            }
+        # Clean Architecture: TradingOrchestrator 모킹
+        mock_result = {
+            'status': 'failed',
+            'decision': 'hold',
+            'reason': '차트 데이터 조회 실패',
+            'error': '차트 데이터를 가져올 수 없습니다',
+            'pipeline_status': 'failed'
+        }
 
-            from unittest.mock import AsyncMock
-            mock_pipeline_instance = Mock()
-            mock_pipeline_instance.execute = AsyncMock(return_value=mock_result)
-            mock_pipeline.return_value = mock_pipeline_instance
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_trading_cycle = AsyncMock(return_value=mock_result)
+        mock_orchestrator.set_on_backtest_complete = MagicMock()
 
+        with patch('src.application.services.trading_orchestrator.TradingOrchestrator', return_value=mock_orchestrator):
             # When: execute_trading_cycle 호출
             result = await execute_trading_cycle(
                 ticker='KRW-ETH',
                 upbit_client=Mock(),
                 data_collector=Mock(),
-                trading_service=Mock(),
-                ai_service=Mock()
             )
 
             # Then: 올바른 구조의 dict 반환 확인

@@ -10,6 +10,21 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from typing import Dict, Any
 
 
+def create_mock_container():
+    """Create a mock container with properly mocked idempotency port."""
+    mock_container = MagicMock()
+
+    # Mock IdempotencyPort - must be properly async
+    mock_idempotency_port = MagicMock()
+    mock_idempotency_port.check_key = AsyncMock(return_value=False)  # Not a duplicate
+    mock_idempotency_port.mark_key = AsyncMock(return_value=None)
+
+    # Use spec to ensure consistent behavior
+    mock_container.get_idempotency_port.return_value = mock_idempotency_port
+
+    return mock_container
+
+
 class TestTradingOrchestratorExists:
     """TradingOrchestrator 클래스 존재 테스트"""
 
@@ -71,7 +86,7 @@ class TestTradingOrchestratorExecuteTradingCycle:
         from src.application.services.trading_orchestrator import TradingOrchestrator
 
         # Given
-        mock_container = MagicMock()
+        mock_container = create_mock_container()
 
         # Mock Pipeline execute result
         mock_pipeline = AsyncMock()
@@ -101,7 +116,7 @@ class TestTradingOrchestratorExecuteTradingCycle:
         from src.application.services.trading_orchestrator import TradingOrchestrator
 
         # Given
-        mock_container = MagicMock()
+        mock_container = create_mock_container()
         mock_pipeline = AsyncMock()
         mock_pipeline.execute = AsyncMock(return_value={'status': 'success'})
 
@@ -124,7 +139,7 @@ class TestTradingOrchestratorExecuteTradingCycle:
         from src.application.services.trading_orchestrator import TradingOrchestrator
 
         # Given
-        mock_container = MagicMock()
+        mock_container = create_mock_container()
         mock_pipeline = AsyncMock()
         mock_pipeline.execute = AsyncMock(return_value={'status': 'success'})
 
@@ -162,7 +177,7 @@ class TestTradingOrchestratorExecuteTradingCycle:
         from src.application.services.trading_orchestrator import TradingOrchestrator
 
         # Given
-        mock_container = MagicMock()
+        mock_container = create_mock_container()
         mock_pipeline = AsyncMock()
         mock_pipeline.execute = AsyncMock(return_value={'status': 'success'})
 
@@ -192,7 +207,7 @@ class TestTradingOrchestratorExecuteTradingCycle:
         from src.application.services.trading_orchestrator import TradingOrchestrator
 
         # Given
-        mock_container = MagicMock()
+        mock_container = create_mock_container()
         mock_pipeline = AsyncMock()
         mock_pipeline.execute = AsyncMock(return_value={'status': 'success'})
 
@@ -293,7 +308,7 @@ class TestTradingOrchestratorErrorHandling:
         from src.application.services.trading_orchestrator import TradingOrchestrator
 
         # Given
-        mock_container = MagicMock()
+        mock_container = create_mock_container()
         mock_pipeline = AsyncMock()
         mock_pipeline.execute = AsyncMock(side_effect=Exception("Test error"))
 
@@ -337,7 +352,7 @@ class TestTradingOrchestratorErrorHandling:
         from src.application.services.trading_orchestrator import TradingOrchestrator
 
         # Given
-        mock_container = MagicMock()
+        mock_container = create_mock_container()
         orchestrator = TradingOrchestrator(container=mock_container)
 
         # When
@@ -376,7 +391,7 @@ class TestTradingOrchestratorCallbacks:
         from src.application.services.trading_orchestrator import TradingOrchestrator
 
         # Given
-        mock_container = MagicMock()
+        mock_container = create_mock_container()
         mock_pipeline = AsyncMock()
         mock_pipeline.execute = AsyncMock(return_value={'status': 'success'})
         callback = MagicMock()
@@ -394,8 +409,10 @@ class TestTradingOrchestratorCallbacks:
                 await orchestrator.execute_trading_cycle(ticker="KRW-BTC")
 
                 # Then
-                call_kwargs = mock_ctx_class.call_args[1]
-                assert call_kwargs.get('on_backtest_complete') is callback
+                mock_ctx_class.assert_called()
+                if mock_ctx_class.call_args:
+                    call_kwargs = mock_ctx_class.call_args[1]
+                    assert call_kwargs.get('on_backtest_complete') is callback
 
 
 class TestContainerIntegration:
