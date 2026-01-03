@@ -4,8 +4,8 @@
 
 **작성일**: 2026-01-02
 **마지막 업데이트**: 2026-01-03
-**버전**: 4.1.0
-**상태**: ✅ 구현 완료 (CronTrigger + Lock/Idempotency 적용)
+**버전**: 4.5.0
+**상태**: ✅ 구현 완료 (CronTrigger + Lock/Idempotency 완전 적용)
 
 ---
 
@@ -913,6 +913,14 @@ DELETE FROM ai_decisions WHERE created_at < NOW() - INTERVAL '30 days';
 
 ## 🔄 변경 이력
 
+### v4.5.0 (2026-01-03)
+- **스케줄러 안정성 완전 구현**
+  - `IdempotencyPort`/`PostgresIdempotencyAdapter`: 동일 캔들 중복 주문 방지
+  - `LockPort`/`PostgresLockAdapter`: PostgreSQL Advisory Lock 기반 분산 락
+  - `CronTrigger` 전환 완료: 캔들 마감 시점 정렬 (01분 실행)
+- Container에서 Lock/Idempotency Port 제공
+- TradingOrchestrator에서 Lock/Idempotency 통합 사용
+
 ### v4.1.0 (2026-01-02)
 - Clean Architecture 마이그레이션 완료
 - 파이프라인 스테이지 async/await 전환
@@ -930,5 +938,5 @@ DELETE FROM ai_decisions WHERE created_at < NOW() - INTERVAL '30 days';
 ---
 
 **작성자**: AI Assistant
-**최종 업데이트**: 2026-01-02
-**상태**: ✅ Clean Architecture 마이그레이션 완료
+**최종 업데이트**: 2026-01-03
+**상태**: ✅ 스케줄러 안정성 완전 구현 (Lock + Idempotency)

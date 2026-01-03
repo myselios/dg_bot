@@ -521,6 +521,10 @@ decision = AIDecisionResult.allow(
 | `PromptPort` | 프롬프트 생성/관리 | `get_current_version()`, `render_prompt()` |
 | `ValidationPort` | 응답/판단 검증 | `validate_response()`, `validate_decision()` |
 | `DecisionRecordPort` | 판단 기록 | `record()`, `link_pnl()`, `get_by_id()` |
+| `IdempotencyPort` | 중복 주문 방지 | `check_key()`, `mark_key()`, `cleanup_expired()` |
+| `LockPort` | 분산 락 관리 | `acquire()`, `release()`, `is_locked()`, `lock()` |
+| `ExecutionPort` | 거래 체결 추상화 | `execute()`, `supports_intrabar()` |
+| `TimeProviderPort` | 시간 추상화 | `now()`, `current_candle_time()` |
 
 #### 5.3 UseCase (`src/application/use_cases/`)
 
@@ -561,6 +565,13 @@ result = await use_case.execute(BreakoutAnalysisRequest(
 | `ValidationAdapter` | ValidationPort | 응답 형식 검증, RSI/MACD 검증, HOLD override |
 | `DecisionRecordAdapter` | DecisionRecordPort | PostgreSQL 저장, PnL 연결 |
 | `EnhancedOpenAIAdapter` | AIClient | Rate limit, Circuit breaker, Retry, HOLD fallback |
+| `PostgresIdempotencyAdapter` | IdempotencyPort | PostgreSQL `idempotency_keys` 테이블 기반 중복 방지 |
+| `MemoryIdempotencyAdapter` | IdempotencyPort | In-Memory 기반 (테스트용) |
+| `PostgresLockAdapter` | LockPort | PostgreSQL Advisory Lock (`pg_advisory_lock`) |
+| `MemoryLockAdapter` | LockPort | In-Memory 기반 (테스트용) |
+| `IntrabarExecutionAdapter` | ExecutionPort | 봉 중간 체결 시뮬레이션 (high/low 기반 스탑) |
+| `SimpleExecutionAdapter` | ExecutionPort | 단순 체결 (봉 마감가) |
+| `RiskStateRepository` | - | 리스크 상태 PostgreSQL 영속성 |
 
 **Rate Limiter & Circuit Breaker**:
 ```python
@@ -871,12 +882,17 @@ APScheduler (듀얼 타임프레임)
 ```
 
 **스케줄러 작업 목록**:
-| 작업 | 주기 | 설명 |
-|------|------|------|
-| `trading_job` | 1시간 | 멀티코인 스캔 + AI 분석 + 진입 탐색 |
-| `position_management_job` | 15분 | 보유 포지션 손절/익절 관리 |
-| `portfolio_snapshot_job` | 1시간 | 포트폴리오 스냅샷 DB 저장 |
-| `daily_report_job` | 매일 09:00 | 일일 리포트 텔레그램 발송 |
+| 작업 | 주기 | 설명 | 안정성 |
+|------|------|------|--------|
+| `trading_job` | 매시 01분 | 멀티코인 스캔 + AI 분석 + 진입 탐색 | Lock + Idempotency |
+| `position_management_job` | :01/:16/:31/:46 | 보유 포지션 손절/익절 관리 | Lock |
+| `portfolio_snapshot_job` | 매시 01분 | 포트폴리오 스냅샷 DB 저장 | - |
+| `daily_report_job` | 매일 09:00 | 일일 리포트 텔레그램 발송 | - |
+
+**스케줄러 안정성 메커니즘**:
+- **CronTrigger**: 캔들 마감 정렬 (IntervalTrigger 대체)
+- **PostgreSQL Advisory Lock**: 작업 간 상호 배제 (`LOCK_IDS`: trading=1001, position=1002)
+- **Idempotency Key**: 동일 캔들 중복 주문 방지 (`ticker-timeframe-candle_ts-action`)
 
 ## 🏗 계층 구조
 
@@ -1190,13 +1206,18 @@ risk_safe_mode_active               # Safe Mode 활성 상태
 ```
 src/domain/
 ├── entities/
-│   └── trade.py           # Trade, Order, Position 엔티티
+│   ├── trade.py           # Trade, Order, Position 엔티티
+│   └── signal.py          # Signal 엔티티 (진입/청산 신호)
 ├── value_objects/
 │   ├── money.py           # Money, Currency 값 객체
-│   └── percentage.py      # Percentage, Ratio 값 객체
+│   ├── percentage.py      # Percentage, Ratio 값 객체
+│   ├── market_summary.py  # MarketSummary (regime, ATR%, 돌파강도)
+│   ├── ai_decision_result.py  # AIDecisionResult (ALLOW/BLOCK/HOLD)
+│   └── prompt_version.py  # PromptVersion (version, hash)
 ├── services/
 │   ├── fee_calculator.py  # 수수료 계산 도메인 서비스
-│   └── risk_calculator.py # 리스크 평가 도메인 서비스
+│   ├── risk_calculator.py # 리스크 평가 도메인 서비스
+│   └── breakout_filter.py # BreakoutFilter (돌파 신호 필터링)
 └── exceptions.py          # 도메인 예외
 ```
 
@@ -1208,11 +1229,21 @@ src/application/
 │       ├── exchange_port.py     # 거래소 포트 인터페이스
 │       ├── ai_port.py           # AI 분석 포트 인터페이스
 │       ├── market_data_port.py  # 시장 데이터 포트 인터페이스
-│       └── persistence_port.py  # 영속성 포트 인터페이스
+│       ├── persistence_port.py  # 영속성 포트 인터페이스
+│       ├── idempotency_port.py  # 중복 방지 포트 인터페이스
+│       ├── lock_port.py         # 분산 락 포트 인터페이스
+│       ├── prompt_port.py       # 프롬프트 관리 포트 인터페이스
+│       ├── validation_port.py   # 검증 포트 인터페이스
+│       ├── execution_port.py    # 체결 추상화 포트 인터페이스
+│       ├── decision_record_port.py  # 판단 기록 포트 인터페이스
+│       └── time_provider_port.py    # 시간 추상화 포트 인터페이스
 ├── use_cases/
 │   ├── execute_trade.py    # 거래 실행 유즈케이스
 │   ├── analyze_market.py   # 시장 분석 유즈케이스
-│   └── manage_position.py  # 포지션 관리 유즈케이스
+│   ├── manage_position.py  # 포지션 관리 유즈케이스
+│   └── analyze_breakout.py # 돌파 분석 유즈케이스 (통합)
+├── services/
+│   └── trading_orchestrator.py  # TradingOrchestrator (워크플로우 조율)
 └── dto/
     ├── analysis.py         # 분석 관련 DTO
     └── trading.py          # 거래 관련 DTO
@@ -1221,16 +1252,34 @@ src/application/
 #### Infrastructure Layer (`src/infrastructure/`)
 ```
 src/infrastructure/
-└── adapters/
-    ├── exchange/
-    │   └── upbit_adapter.py       # Upbit ExchangePort 구현
-    ├── ai/
-    │   └── openai_adapter.py      # OpenAI AIPort 구현
-    ├── market_data/
-    │   └── upbit_data_adapter.py  # Upbit MarketDataPort 구현
-    ├── persistence/
-    │   └── memory_adapter.py      # In-Memory PersistencePort 구현
-    └── legacy_bridge.py           # 레거시 서비스 브릿지 어댑터
+├── adapters/
+│   ├── exchange/
+│   │   └── upbit_adapter.py           # Upbit ExchangePort 구현
+│   ├── ai/
+│   │   ├── openai_adapter.py          # OpenAI AIPort 구현
+│   │   └── enhanced_openai_adapter.py # EnhancedOpenAI (Rate limit, Circuit breaker)
+│   ├── market_data/
+│   │   └── upbit_data_adapter.py      # Upbit MarketDataPort 구현
+│   ├── persistence/
+│   │   ├── memory_adapter.py          # In-Memory PersistencePort 구현
+│   │   ├── memory_idempotency_adapter.py   # In-Memory IdempotencyPort
+│   │   ├── memory_lock_adapter.py          # In-Memory LockPort
+│   │   ├── postgres_idempotency_adapter.py # PostgreSQL IdempotencyPort
+│   │   ├── postgres_lock_adapter.py        # PostgreSQL Advisory Lock
+│   │   ├── decision_record_adapter.py      # DecisionRecordPort 구현
+│   │   └── risk_state_repository.py        # RiskState PostgreSQL 저장소
+│   ├── execution/
+│   │   ├── simple_execution_adapter.py     # 단순 체결 (봉 마감가)
+│   │   └── intrabar_execution_adapter.py   # Intrabar 체결 시뮬레이션
+│   ├── prompt/
+│   │   └── yaml_prompt_adapter.py     # YAML 프롬프트 관리
+│   ├── validation/
+│   │   └── validation_adapter.py      # 검증 로직 구현
+│   └── legacy_bridge.py               # 레거시 서비스 브릿지 어댑터
+└── prompts/
+    ├── entry.yaml                     # 진입 판단 프롬프트
+    ├── exit.yaml                      # 청산 판단 프롬프트
+    └── general.yaml                   # 일반 분석 프롬프트
 ```
 
 #### Presentation Layer (`src/presentation/`)
@@ -1312,7 +1361,46 @@ python -m pytest tests/ --cov=src --cov-report=html
 
 ## 🔄 변경 이력
 
-### v4.4.0 (2026-01-03) - AI 클린 아키텍처 리팩토링 🆕
+### v4.5.0 (2026-01-03) - 스케줄러 안정성 및 완전 마이그레이션 🆕
+
+**주요 변경사항**:
+
+1. **스케줄러 안정성 강화**
+   - `IdempotencyPort`/`PostgresIdempotencyAdapter`: 동일 캔들 중복 주문 방지
+   - `LockPort`/`PostgresLockAdapter`: PostgreSQL Advisory Lock 기반 분산 락
+   - `CronTrigger` 전환: 캔들 마감 시점 정렬 (01분 실행)
+
+2. **새 Port 인터페이스**
+   - `IdempotencyPort`: 중복 방지 키 관리 (`check_key()`, `mark_key()`)
+   - `LockPort`: 분산 락 (`acquire()`, `release()`, `lock()` context manager)
+   - `ExecutionPort`: 체결 추상화 (`execute()`, `supports_intrabar()`)
+   - `TimeProviderPort`: 시간 추상화 (테스트 용이성)
+
+3. **새 Adapter 구현**
+   - `PostgresIdempotencyAdapter`: `idempotency_keys` 테이블 기반
+   - `PostgresLockAdapter`: `pg_advisory_lock` 사용
+   - `MemoryIdempotencyAdapter`/`MemoryLockAdapter`: 테스트용
+   - `IntrabarExecutionAdapter`: 봉 중간 체결 시뮬레이션
+   - `RiskStateRepository`: 리스크 상태 PostgreSQL 저장
+
+4. **Domain Layer 확장**
+   - `Signal` 엔티티: 진입/청산 신호 모델
+   - `BreakoutFilter` 서비스: 돌파 신호 필터링 로직
+
+5. **Application Layer 확장**
+   - `TradingOrchestrator`: 전체 거래 워크플로우 조율
+   - `AnalyzeBreakoutUseCase`: 돌파 분석 통합 유즈케이스
+
+6. **Container 확장**
+   - `get_idempotency_port()`: IdempotencyPort 제공
+   - `get_lock_port()`: LockPort 제공
+   - 스케줄러에서 Container 완전 사용
+
+**테스트**: 16,000+ 라인 추가, TDD 엄격 준수
+
+---
+
+### v4.4.0 (2026-01-03) - AI 클린 아키텍처 리팩토링
 
 **주요 변경사항**:
 
@@ -1347,8 +1435,6 @@ python -m pytest tests/ --cov=src --cov-report=html
 7. **UseCase 통합**
    - `AnalyzeBreakoutUseCase`: 돌파 분석 워크플로우 통합
    - `BreakoutAnalysisRequest/Result`: 표준화된 DTO
-
-**테스트**: 186개 추가 (총 643개), TDD 엄격 준수
 
 **마이그레이션 가이드**: [MIGRATION_AI_CLEAN_ARCHITECTURE.md](./MIGRATION_AI_CLEAN_ARCHITECTURE.md)
 
@@ -1452,8 +1538,8 @@ python -m pytest tests/ --cov=src --cov-report=html
 
 ---
 
-**현재 버전**: 4.4.0
+**현재 버전**: 4.5.0
 **마지막 업데이트**: 2026-01-03
-**아키텍처**: Clean Architecture + AI Refactoring + Multi-Coin Scanning + Dual-Timeframe Pipeline
+**아키텍처**: Clean Architecture + Scheduler Stability + Multi-Coin Scanning + Dual-Timeframe Pipeline
 **상태**: 프로덕션 준비 완료 ✅
-**문서 상태**: ✨ AI 클린 아키텍처 리팩토링 완료 (Phase 1-7)
+**문서 상태**: ✨ 스케줄러 안정성 및 완전 마이그레이션 완료

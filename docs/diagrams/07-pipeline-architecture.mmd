@@ -1,12 +1,18 @@
 flowchart TB
-    subgraph Main["main.py - 듀얼 타임프레임"]
+    subgraph Main["main.py / scheduler_main.py - 듀얼 타임프레임"]
         START((시작))
         SELECT{사이클 타입}
     end
 
+    subgraph Container["Container (DI)"]
+        DI_CONTAINER[Container]
+        DI_PORTS["Ports<br/>- ExchangePort<br/>- AIPort<br/>- IdempotencyPort<br/>- LockPort"]
+        DI_USECASES["UseCases<br/>- ExecuteTradeUseCase<br/>- AnalyzeMarketUseCase<br/>- AnalyzeBreakoutUseCase"]
+    end
+
     subgraph Cycles["사이클 타입"]
-        TRADING["execute_trading_cycle()<br/>(1시간 주기)"]
-        POSITION["execute_position_management_cycle()<br/>(15분 주기)"]
+        TRADING["execute_trading_cycle()<br/>(매시 01분)"]
+        POSITION["execute_position_management_cycle()<br/>(:01/:16/:31/:46)"]
     end
 
     subgraph Pipelines["파이프라인 타입"]
@@ -16,18 +22,18 @@ flowchart TB
 
     subgraph HybridPipeline["하이브리드 파이프라인 (4 스테이지)"]
         H1[HybridRiskCheckStage<br/>리스크 체크 + 코인 스캔]
-        H2[DataCollectionStage]
-        H3[AnalysisStage]
-        H4[ExecutionStage]
+        H2[DataCollectionStage<br/>시장 데이터 수집]
+        H3[AnalysisStage<br/>AI 분석 + 검증]
+        H4[ExecutionStage<br/>거래 실행]
     end
 
     subgraph PositionPipeline["포지션 관리 파이프라인 (2 스테이지)"]
-        P1[PositionCheckStage]
-        P2[PositionExecutionStage]
+        P1[PositionCheckStage<br/>규칙 기반 체크]
+        P2[PositionExecutionStage<br/>청산 실행]
     end
 
     subgraph Context["PipelineContext"]
-        CTX_BASE["기본 정보<br/>- ticker<br/>- trading_type<br/>- 서비스 인스턴스"]
+        CTX_BASE["기본 정보<br/>- ticker<br/>- container (DI)<br/>- trading_type"]
         CTX_DATA["수집 데이터<br/>- chart_data<br/>- orderbook<br/>- technical_indicators"]
         CTX_ANALYSIS["분석 결과<br/>- ai_result<br/>- backtest_result<br/>- validation_result"]
         CTX_RISK["리스크 관리<br/>- risk_manager<br/>- position_check<br/>- circuit_check"]
@@ -40,8 +46,18 @@ flowchart TB
         SR_MESSAGE["message: str"]
     end
 
-    START --> SELECT
-    SELECT -->|1시간 주기| TRADING
+    subgraph CleanArch["Clean Architecture Layers"]
+        DOMAIN["Domain Layer<br/>- Trade, Signal 엔티티<br/>- Money, Percentage 값객체<br/>- BreakoutFilter 서비스"]
+        APP["Application Layer<br/>- UseCases<br/>- TradingOrchestrator<br/>- Ports 인터페이스"]
+        INFRA["Infrastructure Layer<br/>- Adapters (Exchange, AI, DB)<br/>- PostgreSQL Lock/Idempotency"]
+    end
+
+    START --> DI_CONTAINER
+    DI_CONTAINER --> DI_PORTS
+    DI_CONTAINER --> DI_USECASES
+    DI_CONTAINER --> SELECT
+
+    SELECT -->|매시 01분| TRADING
     SELECT -->|15분 주기| POSITION
 
     TRADING --> HYBRID
@@ -55,6 +71,10 @@ flowchart TB
     POSMGMT --> P1
     P1 -->|continue| P2
 
+    H1 -.->|Container 사용| DI_USECASES
+    H3 -.->|AnalyzeMarketUseCase| DI_USECASES
+    H4 -.->|ExecuteTradeUseCase| DI_USECASES
+
     H1 -.->|읽기/쓰기| CTX_BASE
     H1 -.->|읽기/쓰기| CTX_RISK
     H2 -.->|읽기/쓰기| CTX_DATA
@@ -63,6 +83,10 @@ flowchart TB
 
     P1 -.->|읽기/쓰기| CTX_BASE
     P2 -.->|읽기| CTX_BASE
+
+    DI_USECASES -.-> APP
+    APP -.-> DOMAIN
+    INFRA -.-> APP
 
     style TRADING fill:#e1f5fe
     style POSITION fill:#fff3e0
@@ -73,4 +97,12 @@ flowchart TB
     style H4 fill:#bbdefb
     style P1 fill:#ffe0b2
     style P2 fill:#ffe0b2
+
+    style DOMAIN fill:#c8e6c9
+    style APP fill:#c8e6c9
+    style INFRA fill:#c8e6c9
+
+    style DI_CONTAINER fill:#e1bee7
+    style DI_PORTS fill:#e1bee7
+    style DI_USECASES fill:#e1bee7
 

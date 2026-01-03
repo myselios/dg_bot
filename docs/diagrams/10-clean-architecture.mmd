@@ -1,0 +1,155 @@
+flowchart TB
+    subgraph Presentation["Presentation Layer"]
+        CLI[CLI Runner<br/>trading_runner.py]
+        SCHEDULER[Scheduler<br/>scheduler_main.py]
+        API[FastAPI<br/>backend/app/main.py]
+    end
+
+    subgraph Application["Application Layer"]
+        subgraph UseCases["Use Cases"]
+            UC_TRADE[ExecuteTradeUseCase]
+            UC_ANALYZE[AnalyzeMarketUseCase]
+            UC_POSITION[ManagePositionUseCase]
+            UC_BREAKOUT[AnalyzeBreakoutUseCase]
+        end
+
+        subgraph Services["Application Services"]
+            ORCH[TradingOrchestrator]
+        end
+
+        subgraph Ports["Outbound Ports (Interfaces)"]
+            PORT_EXCHANGE[ExchangePort]
+            PORT_AI[AIPort]
+            PORT_DATA[MarketDataPort]
+            PORT_PERSIST[PersistencePort]
+            PORT_IDEMP[IdempotencyPort]
+            PORT_LOCK[LockPort]
+            PORT_PROMPT[PromptPort]
+            PORT_VALID[ValidationPort]
+            PORT_EXEC[ExecutionPort]
+            PORT_RECORD[DecisionRecordPort]
+            PORT_TIME[TimeProviderPort]
+        end
+    end
+
+    subgraph Domain["Domain Layer (Pure Business Logic)"]
+        subgraph Entities["Entities"]
+            ENT_TRADE[Trade]
+            ENT_ORDER[Order]
+            ENT_POSITION[Position]
+            ENT_SIGNAL[Signal]
+        end
+
+        subgraph ValueObjects["Value Objects"]
+            VO_MONEY[Money]
+            VO_PCT[Percentage]
+            VO_MARKET[MarketSummary]
+            VO_DECISION[AIDecisionResult]
+            VO_PROMPT[PromptVersion]
+        end
+
+        subgraph DomainServices["Domain Services"]
+            DS_FEE[FeeCalculator]
+            DS_RISK[RiskCalculator]
+            DS_FILTER[BreakoutFilter]
+        end
+    end
+
+    subgraph Infrastructure["Infrastructure Layer"]
+        subgraph ExchangeAdapters["Exchange Adapters"]
+            ADAPT_UPBIT[UpbitExchangeAdapter]
+        end
+
+        subgraph AIAdapters["AI Adapters"]
+            ADAPT_OPENAI[OpenAIAdapter]
+            ADAPT_ENHANCED[EnhancedOpenAIAdapter<br/>Rate Limit + Circuit Breaker]
+        end
+
+        subgraph PersistenceAdapters["Persistence Adapters"]
+            ADAPT_MEMORY[MemoryAdapter]
+            ADAPT_PG_IDEMP[PostgresIdempotencyAdapter]
+            ADAPT_PG_LOCK[PostgresLockAdapter]
+            ADAPT_MEM_IDEMP[MemoryIdempotencyAdapter]
+            ADAPT_MEM_LOCK[MemoryLockAdapter]
+            ADAPT_RECORD[DecisionRecordAdapter]
+            ADAPT_RISK[RiskStateRepository]
+        end
+
+        subgraph ExecutionAdapters["Execution Adapters"]
+            ADAPT_SIMPLE[SimpleExecutionAdapter]
+            ADAPT_INTRA[IntrabarExecutionAdapter]
+        end
+
+        subgraph PromptAdapters["Prompt Adapters"]
+            ADAPT_YAML[YAMLPromptAdapter]
+        end
+
+        subgraph ValidationAdapters["Validation Adapters"]
+            ADAPT_VALID[ValidationAdapter]
+        end
+
+        subgraph LegacyBridge["Legacy Bridge"]
+            BRIDGE[LegacyBridgeAdapter]
+        end
+
+        subgraph Templates["Prompt Templates"]
+            TMPL_ENTRY[entry.yaml]
+            TMPL_EXIT[exit.yaml]
+            TMPL_GENERAL[general.yaml]
+        end
+    end
+
+    subgraph Container["DI Container"]
+        DI[Container<br/>src/container.py]
+    end
+
+    %% Presentation -> Application
+    CLI --> DI
+    SCHEDULER --> DI
+    API --> DI
+    DI --> UC_TRADE
+    DI --> UC_ANALYZE
+    DI --> UC_POSITION
+    DI --> UC_BREAKOUT
+    DI --> ORCH
+
+    %% Application -> Ports
+    UC_TRADE --> PORT_EXCHANGE
+    UC_ANALYZE --> PORT_AI
+    UC_BREAKOUT --> PORT_PROMPT
+    UC_BREAKOUT --> PORT_VALID
+    UC_BREAKOUT --> PORT_RECORD
+    ORCH --> PORT_IDEMP
+    ORCH --> PORT_LOCK
+
+    %% Ports -> Domain
+    UC_TRADE -.-> ENT_TRADE
+    UC_TRADE -.-> VO_MONEY
+    UC_ANALYZE -.-> VO_DECISION
+    DS_FEE -.-> VO_MONEY
+
+    %% Infrastructure implements Ports
+    ADAPT_UPBIT -.->|implements| PORT_EXCHANGE
+    ADAPT_OPENAI -.->|implements| PORT_AI
+    ADAPT_ENHANCED -.->|implements| PORT_AI
+    ADAPT_PG_IDEMP -.->|implements| PORT_IDEMP
+    ADAPT_PG_LOCK -.->|implements| PORT_LOCK
+    ADAPT_MEM_IDEMP -.->|implements| PORT_IDEMP
+    ADAPT_MEM_LOCK -.->|implements| PORT_LOCK
+    ADAPT_YAML -.->|implements| PORT_PROMPT
+    ADAPT_VALID -.->|implements| PORT_VALID
+    ADAPT_RECORD -.->|implements| PORT_RECORD
+    ADAPT_SIMPLE -.->|implements| PORT_EXEC
+    ADAPT_INTRA -.->|implements| PORT_EXEC
+
+    ADAPT_YAML --> TMPL_ENTRY
+    ADAPT_YAML --> TMPL_EXIT
+    ADAPT_YAML --> TMPL_GENERAL
+
+    %% Styling
+    style Domain fill:#c8e6c9,stroke:#388e3c
+    style Application fill:#bbdefb,stroke:#1976d2
+    style Infrastructure fill:#ffe0b2,stroke:#f57c00
+    style Presentation fill:#e1bee7,stroke:#7b1fa2
+    style Container fill:#f3e5f5,stroke:#9c27b0
+
