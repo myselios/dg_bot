@@ -162,17 +162,15 @@ class TestTelegramBotCommands:
         with patch('main.execute_trading_cycle', new_callable=AsyncMock) as mock_execute:
             with patch('src.api.upbit_client.UpbitClient'):
                 with patch('src.data.collector.DataCollector'):
-                    with patch('src.trading.service.TradingService'):
-                        with patch('src.ai.service.AIService'):
-                            mock_execute.return_value = mock_result
+                    mock_execute.return_value = mock_result
 
-                            await bot_service._cmd_run(mock_update, mock_context)
+                    await bot_service._cmd_run(mock_update, mock_context)
 
-                            # 최소 2번 호출됨 (시작 메시지 + 결과 메시지)
-                            assert mock_update.message.reply_text.call_count >= 2
+                    # 최소 2번 호출됨 (시작 메시지 + 결과 메시지)
+                    assert mock_update.message.reply_text.call_count >= 2
 
-                            # 실행 후 플래그가 False로 복원되어야 함
-                            assert bot_service._is_running_cycle is False
+                    # 실행 후 플래그가 False로 복원되어야 함
+                    assert bot_service._is_running_cycle is False
 
     @pytest.mark.asyncio
     async def test_cmd_status_shows_portfolio_info(self, bot_service, mock_update, mock_context):

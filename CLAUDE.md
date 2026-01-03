@@ -403,26 +403,86 @@ And record the recovery outcome in:
 - `docs/CHANGELOG_TEST_DEBT.md`
 
 
-#### 테스트 구조
+#### 테스트 구조 (위험/행위 기반)
+
+> **"테스트를 보면, 이 시스템이 어떤 위험을 막고 있는지 바로 알 수 있게 만들 것"**
 
 ```
 tests/
-├── conftest.py              # 공통 픽스처
-├── unit/                    # 단위 테스트
-│   ├── domain/              # 도메인 계층 (순수 로직)
-│   ├── application/         # 유스케이스 (mock 사용)
-│   └── infrastructure/      # 어댑터 (통합 테스트)
-├── integration/             # 통합 테스트
-└── e2e/                     # End-to-End 테스트
+├── contracts/              # ❗ 시스템 핵심 계약 (실패 시 → 거래 즉시 중단)
+│   ├── test_idempotency.py      # 중복 주문 방지
+│   ├── test_stop_loss.py        # 손절 보장
+│   ├── test_fee_calculation.py  # 수수료 정확성
+│   └── test_position_limit.py   # 포지션 제한
+│
+├── scenarios/              # 트레이더 관점 시나리오 (실패 시 → 배포 금지)
+│   ├── test_entry_flow.py       # 진입 시나리오
+│   ├── test_exit_flow.py        # 청산 시나리오
+│   ├── test_hold_decision.py    # 홀드 결정
+│   └── test_multi_coin_flow.py  # 멀티코인 스캔
+│
+├── scheduler/              # 운영 안정성 (실패 시 → 운영 중단)
+│   ├── test_configuration.py    # 스케줄러 설정
+│   ├── test_trading_job.py      # 트레이딩 작업
+│   ├── test_lifecycle.py        # 스케줄러 생명주기
+│   └── test_lock_mechanism.py   # Lock 메커니즘
+│
+├── backtesting/            # 백테스트 신뢰성 (실패 시 → 실거래 금지)
+│   └── ...                      # 체결/비용 모델
+│
+├── unit/                   # 순수 로직 (클린 아키텍처 계층별)
+│   ├── domain/                  # 도메인 계층
+│   ├── application/             # 유스케이스
+│   ├── infrastructure/          # 어댑터
+│   └── presentation/            # CLI
+│
+├── integration/            # DB/외부 연동
+│   └── adapters/
+│
+└── e2e/                    # 실제 운용 흐름
+    └── test_paper_trading.py
 ```
+
+#### 테스트 파일 생성 위치 가이드
+
+| 테스트 유형 | 폴더 | 예시 |
+|------------|------|------|
+| 돈이 새는 지점 (수수료, 손절, 중복주문) | `contracts/` | `test_fee_calculation.py` |
+| 트레이딩 비즈니스 흐름 | `scenarios/` | `test_entry_flow.py` |
+| 스케줄러/운영 안정성 | `scheduler/` | `test_lock_mechanism.py` |
+| 백테스트 로직 | `backtesting/` | `test_execution_model.py` |
+| 순수 도메인 로직 (Money, Percentage) | `unit/domain/` | `test_money.py` |
+| UseCase 비즈니스 로직 | `unit/application/` | `test_execute_trade.py` |
+| 외부 시스템 어댑터 | `unit/infrastructure/` | `test_upbit_adapter.py` |
+| DB/API 통합 테스트 | `integration/` | `test_postgres_adapter.py` |
+| 전체 흐름 검증 | `e2e/` | `test_paper_trading.py` |
 
 #### 테스트 마커
 
 ```python
+@pytest.mark.contract       # 시스템 계약 테스트 (최우선)
+@pytest.mark.scenario       # 비즈니스 시나리오 테스트
+@pytest.mark.scheduler      # 스케줄러 테스트
 @pytest.mark.unit           # 단위 테스트
 @pytest.mark.integration    # 통합 테스트
+@pytest.mark.e2e            # End-to-End 테스트
 @pytest.mark.slow           # 느린 테스트
-@pytest.mark.skip           # 임시 스킵
+```
+
+#### 테스트 실행 우선순위
+
+```bash
+# 1. 계약 테스트 (가장 먼저 실행 - 실패 시 즉시 중단)
+python -m pytest tests/contracts/ -v --tb=short
+
+# 2. 시나리오 테스트
+python -m pytest tests/scenarios/ -v
+
+# 3. 스케줄러 테스트
+python -m pytest tests/scheduler/ -v
+
+# 4. 전체 테스트
+python -m pytest tests/ -v
 ```
 
 #### Given-When-Then 패턴

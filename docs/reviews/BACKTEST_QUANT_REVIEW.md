@@ -1,52 +1,67 @@
-# 퀀트투자자 관점 백테스트 리뷰 (Backtesting Logic Review)
+# 백테스팅 로직 리뷰 보고서 (Backtest Quant Logic Review)
 
-**작성일**: 2026-01-03
-**작성자**: Quant Dev Agent (Antigravity)
-**대상**: `src/backtesting` (Engine, Strategy, Filters)
-
----
-
-## 1. 총평 (Executive Summary)
-
-**[평점: A]**
-단순한 지표 매매를 넘어선 **헤지펀드 스타일의 엄격한 퀀트 필터링**과 **현실적인 체결 시뮬레이션**이 돋보입니다. 특히 Look-Ahead Bias(미래 참조 편향)를 방지하기 위한 `execute_on_next_open` 로직과 4단계 안전 진입 관문(Gates)은 이 시스템이 실전에서 생존할 가능성을 높여주는 핵심 요소입니다. 상용화를 위해 슬리피지 모델의 정교화 정도만 보완하면 즉시 운용 가능한 수준입니다.
+**작성일:** 2026-01-03
+**검토자:** Quantitative Researcher (AI Agent)
+**대상:** `src/backtesting/backtester.py`, `PerformanceAnalyzer`, `SlippageModel`
 
 ---
 
-## 2. 세부 분석 (Detailed Analysis)
+## 1. 개요 (Executive Summary)
 
-### 2.1 전략 로직 (Strategy Logic - RuleBasedBreakout)
-- **장점 (Pros)**:
-  - **4단계 진입 관문 (4-Gates)**: [추세 → 응축 → 돌파 → 거래량]의 논리적 흐름이 매우 견고합니다. 특히 '응축(Squeeze)' 조건을 통해 변동성 확대 이전에 미리 필터링하는 것은 가짜 돌파(False Breakout)를 피하는 훌륭한 접근입니다.
-  - **안전장치 (Safety Mechanisms)**: 5가지 청산 조건(스탑로스, Fakeout, 타임아웃 등)은 단순히 수익을 쫓는 것이 아니라 '생존'을 최우선으로 하는 퀀트의 철학이 잘 반영되어 있습니다.
-  - **성능 최적화**: `prepare_indicators`에서 Vectorization(행렬 연산)을 통해 지표를 O(N)으로 사전 계산하고 캐싱하는 방식은 백테스팅 속도를 비약적으로 높여줍니다. (Python 백테스터의 병목 해결)
+현재 백테스팅 엔진은 **Look-Ahead Bias(미래 참조 편향)**를 방지하기 위한 장치(`execute_on_next_open`)와 현실적인 스탑로스 시뮬레이션(`use_intrabar_stops`)을 갖추고 있어 개인 레벨에서는 준수한 수준입니다.
 
-- **보완점 (Points for Improvement)**:
-  - **동적 파라미터 과적합 주의**: `_get_dynamic_k`에서 노이즈 비율에 따라 K값을 조정하는 것은 논리적이지만, 0.3~0.7 범위 설정이 특정 장세에 과적합(Overfitting) 되었을 수 있습니다. Walk-forward testing(전진 분석)으로 검증이 필요합니다.
-
-### 2.2 백테스팅 엔진 (Backtester Engine)
-- **장점 (Pros)**:
-  - **Look-Ahead Bias 방지**: `execute_on_next_open=True` 설정은 매우 중요합니다. 많은 봇이 '종가'에 신호가 나오면 '종가'에 체결된 것으로 가정하여 수익률을 뻥튀기하는데, 이 시스템은 다음 봉 시가 체결을 원칙으로 하여 현실성을 확보했습니다.
-  - **분할 주문 지원**: `use_split_orders` 옵션은 큰 자금 운용 시 필수적인 기능으로, 상용화 준비가 되어 있음을 보여줍니다.
-
-- **단점 (Cons)**:
-  - **오더북 슬리피지 연결**: 코드는 존재하나 실제 데이터 파이프라인에서 오더북 스냅샷(`orderbook_provider`)을 과거 시점마다 정확히 공급하는지 확인이 필요합니다. 만약 OHLCV 데이터만 있다면 단순 % 슬리피지로 작동할 텐데, 이는 급변동 시의 슬리피지를 과소평가할 수 있습니다.
-
-### 2.3 퀀트 필터링 (QuickBacktestFilter)
-- **장점 (Pros)**:
-  - **기관급 필터링 기준**: Sharpe 1.0, Sortino 1.2, MDD 15% 제한 등의 12가지 기준은 실제 프랍 트레이딩(Prop Trading) 펌의 데스크 기준과 유사합니다. 이는 "아무거나 매매하지 않겠다"는 강력한 리스크 관리 의지를 보여줍니다.
+그러나 **기관/상용 레벨** 기준으로는 **"Live 엔진과 Backtest 엔진의 이중 구현(Duplication)"**이라는 치명적인 결함이 존재합니다. 이는 백테스트 수익률과 실제 운용 수익률의 괴리(Sim-Real Gap)를 유발하는 가장 큰 원인입니다.
 
 ---
 
-## 3. 리팩토링 및 개선 체크리스트 (Action Plan)
+## 2. 상세 분석 (Deep Dive)
 
-- [ ] **슬리피지 모델 현실화**: 가능하다면 1분봉 데이터 내의 High-Low 범위를 이용하여 "변동성이 큰 봉에서는 슬리피지를 할증"하는 로직을 추가하십시오. (예: `slippage = base_slippage * (High-Low)/Close`)
-- [ ] **수수료 현실화**: 업비트 기준 0.05%는 적절하나, 슬리피지를 포함한 총 진입비용(Total Cost of Trade) 관점에서 보수적으로 0.1%로 잡고 테스트해보기를 권장합니다.
-- [ ] **Walk-Forward Analysis**: 파라미터(K값, 이동평균 기간) 최적화가 과적합인지 확인하기 위해, 데이터를 6개월/3개월로 쪼개어 전진 분석을 수행하는 스크립트를 추가하십시오.
+### 2.1 장점 (Strengths)
+
+1.  **미래 참조 편향 방지 (Avoidance of Look-Ahead Bias)**
+    *   `execute_on_next_open=True` 옵션을 기본값으로 하여, 시그널 발생(종가) 후 다음 봉 시가(Open)에 진입하는 현실적 로직을 구현했습니다. 이는 과적합된 승률을 방지하는 필수 요소입니다.
+
+2.  **Intrabar Stop-Loss Simulation**
+    *   일반적인 백테스터가 종가(Close) 기준으로만 손절을 체크하는 것과 달리, 봉 내부의 High/Low를 체크하여 장중 손절(`IntrabarExecutionAdapter`)을 구현했습니다. 이는 MDD(최대 낙폭)를 과소평가하는 흔한 실수를 막아줍니다.
+
+3.  **슬리피지 통계 (Slippage Audit)**
+    *   슬리피지 발생 내역을 별도로 기록(`slippage_statistics`)하여 사후 분석할 수 있게 한 점은 훌륭합니다.
 
 ---
 
-## 4. 상용화 관점 제언
+### 2.2 단점 및 리스크 (Weaknesses & Risks)
 
-상용화를 위해서는 **"승률"보다 "MDD 관리"**가 마케팅 및 고객 유치에 훨씬 중요합니다.
-현재 로직은 MDD 방어가 잘 짜여져 있으나, **시장 붕괴(Flash Crash)** 시나리오에서 시스템이 거래를 아예 멈추는 **Circuit Breaker**가 백테스트 레벨뿐만 아니라 실시간 엔진에도 확실히 연동되어 있는지(RiskManager) 재확인하십시오.
+1.  **Execution Logic Duplication (Critical)**
+    *   **현상:** Live Bot은 `ExecuteTradeUseCase`를 통해 `ExchangePort`를 호출하지만, Backtester는 자체적인 `Portfolio` 클래스와 `_execute_order` 메서드를 사용합니다.
+    *   **리스크:** Live 봇의 체결 로직(예: 재시도, 부분 체결 처리, 호가창 분석)이 수정되어도, 백테스터에는 자동으로 반영되지 않습니다. **"테스트한 대로 매매하지 않음(You don't trade what you test)"** 위반입니다.
+
+2.  **단순화된 비용 모델 (Simplified Cost Model)**
+    *   **현상:** `commission=0.0005`와 같이 고정 수수료만 적용합니다.
+    *   **개선:** 실제 기관 트레이딩에서는 **Funding Fee(펀딩비)**, **Maker/Taker 구분**, **Market Implact**에 따른 가변 슬리피지 모델링이 필수적입니다.
+
+3.  **Loop-Based Iteration의 한계**
+    *   **현상:** `for i in range(total_bars)` 루프 방식은 이벤트 처리 지연(Latency)이나 비동기 동시성 문제를 시뮬레이션할 수 없습니다.
+
+---
+
+## 3. 리팩토링 및 개선 제안 (Recommendations)
+
+### Phase 1: Engine Unification (엔진 통합)
+*   백테스터가 `ExecuteTradeUseCase`를 그대로 호출하도록 변경하십시오.
+*   이를 위해 `ExchangePort`의 Mock 구현체인 `BacktestExchangeAdapter`를 만들고, 여기에 과거 데이터를 주입(Feed)하는 방식으로 구조를 바꿔야 합니다.
+    *   *Current:* `Backtester` -> `Portfolio` -> `Calculation`
+    *   *Target:* `Backtester` -> `TradingOrchestrator` -> `ExecuteTradeUseCase` -> `BacktestExchangeAdapter`
+
+### Phase 2: Enhanced Reporting
+*   백테스트 결과 리포트에 다음 항목을 추가하십시오:
+    *   **Sim-Real Gap Analysis:** 실제 매매 기록과 백테스트 기록을 겹쳐서 보여주는 차트.
+    *   **Monte Carlo Simulation:** 파라미터를 미세하게 흔들었을 때 수익률이 얼마나 망가지는지(Robustness Test).
+
+---
+
+## 4. 상용화 가능성 분석 (Commercialization Feasibility)
+
+*   **현재 상태:** **C+ (보완 필요)**
+*   **퀀트 관점 평가:**
+    *   현재 구조로는 투자자에게 "이 백테스트 결과가 실제 수익으로 이어질 것"이라고 확신을 주기 어렵습니다. 엔진이 다르기 때문입니다.
+    *   상용 펀드/서비스 런칭을 위해서는 **Engine Unification**이 선행되어야 하며, 최소 3개월 이상의 Forward Testing(실전 검증) 데이터와 백테스트 데이터의 오차율(Tracking Error)이 5% 이내임이 증명되어야 합니다.

@@ -50,8 +50,6 @@ class TestTradeRecordingSaveToPostgreSQL:
         with patch('main.execute_trading_cycle', new_callable=AsyncMock) as mock_execute, \
              patch('src.api.upbit_client.UpbitClient'), \
              patch('src.data.collector.DataCollector'), \
-             patch('src.trading.service.TradingService'), \
-             patch('src.ai.service.AIService'), \
              patch('backend.app.services.notification.notify_trade', new_callable=AsyncMock), \
              patch('backend.app.services.metrics.record_ai_decision'), \
              patch('backend.app.services.metrics.scheduler_job_success_total'), \
@@ -107,8 +105,6 @@ class TestTradeRecordingSaveToPostgreSQL:
         with patch('main.execute_trading_cycle', new_callable=AsyncMock) as mock_execute, \
              patch('src.api.upbit_client.UpbitClient'), \
              patch('src.data.collector.DataCollector'), \
-             patch('src.trading.service.TradingService'), \
-             patch('src.ai.service.AIService'), \
              patch('backend.app.services.notification.notify_trade', new_callable=AsyncMock), \
              patch('backend.app.services.metrics.record_ai_decision'), \
              patch('backend.app.services.metrics.scheduler_job_success_total'), \
@@ -158,8 +154,6 @@ class TestTradeRecordingSaveToPostgreSQL:
         with patch('main.execute_trading_cycle', new_callable=AsyncMock) as mock_execute, \
              patch('src.api.upbit_client.UpbitClient'), \
              patch('src.data.collector.DataCollector'), \
-             patch('src.trading.service.TradingService'), \
-             patch('src.ai.service.AIService'), \
              patch('backend.app.services.notification.notify_trade', new_callable=AsyncMock), \
              patch('backend.app.services.metrics.record_ai_decision'), \
              patch('backend.app.services.metrics.scheduler_job_success_total'), \
@@ -199,8 +193,6 @@ class TestTradeRecordingSaveToPostgreSQL:
         with patch('main.execute_trading_cycle', new_callable=AsyncMock) as mock_execute, \
              patch('src.api.upbit_client.UpbitClient'), \
              patch('src.data.collector.DataCollector'), \
-             patch('src.trading.service.TradingService'), \
-             patch('src.ai.service.AIService'), \
              patch('backend.app.services.notification.notify_error', new_callable=AsyncMock), \
              patch('backend.app.services.metrics.scheduler_job_failure_total'), \
              patch('backend.app.db.session.get_db', side_effect=mock_get_db_generator):
@@ -212,83 +204,6 @@ class TestTradeRecordingSaveToPostgreSQL:
             
             # Then: DB add가 호출되지 않아야 함
             assert not mock_db_session.add.called, "실패한 거래 사이클은 DB에 저장되지 않아야 합니다"
-
-
-class TestTradingServiceReturnsTradeInfo:
-    """TradingService가 거래 정보를 반환하는지 테스트"""
-    
-    @pytest.mark.unit
-    def test_execute_buy_returns_trade_details(self):
-        """
-        execute_buy가 거래 상세 정보를 반환하는지 확인
-        
-        Given: 매수 실행 요청
-        When: execute_buy가 호출됨
-        Then: trade_id, price, amount, fee를 포함한 딕셔너리 반환
-        """
-        from src.trading.service import TradingService
-        
-        # Given: Mock 거래소 클라이언트
-        mock_exchange = Mock()
-        mock_exchange.get_balance.return_value = 100_000  # KRW 잔고
-        mock_exchange.buy_market_order.return_value = {
-            'uuid': 'upbit_order_12345',
-            'price': 4_350_000,
-            'executed_volume': 0.0115,
-            'paid_fee': 25,
-            'trades': [{'price': 4_350_000, 'volume': 0.0115}]
-        }
-        mock_exchange.get_current_price.return_value = 4_350_000
-        
-        trading_service = TradingService(mock_exchange)
-        
-        # When: 매수 실행
-        result = trading_service.execute_buy('KRW-ETH')
-        
-        # Then: 거래 상세 정보가 반환되어야 함
-        assert isinstance(result, dict), "execute_buy는 dict를 반환해야 합니다"
-        assert 'trade_id' in result, "trade_id가 포함되어야 합니다"
-        assert 'price' in result, "price가 포함되어야 합니다"
-        assert 'amount' in result, "amount가 포함되어야 합니다"
-        assert 'fee' in result, "fee가 포함되어야 합니다"
-        assert 'total' in result, "total이 포함되어야 합니다"
-        assert result['trade_id'] == 'upbit_order_12345'
-    
-    @pytest.mark.unit
-    def test_execute_sell_returns_trade_details(self):
-        """
-        execute_sell이 거래 상세 정보를 반환하는지 확인
-        
-        Given: 매도 실행 요청
-        When: execute_sell이 호출됨
-        Then: trade_id, price, amount, fee를 포함한 딕셔너리 반환
-        """
-        from src.trading.service import TradingService
-        
-        # Given: Mock 거래소 클라이언트
-        mock_exchange = Mock()
-        mock_exchange.get_balance.return_value = 0.0115  # ETH 보유량
-        mock_exchange.sell_market_order.return_value = {
-            'uuid': 'upbit_order_67890',
-            'price': 4_400_000,
-            'executed_volume': 0.0115,
-            'paid_fee': 25.3,
-            'trades': [{'price': 4_400_000, 'volume': 0.0115}]
-        }
-        mock_exchange.get_current_price.return_value = 4_400_000
-        
-        trading_service = TradingService(mock_exchange)
-        
-        # When: 매도 실행
-        result = trading_service.execute_sell('KRW-ETH')
-        
-        # Then: 거래 상세 정보가 반환되어야 함
-        assert isinstance(result, dict), "execute_sell은 dict를 반환해야 합니다"
-        assert 'trade_id' in result
-        assert 'price' in result
-        assert 'amount' in result
-        assert 'fee' in result
-        assert result['trade_id'] == 'upbit_order_67890'
 
 
 if __name__ == "__main__":

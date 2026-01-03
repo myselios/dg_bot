@@ -1,50 +1,67 @@
-# 아키텍처 리뷰 리포트 (Architecture Review Report)
+# 아키텍처 리뷰 보고서 (Architecture Clean Architecture Review)
 
-**작성일**: 2026-01-03
-**작성자**: Quant Dev Agent (Antigravity)
-**대상**: 전체 시스템 아키텍처 (Clean Architecture Migration Status)
-
----
-
-## 1. 총평 (Executive Summary)
-
-**[평점: A-]**
-현재 시스템은 기존의 모놀리식 구조에서 **클린 아키텍처(Clean Architecture)**로의 전환이 성공적으로 진행되었습니다. 특히 `src/application`, `src/domain`, `src/infrastructure`의 계층 분리가 명확하며, 의존성 역전 원칙(DIP)이 잘 지켜지고 있습니다. 다만, 과거 레거시 코드(`src/ai`)와 신규 아키텍처가 공존함에 따른 혼란 가능성이 있어, 이를 정리하는 것이 향후 유지보수와 상용화에 핵심 과제가 될 것입니다.
+**작성일:** 2026-01-03
+**검토자:** System Architect (AI Agent)
+**대상:** `src` 디렉토리 전체 아키텍처 및 `Container` 의존성 주입 구조
 
 ---
 
-## 2. 세부 분석 (Detailed Analysis)
+## 1. 개요 (Executive Summary)
 
-### 2.1 도메인 및 유스케이스 (Domain & Use Cases)
-- **장점 (Pros)**:
-  - **명확한 유스케이스 정의**: `AnalyzeBreakoutUseCase`와 같이 비즈니스 행위가 명시적인 클래스로 정의되어 있어 가독성이 뛰어납니다.
-  - **도메인 순수성 유지**: `MarketSummary`, `AIDecisionResult` 등 Value Object들이 외부 프레임워크나 DB 모델에 의존하지 않고 순수 파이썬 객체로 정의되어 있습니다.
-  - **테스트 용이성**: 모든 외부 의존성이 Port 인터페이스로 추상화되어 있어, 단위 테스트(Unit Test) 작성이 매우 용이한 구조입니다.
+현재 시스템은 **Clean Architecture** 원칙을 도입하여 의존성 역전(DIP), 관심사의 분리(SoC)를 시도한 흔적이 명확합니다. 특히 `Container`를 통한 의존성 주입(DI)과 `Port`를 통한 인프라스트럭처 격리는 매우 훌륭한 출발점입니다.
 
-- **단점 (Cons)**:
-  - **레거시 참조 혼선**: `src/ai` 디렉토리가 여전히 존재하며, `service.py` 내부 로직이 방대합니다. 새로 온 개발자나 유지보수자가 레거시를 신규 코드로 오인할 소지가 큽니다.
-
-### 2.2 인프라스트럭처 및 어댑터 (Infrastructure & Adapters)
-- **장점 (Pros)**:
-  - **YAML 기반 프롬프트 관리**: `YAMLPromptAdapter`를 통해 프롬프트를 코드와 분리하여 버전 관리(`v2.0.0`)하는 방식은 상용화 수준에서 필수적인 모범 사례(Best Practice)입니다.
-  - **검증 로직 중앙화**: `ValidationAdapter`가 AI의 환각(Hallucination)이나 논리적 오류를 사후 검증하는 "Trust, but Verify" 패턴이 잘 구현되어 있습니다.
-
-- **보완점 (Points for Improvement)**:
-  - **디렉토리 구조 정리**: `src/ai` 폴더의 명칭을 `src/legacy_ai`로 변경하거나, 완전히 제거하는 로드맵을 수립해야 합니다.
-  - **의존성 주입(DI)**: 현재 `docs`상에서는 Container를 언급하고 있으나, 실제 `main.py`나 진입점에서 DI Container가 명시적으로 모든 의존성을 제어하는지 확인이 필요합니다. (Hard-coded dependency 방지)
+그러나 **"Strict Clean Architecture"** 기준으로는 Domain Layer의 빈약함과 Use Case Layer의 비대화, 그리고 Backtest와 Live 환경의 아키텍처 불일치(Inconsistency)가 발견되었습니다. 상용화를 위해서는 이 부분이 반드시 보완되어야 합니다.
 
 ---
 
-## 3. 리팩토링 체크리스트 (Refactoring Checklist)
+## 2. 상세 분석 (Deep Dive)
 
-- [ ] **Legacy Code 격리**: `src/ai/service.py`에 `@deprecated` 데코레이터를 강화하고, IDE에서 사용 시 경고가 뜨도록 조치 (완료된 것으로 보이나, 물리적 폴더 이동 권장).
-- [ ] **Port 인터페이스 일관성**: 모든 외부 통신(거래소, AI, DB, 알림)이 `src/application/ports`를 통하는지 전수 조사.
-- [ ] **테스트 커버리지**: `src/application/use_cases`에 대한 단위 테스트 커버리지를 80% 이상으로 유지하여 비즈니스 로직 안정성 확보.
+### 2.1 장점 (Strengths)
+
+1.  **명확한 의존성 방향성 (Dependency Rule)**
+    *   `Source Code Dependency`: Infrastructure(`adapters`) → Application(`ports`) 방향으로 잘 잡혀 있습니다.
+    *   `src/container.py`에서 모든 의존성을 조립(Wiring)하는 방식은 메인 비즈니스 로직을 프레임워크로부터 독립시키는 데 성공했습니다.
+
+2.  **포트-어댑터 패턴 (Ports & Adapters)**
+    *   `ExchangePort`, `AIPort` 등 외부 시스템 통신을 인터페이스로 추상화하여, `Upbit` 종속성을 비즈니스 로직에서 제거했습니다. 이는 추후 `Binance` 등 타 거래소 확장 시 매우 유리합니다.
+
+3.  **Use Case 중심 설계**
+    *   `ExecuteTradeUseCase`와 같이 사용자의 의도(Intent)를 명확히 드러내는 클래스 명명과 구조를 갖추고 있습니다.
 
 ---
 
-## 4. 상용화 관점 제언 (Commercialization)
+### 2.2 단점 및 문제점 (Weaknesses & Issues)
 
-기관 수준의 시스템을 위해서는 **관측 가능성(Observability)**이 아키텍처 레벨에 녹아있어야 합니다. 현재 아키텍처는 Port 패턴 덕분에 로깅이나 모니터링을 Decorator나 Proxy 패턴으로 끼워넣기 아주 좋은 구조입니다.
+1.  **도메인 계층(Domain Layer)의 빈혈 (Anemic Domain Model)**
+    *   **현상:** `Trade`, `Order` 등이 단순 데이터 뭉치(Data Class)로 존재하며, 핵심 트레이딩 규칙(예: 진입 유효성 검증, 자금 관리 계산 등)이 `UseCase`나 `Strategy` 클래스에 산재되어 있습니다.
+    *   **리스크:** 비즈니스 규칙이 여러 곳(백테스터, 라이브 봇)에 중복 구현되어 로직 불일치 발생 위험이 큽니다.
 
-> **추천**: 모든 Use Case 실행 전후에 자동으로 로그를 남기고, 실행 시간을 측정하는 `UseCaseDecorator`를 도입하여 운영 모니터링을 강화하십시오.
+2.  **UseCase의 책임 과다**
+    *   **현상:** `ExecuteTradeUseCase`가 `Trade` 엔티티를 직접 생성(`new Trade(...)`)하고 저장까지 담당합니다.
+    *   **개선:** 엔티티 생성과 상태 변화는 도메인 서비스(`TradeFactory` 등)나 엔티티 내부 메서드(`Order.execute() -> Trade`)로 위임해야 합니다.
+
+3.  **Legacy와의 불안한 동거**
+    *   **현상:** `src/ai/entry_analyzer.py` (Legacy)와 `AnalyzeBreakoutUseCase` (New)가 공존합니다.
+    *   **리스크:** 개발자가 실수로 구형 모듈을 import하여 사용할 경우, 리팩토링된 안전 장치가 작동하지 않을 수 있습니다.
+
+---
+
+## 3. 리팩토링 제안 (Refactoring Roadmap)
+
+### Phase 1: Domain Rich Model 강화
+*   `Trade` 엔티티에 `calculate_fee()`, `verify_slippage()` 등의 도메인 로직을 이동시키십시오.
+*   "언제 거래할 것인가"에 대한 규칙을 `TradingPolicy`와 같은 도메인 서비스로 캡슐화하십시오.
+
+### Phase 2: Live-Backtest Core 통합
+*   현재 `Backtester`는 `ExecuteTradeUseCase`와 별개로 돌아갑니다.
+*   **핵심 제안:** `ExecutionPort`의 구현체를 `LiveExecutionAdapter`와 `BacktestExecutionAdapter`로 나누고, **상위 유스케이스는 동일하게 사용**하는 구조로 개편해야 합니다. 이것이 퀀트 시스템 아키텍처의 핵심입니다 (Test what you fly).
+
+---
+
+## 4. 상용화 가능성 분석 (Commercialization Feasibility)
+
+*   **현재 상태:** **B- (조건부 승인)**
+*   **상용화 리스크:**
+    *   아키텍처적으로는 유연하나, **데이터 무결성(Data Integrity)**을 보장하는 트랜잭션 관리가 UseCase 레벨에서 명시적이지 않습니다 (`ExecuteTradeUseCase` 도중에 서버가 꺼지면?).
+    *   DB Transaction 관리(`UnitOfWork` 패턴)가 도입되지 않으면 금전적 사고 시 복구가 어렵습니다.
+*   **결론:** 개인 운용용으로는 훌륭하나, 고객 자금을 받는 상용 서비스로는 **Transaction Management**와 **Idempotency(멱등성)** 보강이 필수적입니다.
