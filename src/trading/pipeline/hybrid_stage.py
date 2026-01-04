@@ -16,13 +16,19 @@ Mode 2(적응형)와 Mode 3(멀티코인)를 통합한 통합 스테이지입니
     # 스캔 비활성화 (단일 코인)
     stage = HybridRiskCheckStage(enable_scanning=False, fallback_ticker="KRW-BTC")
 """
-from typing import Dict, Any, Optional, List, Tuple
-from datetime import datetime
+from typing import Dict, Any, Optional, List, Tuple, TYPE_CHECKING
 
 from src.trading.pipeline.base_stage import BasePipelineStage, PipelineContext, StageResult
 from src.position.portfolio_manager import PortfolioManager, TradingMode, PortfolioPosition
-from src.ai.position_analyzer import PositionAnalyzer, Position, PositionAction, PositionActionType
+# PositionAnalyzer 제거됨 - Clean Architecture 마이그레이션 완료
+# TODO: MANAGEMENT 모드는 ManagePositionUseCase + ValidationPort로 재구현 필요
 from src.utils.logger import Logger
+
+# TYPE_CHECKING: 타입 힌트만 필요한 레거시 타입들 (런타임에는 사용 안 함)
+if TYPE_CHECKING:
+    from typing import Any as PositionAction
+else:
+    PositionAction = None
 
 
 class HybridRiskCheckStage(BasePipelineStage):
@@ -205,96 +211,31 @@ class HybridRiskCheckStage(BasePipelineStage):
         """
         MANAGEMENT 모드 처리 (포지션 관리)
 
-        하이브리드 방식:
-        1. 규칙 기반 청산 조건 체크 (무료, 즉시)
-        2. 애매한 상황에서만 AI 분석 (유료)
+        ⚠️ PositionAnalyzer 제거됨 - Clean Architecture 마이그레이션 완료
+        포지션 관리는 position_management_job (15분 간격)에서 처리됩니다.
+        이 스테이지에서는 포지션이 있는지만 확인하고 스킵합니다.
+
+        TODO: ManagePositionUseCase + ValidationPort로 재구현 필요
         """
         Logger.print_info(f"📋 포지션 관리 모드: {len(portfolio_status.positions)}개 포지션")
+        Logger.print_info("  포지션 관리는 position_management_job에서 처리됩니다.")
 
-        # 포지션 분석기 초기화
-        position_analyzer = PositionAnalyzer(
-            stop_loss_pct=self.stop_loss_pct,
-            take_profit_pct=self.take_profit_pct
-        )
-        context.position_analyzer = position_analyzer
-
+        # 포지션 관리는 별도 job에서 처리
+        # 여기서는 추가 진입 가능 여부만 판단
         actions_taken = []
-        exit_performed = False
-
         for portfolio_pos in portfolio_status.positions:
-            Logger.print_info(f"\n  [{portfolio_pos.symbol}] 분석 중...")
-
-            # PortfolioPosition → Position 변환
-            position = Position(
-                ticker=portfolio_pos.ticker,
-                entry_price=portfolio_pos.avg_buy_price,
-                current_price=portfolio_pos.current_price,
-                amount=portfolio_pos.amount,
-                entry_time=portfolio_pos.entry_time or datetime.now()
-            )
-
-            # 시장 데이터 수집 (간소화된 버전)
-            market_data = self._collect_position_market_data(context, portfolio_pos.ticker)
-
-            # 포지션 분석 (하이브리드)
-            action = position_analyzer.analyze(position, market_data)
-
-            # 액션 실행
-            if action.action == PositionActionType.EXIT:
-                Logger.print_warning(f"  → 청산 실행: {action.reason}")
-                sell_result = self._execute_exit(context, portfolio_pos, action)
-                actions_taken.append({
-                    'ticker': portfolio_pos.ticker,
-                    'action': 'exit',
-                    'reason': action.reason,
-                    'result': sell_result
-                })
-                exit_performed = True
-
-            elif action.action == PositionActionType.PARTIAL_EXIT:
-                Logger.print_info(f"  → 부분 청산: {action.exit_ratio*100:.0f}%")
-                partial_result = self._execute_partial_exit(context, portfolio_pos, action)
-                actions_taken.append({
-                    'ticker': portfolio_pos.ticker,
-                    'action': 'partial_exit',
-                    'ratio': action.exit_ratio,
-                    'result': partial_result
-                })
-
-            elif action.action == PositionActionType.ADJUST_STOP:
-                Logger.print_info(f"  → 스탑 조정: {action.new_stop_loss:,.0f}")
-                actions_taken.append({
-                    'ticker': portfolio_pos.ticker,
-                    'action': 'adjust_stop',
-                    'new_stop': action.new_stop_loss
-                })
-
-            else:
-                Logger.print_success(f"  → 포지션 유지")
-                actions_taken.append({
-                    'ticker': portfolio_pos.ticker,
-                    'action': 'hold'
-                })
-
-        # 결과 반환
-        if exit_performed:
-            return StageResult(
-                success=True,
-                action='exit',
-                data={
-                    'status': 'success',
-                    'decision': 'sell',
-                    'reason': '포지션 청산 실행',
-                    'actions': actions_taken
-                },
-                message="포지션 청산 완료"
-            )
+            Logger.print_info(f"  [{portfolio_pos.symbol}] 보유 중 (관리는 별도 job)")
+            actions_taken.append({
+                'ticker': portfolio_pos.ticker,
+                'action': 'hold',
+                'reason': 'position_management_job에서 관리'
+            })
 
         return StageResult(
             success=True,
             action='continue',
             data={'actions': actions_taken},
-            message="포지션 관리 완료"
+            message="포지션 확인 완료 (관리는 별도 job)"
         )
 
     def _handle_entry_mode(

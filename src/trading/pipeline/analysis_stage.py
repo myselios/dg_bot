@@ -20,8 +20,8 @@ from typing import Dict, Optional, Any, Tuple
 from src.trading.pipeline.base_stage import BasePipelineStage, PipelineContext, StageResult
 from src.trading.indicators import TechnicalIndicators
 from src.trading.signal_analyzer import SignalAnalyzer
-from src.ai.market_correlation import calculate_market_risk
-from src.ai.validator import AIDecisionValidator
+# market_correlation, validator 제거됨 - Clean Architecture 마이그레이션 완료
+# TODO: AnalysisStage deprecated - HybridRiskCheckStage 사용
 from src.backtesting import QuickBacktestFilter, QuickBacktestResult
 from src.utils.logger import Logger
 
@@ -104,18 +104,26 @@ class AnalysisStage(BasePipelineStage):
         """
         시장 상관관계 분석 (BTC vs 현재 코인)
 
+        ⚠️ DEPRECATED: calculate_market_risk 제거됨
+        TODO: MarketAnalysisService (domain/services/market_analysis.py) 사용
+
         Args:
             context: 파이프라인 컨텍스트
         """
-        context.market_correlation = calculate_market_risk(
-            context.btc_chart_data['day'],
-            context.chart_data['day']
-        )
+        # Stub: 레거시 AI 함수 제거됨 - 기본값 반환
+        context.market_correlation = {
+            'beta': 1.0,
+            'alpha': 0.0,
+            'correlation': 0.0,
+            'market_risk': 'unknown',
+            'risk_reason': 'Legacy calculate_market_risk removed - use MarketAnalysisService'
+        }
 
         # 현재 코인 심볼 추출 (KRW-ETH -> ETH)
         coin_symbol = context.ticker.replace('KRW-', '') if context.ticker else 'COIN'
 
-        Logger.print_header("📊 시장 상관관계 분석")
+        Logger.print_header("📊 시장 상관관계 분석 (STUB)")
+        print(f"⚠️ Legacy calculate_market_risk 제거됨")
         print(f"BTC-{coin_symbol} 베타: {context.market_correlation.get('beta', 1.0):.2f}")
         print(f"BTC-{coin_symbol} 알파: {context.market_correlation.get('alpha', 0.0):.4f}")
         print(f"상관계수: {context.market_correlation.get('correlation', 0.0):.2f}")
@@ -469,33 +477,26 @@ class AnalysisStage(BasePipelineStage):
         Returns:
             StageResult: 검증 결과
         """
-        Logger.print_header("🔍 AI 판단 검증")
+        Logger.print_header("🔍 AI 판단 검증 (STUB)")
+        print("⚠️ Legacy AIDecisionValidator 제거됨 - ValidationPort 사용 권장")
 
-        # 시장 환경 정보 수집
-        market_conditions = {
-            'market_correlation': context.market_correlation,
-            'flash_crash': context.flash_crash,
-            'rsi_divergence': context.rsi_divergence
-        }
+        # Stub: 레거시 AI validator 제거됨 - 기본값 반환 (항상 유효)
+        is_valid = True
+        validation_reason = "Legacy AIDecisionValidator removed - use ValidationPort"
+        override_decision = None
 
-        # AI 판단 검증
-        context.validation_result = AIDecisionValidator.validate_decision(
-            context.ai_result,
-            context.technical_indicators,
-            market_conditions
-        )
-
-        is_valid, validation_reason, override_decision = context.validation_result
+        context.validation_result = (is_valid, validation_reason, override_decision)
 
         # 검증 결과 출력
-        validation_report = AIDecisionValidator.generate_validation_report(
-            context.validation_result,
-            context.ai_result,
-            context.technical_indicators
-        )
+        validation_report = f"""
+[AI 판단 검증 결과 - STUB]
+- 유효성: {is_valid}
+- 사유: {validation_reason}
+- 오버라이드: {override_decision}
+"""
         print(validation_report)
 
-        # 검증 실패 시 AI 판단 오버라이드
+        # 검증 실패 시 AI 판단 오버라이드 (현재는 항상 통과)
         if not is_valid and override_decision:
             Logger.print_warning(f"⚠️ AI 판단 거부: {validation_reason}")
             context.ai_result['decision'] = override_decision

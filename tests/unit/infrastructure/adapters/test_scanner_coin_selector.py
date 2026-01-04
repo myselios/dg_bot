@@ -142,7 +142,7 @@ class TestCoinSelector:
         assert selector.liquidity_top_n == 10
         assert selector.min_volume_krw == 10_000_000_000
         assert selector.backtest_top_n == 5
-        assert selector.ai_top_n == 5
+        # ai_top_n 제거됨 - Clean Architecture 마이그레이션
         assert selector.final_select_n == 2
 
     def test_initialization_custom(self):
@@ -151,14 +151,14 @@ class TestCoinSelector:
             liquidity_top_n=30,
             min_volume_krw=20_000_000_000,
             backtest_top_n=10,
-            ai_top_n=3,
+            # ai_top_n 제거됨
             final_select_n=3
         )
 
         assert selector.liquidity_top_n == 30
         assert selector.min_volume_krw == 20_000_000_000
         assert selector.backtest_top_n == 10
-        assert selector.ai_top_n == 3
+        # ai_top_n 제거됨 - Clean Architecture 마이그레이션
         assert selector.final_select_n == 3
 
     def test_calculate_final_score(self):

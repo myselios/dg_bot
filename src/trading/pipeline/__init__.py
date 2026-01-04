@@ -44,7 +44,7 @@ from src.trading.pipeline.trading_pipeline import (
     create_adaptive_trading_pipeline
 )
 from src.trading.pipeline.hybrid_stage import HybridRiskCheckStage
-from src.trading.pipeline.adaptive_stage import AdaptiveRiskCheckStage
+# AdaptiveRiskCheckStage 제거됨 - deprecated, HybridRiskCheckStage 사용
 from src.trading.pipeline.coin_scan_stage import (
     CoinScanStage,
     create_multi_coin_trading_pipeline
@@ -66,6 +66,6 @@ __all__ = [
     'create_multi_coin_trading_pipeline',
     # Stages
     'HybridRiskCheckStage',
-    'AdaptiveRiskCheckStage',
+    # 'AdaptiveRiskCheckStage' 제거됨 - deprecated, HybridRiskCheckStage 사용
     'CoinScanStage',
 ]
