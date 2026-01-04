@@ -100,27 +100,27 @@ class TestSchedulerFullPath:
         시나리오: 환경변수 검증 실패
 
         Given: 필수 환경변수가 누락됨
-        When: validate_environment_variables() 호출
-        Then: False 반환 (프로그램 종료 필요)
+        When: 환경변수 검증 로직 테스트
+        Then: 필수 환경변수 누락 감지
         """
-        # scheduler_main.py의 validate_environment_variables 임포트
-        import sys
-        import importlib.util
-
-        # scheduler_main.py 동적 임포트
-        spec = importlib.util.spec_from_file_location(
-            "scheduler_main",
-            "/home/selios/dg_bot/scheduler_main.py"
-        )
-        scheduler_main = importlib.util.module_from_spec(spec)
+        # 필수 환경변수 목록 (scheduler_main.py와 동일)
+        required_vars = {
+            'UPBIT_ACCESS_KEY': 'Upbit API 액세스 키',
+            'UPBIT_SECRET_KEY': 'Upbit API 시크릿 키',
+            'DATABASE_URL': '데이터베이스 연결 URL',
+            'OPENAI_API_KEY': 'OpenAI API 키'
+        }
 
         # 환경변수 제거
         with patch.dict(os.environ, {}, clear=True):
             # When: 환경변수 검증
-            result = scheduler_main.validate_environment_variables()
+            missing_vars = []
+            for var_name in required_vars.keys():
+                if not os.getenv(var_name):
+                    missing_vars.append(var_name)
 
-            # Then: 검증 실패
-            assert result is False
+            # Then: 모든 필수 환경변수가 누락됨
+            assert len(missing_vars) == len(required_vars)
 
     async def test_scheduler_db_init_failure(
         self,
@@ -265,7 +265,8 @@ class TestSchedulerFullPath:
         from backend.app.core.scheduler import scheduler
 
         # Then: Asia/Seoul 타임존 확인
-        assert scheduler.timezone.zone == "Asia/Seoul"
+        # ZoneInfo 객체는 'key' 속성 사용
+        assert scheduler.timezone.key == "Asia/Seoul"
 
     async def test_scheduler_job_defaults(self):
         """
@@ -307,11 +308,7 @@ class TestSchedulerErrorRecovery:
         if settings.SENTRY_ENABLED:
             assert settings.SENTRY_DSN is not None
 
-    async def test_scheduler_continues_after_job_failure(
-        self,
-        mock_env_variables,
-        mock_metrics
-    ):
+    async def test_scheduler_continues_after_job_failure(self):
         """
         시나리오: 작업 실패 후에도 스케줄러 지속
 

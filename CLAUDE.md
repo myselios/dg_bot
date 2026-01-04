@@ -1,9 +1,9 @@
 # CLAUDE.md
 
-**작성일**: 2026-01-04  
-This file provides practical guidance to Claude Code (claude.ai/code) when working in this repository.
+**작성일**: 2026-01-04
+이 파일은 Claude Code(claude.ai/code)가 이 저장소에서 작업할 때 따라야 할 실용적인 가이드를 제공합니다.
 
-> 목표: 실거래 시스템을 “안전하게” 변경하기 위해
+> 목표: 실거래 시스템을 "안전하게" 변경하기 위해
 >
 > - Clean Architecture 경계 준수
 > - Quant-grade 재현성(데이터/파라미터/로그) 확보
@@ -11,7 +11,33 @@ This file provides practical guidance to Claude Code (claude.ai/code) when worki
 
 ---
 
-## 0) Non-Negotiables (실거래 안전 규칙)
+## 0) 언어 규칙 (Language Rules)
+
+**⚠️ 중요: 모든 커뮤니케이션과 문서는 한국어로 작성**
+
+1. **Claude의 모든 답변은 한국어로 작성**
+   - 사용자와의 대화는 100% 한국어
+   - 기술 용어는 영어 병기 가능 (예: "컨테이너(Container)")
+
+2. **문서는 한국어로 작성**
+   - 계획 문서 (`docs/plans/`)
+   - 가이드 문서 (`docs/guide/`)
+   - 아키텍처 결정 기록 (ADR)
+   - 변경 로그, 릴리스 노트
+
+3. **코드 주석과 docstring은 한국어 우선**
+   - 함수/클래스 docstring: 한국어
+   - 복잡한 로직 주석: 한국어
+   - 변수명, 함수명: 영어 (PEP 8 준수)
+
+4. **예외 사항**
+   - Git 커밋 메시지: 영어 (국제 협업 표준)
+   - 코드 식별자(변수명, 함수명, 클래스명): 영어
+   - 외부 라이브러리 문서 인용: 원문 유지
+
+---
+
+## 1) Non-Negotiables (실거래 안전 규칙)
 
 1. **주문(매수/매도) 경로는 반드시 BOTH 적용**
    - **Lock** (상호배제) AND

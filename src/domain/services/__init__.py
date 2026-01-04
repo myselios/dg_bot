@@ -12,6 +12,12 @@ from src.domain.services.breakout_filter import (
     FilterResult,
     FilterReason,
 )
+from src.domain.services.market_analysis import (
+    calculate_market_beta,
+    calculate_alpha,
+    calculate_correlation,
+    assess_market_risk,
+)
 
 __all__ = [
     "FeeCalculator",
@@ -24,4 +30,8 @@ __all__ = [
     "BreakoutFilter",
     "FilterResult",
     "FilterReason",
+    "calculate_market_beta",
+    "calculate_alpha",
+    "calculate_correlation",
+    "assess_market_risk",
 ]

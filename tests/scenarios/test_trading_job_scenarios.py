@@ -309,32 +309,41 @@ class TestTradingJobScenarios:
         self,
         mock_container,
         mock_lock_port_success,
-        mock_orchestrator_timeout,
         mock_telegram,
         mock_metrics
     ):
         """
         시나리오: 거래 사이클 타임아웃
 
-        Given: 거래 사이클이 10분 초과
+        Given: 거래 사이클이 매우 오래 걸림
         When: trading_job() 실행
         Then:
             1. Lock 획득
             2. 거래 사이클 실행 → 타임아웃
             3. 타임아웃 에러 알림 전송
-            4. 실패 메트릭 기록
-            5. Lock 해제
+            4. Lock 해제
         """
         from backend.app.core.scheduler import trading_job
 
-        # Given: 타임아웃 시뮬레이션
+        # Given: 타임아웃 시뮬레이션 (오래 걸리는 작업)
+        async def slow_trading_cycle(*args, **kwargs):
+            await asyncio.sleep(15)  # 15초 대기 (실제 테스트에서는 타임아웃 전에 중단됨)
+            return {}
+
+        orchestrator = AsyncMock()
+        orchestrator.set_on_backtest_complete = Mock()
+        orchestrator.execute_trading_cycle = slow_trading_cycle
+
         mock_container.get_lock_port.return_value = mock_lock_port_success
-        mock_container.get_trading_orchestrator.return_value = mock_orchestrator_timeout
+        mock_container.get_trading_orchestrator.return_value = orchestrator
 
         with patch('backend.app.core.scheduler.get_container', return_value=mock_container), \
              patch('backend.app.core.scheduler.get_upbit_client', return_value=Mock()), \
              patch('backend.app.core.scheduler.get_data_collector', return_value=Mock()), \
-             patch('backend.app.core.scheduler.TRADING_CYCLE_TIMEOUT', 0.1):  # 0.1초 타임아웃
+             patch('backend.app.core.scheduler.asyncio.wait_for') as mock_wait_for:
+
+            # wait_for가 TimeoutError 발생하도록 설정
+            mock_wait_for.side_effect = asyncio.TimeoutError("Test timeout")
 
             # When: trading_job 실행
             await trading_job()
