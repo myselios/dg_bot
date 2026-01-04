@@ -1,24 +1,31 @@
 """
 코인 선택기 (Coin Selector)
 
-유동성 스캔 → Research Pass → AI 분석 → Trading Pass 전체 흐름을 조율합니다.
+유동성 스캔 → Research Pass → Trading Pass 전체 흐름을 조율합니다.
 
 주요 기능:
 - 유동성 상위 코인 스캔
 - 섹터별 분산 선택 (포트폴리오 다양성 확보)
 - 병렬 백테스팅 필터링 (Research Pass - 느슨한 기준)
-- AI 진입 분석 (상위 N개만)
 - Trading Pass 최종 검증 (엄격한 기준 + Expectancy)
 - 최종 진입 코인 선택
 
-⚠️ 2026-01-04 변경: 2단 게이트 파이프라인 통합
-- 3단계: Research Pass (느슨) → 후보 확보 (30-50% 통과율 목표)
-- 4단계: AI 분석 후 Trading Pass (엄격 + Expectancy) → 실거래 보호
+⚠️ 2026-01-04 변경: EntryAnalyzer 제거 (Clean Architecture 마이그레이션)
+- AI 진입 분석 단계 제거됨
+- 백테스팅 통과 코인을 직접 Trading Pass로 검증
 """
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Type checking을 위한 임시 타입 (실제로는 사용되지 않음)
+    from typing import Any as EntryAnalyzer
+    from typing import Any as EntrySignal
+else:
+    EntryAnalyzer = None
+    EntrySignal = None
 
 from src.scanner.liquidity_scanner import LiquidityScanner, CoinInfo
 from src.scanner.data_sync import HistoricalDataSync
@@ -29,7 +36,8 @@ from src.scanner.sector_mapping import (
     get_sector_korean_name,
     CoinSector
 )
-from src.ai.entry_analyzer import EntryAnalyzer, EntrySignal
+# EntryAnalyzer 제거됨 - Clean Architecture 마이그레이션
+# from src.ai.entry_analyzer import EntryAnalyzer, EntrySignal
 from src.backtesting.quick_filter import QuickBacktestFilter, TradingPassConfig  # 2단 게이트
 from src.config.settings import ScannerConfig
 from src.utils.logger import Logger
@@ -110,13 +118,13 @@ class CoinSelector:
         liquidity_scanner: Optional[LiquidityScanner] = None,
         data_sync: Optional[HistoricalDataSync] = None,
         multi_backtest: Optional[MultiCoinBacktest] = None,
-        entry_analyzer: Optional[EntryAnalyzer] = None,
+        entry_analyzer: Optional[EntryAnalyzer] = None,  # DEPRECATED - 무시됨
         sector_diversifier: Optional[SectorDiversifier] = None,
         # 스캔 파라미터
         liquidity_top_n: int = 10,
         min_volume_krw: float = 10_000_000_000,  # 100억원
         backtest_top_n: int = 5,
-        ai_top_n: int = 5,
+        ai_top_n: int = 5,  # DEPRECATED - 무시됨
         final_select_n: int = 2,
         # 섹터 분산 파라미터
         enable_sector_diversification: bool = True,
@@ -128,27 +136,36 @@ class CoinSelector:
             liquidity_scanner: 유동성 스캐너
             data_sync: 데이터 동기화 관리자
             multi_backtest: 멀티 백테스터
-            entry_analyzer: AI 진입 분석기
+            entry_analyzer: DEPRECATED - 무시됨 (Clean Architecture 마이그레이션)
             sector_diversifier: 섹터 분산 선택기
             liquidity_top_n: 유동성 스캔 상위 N개
             min_volume_krw: 최소 거래대금
             backtest_top_n: 백테스팅 통과 상위 N개
-            ai_top_n: AI 분석 대상 N개
+            ai_top_n: DEPRECATED - 무시됨
             final_select_n: 최종 선택 N개
             enable_sector_diversification: 섹터 분산 활성화 여부
             one_per_sector: True면 섹터당 1개만 선택
             exclude_unknown_sector: True면 미분류 섹터 코인 제외
         """
+        import warnings
+        if entry_analyzer is not None:
+            warnings.warn(
+                "entry_analyzer is deprecated and ignored. "
+                "EntryAnalyzer has been removed in Clean Architecture migration.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+
         self.liquidity_scanner = liquidity_scanner or LiquidityScanner(min_volume_krw=min_volume_krw)
         self.data_sync = data_sync or HistoricalDataSync()
         self.multi_backtest = multi_backtest or MultiCoinBacktest(data_sync=self.data_sync)
-        self.entry_analyzer = entry_analyzer
+        # self.entry_analyzer = None  # 제거됨
         self.sector_diversifier = sector_diversifier or SectorDiversifier()
 
         self.liquidity_top_n = liquidity_top_n
         self.min_volume_krw = min_volume_krw
         self.backtest_top_n = backtest_top_n
-        self.ai_top_n = ai_top_n
+        # self.ai_top_n = ai_top_n  # 제거됨
         self.final_select_n = final_select_n
 
         # 섹터 분산 설정
@@ -259,47 +276,16 @@ class CoinSelector:
         self.multi_backtest.print_results(passed_backtests)
 
         # ========================================
-        # 4단계: AI 진입 분석 (옵션)
+        # 4단계: 후보 생성 (백테스팅 결과 기반)
         # ========================================
-        ai_analyzed = 0
+        # EntryAnalyzer 제거됨 - 백테스팅 통과 코인을 직접 후보로 사용
+        ai_analyzed = 0  # AI 분석 단계 제거됨
         candidates: List[CoinCandidate] = []
 
-        if self.entry_analyzer:
-            Logger.print_info("\n🤖 4단계: AI 진입 분석")
-            ai_candidates = passed_backtests[:self.ai_top_n]
-            Logger.print_info(f"  분석 대상: {len(ai_candidates)}개 코인")
-
-            for bt_result in ai_candidates:
-                try:
-                    # 시장 데이터 준비 (간소화)
-                    analysis_data = self._prepare_analysis_data(bt_result)
-
-                    # AI 분석
-                    entry_signal = self.entry_analyzer.analyze_entry(
-                        ticker=bt_result.ticker,
-                        analysis_data=analysis_data,
-                        backtest_result=bt_result.metrics
-                    )
-                    ai_analyzed += 1
-
-                    # 후보 생성
-                    candidate = self._create_candidate(
-                        bt_result=bt_result,
-                        entry_signal=entry_signal
-                    )
-                    candidates.append(candidate)
-
-                except Exception as e:
-                    Logger.print_warning(f"  [{bt_result.symbol}] AI 분석 실패: {str(e)}")
-                    candidates.append(self._create_candidate(bt_result=bt_result, entry_signal=None))
-
-        else:
-            # AI 분석기 없으면 백테스팅 결과만으로 후보 생성
-            Logger.print_info("\n⏭️ 4단계: AI 분석 스킵 (entry_analyzer 없음)")
-            # ai_top_n=0이면 제한 없이 모든 passed_backtests 사용
-            limit = self.ai_top_n if self.ai_top_n > 0 else len(passed_backtests)
-            for bt_result in passed_backtests[:limit]:
-                candidates.append(self._create_candidate(bt_result=bt_result, entry_signal=None))
+        Logger.print_info("\n📋 4단계: 후보 생성 (백테스팅 통과 코인)")
+        for bt_result in passed_backtests:
+            candidates.append(self._create_candidate(bt_result=bt_result, entry_signal=None))
+        Logger.print_info(f"  생성된 후보: {len(candidates)}개")
 
         # ========================================
         # 4-1단계: Trading Pass 검증 (2단 게이트)

@@ -294,6 +294,10 @@ class Container:
         Note: Requires decision_record_port (session_factory) for production use.
         Returns None if DecisionRecordPort is not configured.
 
+        ⚠️ EnhancedOpenAIAdapter 제거됨 (Clean Architecture 마이그레이션)
+        - OpenAIAdapter를 직접 사용 (AIPort 구현체)
+        - Rate limiting/Circuit breaker는 향후 추가 예정
+
         Returns:
             AnalyzeBreakoutUseCase or None if DecisionRecordPort is missing
         """
@@ -302,16 +306,8 @@ class Container:
             if decision_record_port is None:
                 return None
 
-            from src.infrastructure.adapters.ai import EnhancedOpenAIAdapter
-            from src.config.settings import AIConfig
-
-            # Create AI client with rate limiting and circuit breaker
-            ai_client = EnhancedOpenAIAdapter(
-                api_key=AIConfig.OPENAI_API_KEY,
-                rate_limit_per_minute=AIConfig.RATE_LIMIT_PER_MINUTE,
-                circuit_breaker_threshold=AIConfig.CIRCUIT_BREAKER_THRESHOLD,
-                recovery_timeout=AIConfig.CIRCUIT_BREAKER_TIMEOUT,
-            )
+            # Use OpenAIAdapter (Clean Architecture AIPort)
+            ai_client = self.get_ai_port()
 
             self._analyze_breakout_use_case = AnalyzeBreakoutUseCase(
                 prompt_port=self.get_prompt_port(),
