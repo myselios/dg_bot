@@ -186,11 +186,15 @@ class Backtester:
 
         # 청산 실행
         exit_price_float = float(exit_price.amount)
+        # bar timestamp 추출 (datetime 형식으로 변환)
+        bar_timestamp = current_bar.name if isinstance(current_bar.name, datetime) else datetime.now()
+
         trade = self.portfolio.close_position(
             symbol=self.ticker,
             price=exit_price_float,
             commission=self.commission,
-            slippage=0  # 이미 ExecutionPort에서 처리
+            slippage=0,  # 이미 ExecutionPort에서 처리
+            timestamp=bar_timestamp  # 백테스트 시 bar timestamp 사용
         )
 
         if trade:
@@ -339,12 +343,16 @@ class Backtester:
             
             # 일반 주문 실행
             try:
+                # bar timestamp 추출 (datetime 형식으로 변환)
+                bar_timestamp = current_bar.name if isinstance(current_bar.name, datetime) else datetime.now()
+
                 position = self.portfolio.open_position(
                     symbol=self.ticker,
                     size=signal.size,
                     price=actual_price,  # 슬리피지 적용된 가격
                     commission=self.commission,
-                    slippage=0  # 이미 계산됨
+                    slippage=0,  # 이미 계산됨
+                    timestamp=bar_timestamp  # 백테스트 시 bar timestamp 사용
                 )
                 self.orders.append({
                     'action': 'buy',
@@ -382,11 +390,15 @@ class Backtester:
                 slippage_info = None
                 actual_price = current_price
             
+            # bar timestamp 추출 (datetime 형식으로 변환)
+            bar_timestamp = current_bar.name if isinstance(current_bar.name, datetime) else datetime.now()
+
             trade = self.portfolio.close_position(
                 symbol=self.ticker,
                 price=actual_price,  # 슬리피지 적용된 가격
                 commission=self.commission,
-                slippage=0  # 이미 계산됨
+                slippage=0,  # 이미 계산됨
+                timestamp=bar_timestamp  # 백테스트 시 bar timestamp 사용
             )
             if trade:
                 self.trades.append(trade)
@@ -491,16 +503,19 @@ class Backtester:
         
         # 포트폴리오에 포지션 추가
         avg_price = execution_result['avg_execution_price']
-        
+        # bar timestamp 추출 (datetime 형식으로 변환)
+        bar_timestamp = current_bar.name if isinstance(current_bar.name, datetime) else datetime.now()
+
         try:
             position = self.portfolio.open_position(
                 symbol=self.ticker,
                 size=signal.size,
                 price=avg_price,
                 commission=self.commission,
-                slippage=0  # 이미 계산됨
+                slippage=0,  # 이미 계산됨
+                timestamp=bar_timestamp  # 백테스트 시 bar timestamp 사용
             )
-            
+
             self.orders.append({
                 'action': 'buy',
                 'price': current_bar['close'],

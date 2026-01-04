@@ -262,30 +262,14 @@ async def trading_job():
                 except Exception as scan_error:
                     logger.warning(f"스캔 결과 알림 전송 실패: {scan_error}")
 
-                # 📱 2) 백테스팅 상세 알림 (선택된 코인의 기술적 지표 포함)
-                # market_data에 기술적 지표 병합
-                bt_market_data = market_data.copy() if market_data else {}
-                if technical_indicators:
-                    bt_market_data.update(technical_indicators)
-                # 선택된 코인의 현재가 정보 추가
-                if selected_coin and 'current_price' not in bt_market_data:
-                    try:
-                        _upbit_client = get_upbit_client()
-                        if _upbit_client:
-                            coin_price = _upbit_client.get_current_price(bt_ticker)
-                            if coin_price:
-                                bt_market_data['current_price'] = coin_price
-                    except Exception:
-                        pass
+                # 📱 2) 백테스팅 상세 알림 제거 (notify_scan_result에서 이미 표시)
+                # flash_crash, rsi_divergence가 있으면 별도 경고만 로깅
+                if flash_crash and flash_crash.get('detected'):
+                    logger.warning(f"⚠️ 플래시 크래시 감지: {flash_crash.get('description', '')}")
+                if rsi_divergence and rsi_divergence.get('type') != 'none':
+                    logger.info(f"📊 RSI 다이버전스: {rsi_divergence.get('type')}")
 
-                await notify_backtest_and_signals(
-                    symbol=bt_ticker,
-                    backtest_result=bt_result,
-                    market_data=bt_market_data,
-                    flash_crash=flash_crash,
-                    rsi_divergence=rsi_divergence,
-                )
-                logger.info("✅ 백테스팅 결과 알림 전송 완료 (AI 분석 전)")
+                logger.info("✅ 스캔 결과 알림 전송 완료 (백테스팅 + Trading Pass 포함)")
             except Exception as e:
                 logger.warning(f"백테스팅 알림 전송 실패: {e}", exc_info=True)
 
@@ -336,13 +320,15 @@ async def trading_job():
         if selected_coin:
             logger.info(f"🎯 스캔 선택 코인: {actual_symbol} (점수: {selected_coin.get('score', 'N/A')})")
         else:
-            logger.info(f"📌 고정 티커 사용: {ticker}")
+            # 멀티코인 스캔에서 선택된 코인이 없으면 HOLD (고정 티커 사용 X)
+            logger.info(f"⏭️ 스캔 결과: 선택된 코인 없음 → HOLD")
 
         # 📱 사이클 시작 알림은 이미 스캐닝 시작 전에 전송됨
         # 백테스팅 결과 알림은 on_backtest_complete_callback에서 전송됨
 
         # 4. 결과 처리
-        if result['status'] == 'success':
+        status = result.get('status', 'failed')
+        if status == 'success':
             logger.info(f"✅ 거래 사이클 성공: {result['decision']}")
             
             # 메트릭 기록 (다이어그램 01-overall-system-flow.mmd)
@@ -518,25 +504,33 @@ async def trading_job():
             # 성공 메트릭
             scheduler_job_success_total.labels(job_name='trading_job').inc()
             
+        elif status == 'skipped':
+            # Idempotency 스킵 (정상 동작)
+            duration = time() - job_start_time
+            logger.info(f"⏭️ 거래 사이클 스킵: {result.get('reason', '중복 실행 방지')}")
+            logger.info(f"   이전 실행이 같은 시간봉에 이미 완료되었습니다.")
+            # 스킵은 성공으로 카운트 (정상 동작이므로)
+            scheduler_job_success_total.labels(job_name='trading_job').inc()
+
         else:
             # 실패 처리
-            error_msg = result.get('error', 'Unknown error')
+            error_msg = result.get('error', result.get('reason', 'Unknown error'))
             logger.error(f"❌ 거래 사이클 실패: {error_msg}")
-            
+
             # 실행 시간 계산
             duration = time() - job_start_time
-            
+
             # 📱 실패 시 에러 알림만 전송
             try:
                 await notify_error(
                     error_type="Trading Cycle Failed",
-                    error_message=result.get('error', 'Unknown error'),
+                    error_message=error_msg,
                     context={'symbol': ticker, 'duration': f'{duration:.2f}초'}
                 )
                 logger.info("✅ 에러 알림 전송 완료")
             except Exception as telegram_error:
                 logger.warning(f"에러 알림 전송 실패: {telegram_error}")
-            
+
             # 실패 메트릭
             scheduler_job_failure_total.labels(job_name='trading_job').inc()
         
@@ -884,16 +878,22 @@ def start_scheduler():
         logger.info("🚀 즉시 실행 모드 활성화 - 트레이딩 작업 즉시 실행")
         # 일회성 즉시 실행 작업 추가 (misfire 방지를 위해 별도 작업으로)
         from datetime import timedelta
+        from zoneinfo import ZoneInfo
+
+        # 명시적으로 Asia/Seoul timezone 사용 (컨테이너 TZ와 무관하게 안전)
+        kst = ZoneInfo("Asia/Seoul")
+        run_at = datetime.now(kst) + timedelta(seconds=2)
+
         scheduler.add_job(
             trading_job,
             'date',
-            run_date=datetime.now() + timedelta(seconds=2),
+            run_date=run_at,
             id='trading_job_immediate',
             name='트레이딩 작업 - 즉시 실행 (일회성)',
             replace_existing=True,
             misfire_grace_time=60
         )
-        logger.info("✅ 트레이딩 작업이 2초 후 즉시 실행되도록 예약됨")
+        logger.info(f"✅ 트레이딩 작업이 {run_at.strftime('%H:%M:%S')} KST에 즉시 실행되도록 예약됨")
     else:
         # 다음 실행 시간 로깅
         trading_job_info = scheduler.get_job('trading_job')

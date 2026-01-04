@@ -9,7 +9,7 @@ from ..exceptions import InsufficientFundsError
 
 class Position:
     """개별 포지션"""
-    
+
     def __init__(
         self,
         symbol: str,
@@ -21,7 +21,7 @@ class Position:
         self.symbol = symbol
         self.size = size
         self.entry_price = entry_price
-        self.entry_time = entry_time
+        self.entry_time = entry_time  # 백테스트 시 bar timestamp 사용
         self.commission = commission
         self.current_price = entry_price
         
@@ -95,64 +95,89 @@ class Portfolio:
         return self.total_value
     
     def open_position(
-        self, 
-        symbol: str, 
-        size: float, 
+        self,
+        symbol: str,
+        size: float,
         price: float,
         commission: float,
-        slippage: float
+        slippage: float,
+        timestamp: Optional[datetime] = None
     ) -> Position:
-        """포지션 오픈"""
+        """
+        포지션 오픈
+
+        Args:
+            symbol: 거래 종목
+            size: 포지션 크기
+            price: 체결 가격
+            commission: 수수료율
+            slippage: 슬리피지율
+            timestamp: 진입 시점 (백테스트 시 bar timestamp 사용, None이면 현재 시간)
+        """
         # 실제 체결 가격 (슬리피지 포함)
         execution_price = price * (1 + slippage)
-        
+
         # 총 비용
         cost = size * execution_price
         commission_cost = cost * commission
         total_cost = cost + commission_cost
-        
+
         if total_cost > self.cash:
             raise InsufficientFundsError(
                 required=total_cost,
                 available=self.cash,
                 currency="KRW"
             )
-        
-        # 포지션 생성
+
+        # 포지션 생성 (timestamp가 없으면 현재 시간 사용)
+        entry_time = timestamp if timestamp is not None else datetime.now()
         position = Position(
             symbol=symbol,
             size=size,
             entry_price=execution_price,
-            entry_time=datetime.now(),
+            entry_time=entry_time,
             commission=commission_cost
         )
-        
+
         self.positions[symbol] = position
         self.cash -= total_cost
-        
+
         return position
     
     def close_position(
-        self, 
-        symbol: str, 
+        self,
+        symbol: str,
         price: float,
         commission: float,
-        slippage: float
+        slippage: float,
+        timestamp: Optional[datetime] = None
     ) -> Optional[Trade]:
-        """포지션 청산"""
+        """
+        포지션 청산
+
+        Args:
+            symbol: 거래 종목
+            price: 청산 가격
+            commission: 수수료율
+            slippage: 슬리피지율
+            timestamp: 청산 시점 (백테스트 시 bar timestamp 사용, None이면 현재 시간)
+        """
         if symbol not in self.positions:
             return None
-        
+
         position = self.positions[symbol]
-        
+
         # 실제 체결 가격
         execution_price = price * (1 - slippage)
-        
+
         # 수익 계산
         proceeds = position.size * execution_price
         commission_cost = proceeds * commission
         net_proceeds = proceeds - commission_cost
-        
+
+        # 청산 시간 (timestamp가 없으면 현재 시간 사용)
+        exit_time = timestamp if timestamp is not None else datetime.now()
+
         # 거래 기록
         trade = Trade(
             symbol=symbol,
@@ -160,16 +185,16 @@ class Portfolio:
             exit_price=execution_price,
             size=position.size,
             entry_time=position.entry_time,
-            exit_time=datetime.now(),
+            exit_time=exit_time,
             pnl=net_proceeds - (position.size * position.entry_price + position.commission),
             pnl_percent=((execution_price - position.entry_price) / position.entry_price) * 100,
             commission=position.commission + commission_cost
         )
-        
+
         self.closed_trades.append(trade)
         self.cash += net_proceeds
         del self.positions[symbol]
-        
+
         return trade
     
     def update(self, current_bar: pd.Series):

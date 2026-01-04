@@ -45,7 +45,7 @@ class TestCoinCandidate:
         assert candidate.selected is True
 
     def test_candidate_is_ready_for_entry_true(self):
-        """진입 준비 완료 테스트 - True"""
+        """진입 준비 완료 테스트 - True (Trading Pass 통과 필수)"""
         entry_signal = MagicMock()
         entry_signal.decision = 'buy'
 
@@ -58,7 +58,9 @@ class TestCoinCandidate:
             final_score=80.0,
             final_grade="BUY",
             selected=True,
-            selection_reason="테스트"
+            selection_reason="테스트",
+            trading_pass_passed=True,  # 2단 게이트: Trading Pass 통과 필수
+            expectancy_R=0.15
         )
 
         assert candidate.is_ready_for_entry is True

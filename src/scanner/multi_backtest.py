@@ -6,8 +6,12 @@
 
 주요 기능:
 - 병렬 백테스팅 실행 (비동기)
-- 성능 지표 기반 필터링
+- Research Pass 기준 필터링 (느슨한 기준으로 후보 확보)
 - 점수 기반 순위화
+
+⚠️ 2026-01-04 변경: MultiBacktestConfig 제거, ResearchPassConfig 사용
+- 설정 중복 제거 및 단일 소스 원칙 적용
+- Research Pass 기준으로 후보 선별 (30-50% 통과율 목표)
 """
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -19,6 +23,7 @@ import pandas as pd
 from src.backtesting.runner import BacktestRunner
 from src.backtesting.rule_based_strategy import RuleBasedBreakoutStrategy
 from src.backtesting.backtester import BacktestResult
+from src.backtesting.quick_filter import ResearchPassConfig  # ⚠️ 통합된 Config 사용
 from src.scanner.data_sync import HistoricalDataSync
 from src.scanner.liquidity_scanner import CoinInfo
 from src.utils.logger import Logger
@@ -38,51 +43,68 @@ class BacktestScore:
     backtest_result: Optional[BacktestResult] = None
     coin_info: Optional[CoinInfo] = None  # 유동성 정보
     backtest_time: datetime = field(default_factory=datetime.now)
+    pass_type: str = "research"           # 통과한 Pass 타입 (research/trading)
 
 
 @dataclass
 class MultiBacktestConfig:
-    """멀티코인 백테스팅 설정 (퀀트 기준 강화 - QuickBacktestConfig와 동기화)"""
-    # 백테스팅 파라미터
-    initial_capital: float = 10_000_000   # 초기 자본
-    commission: float = 0.0005            # 수수료 (0.05%)
-    slippage: float = 0.0001              # 슬리피지 (0.01%)
-    days: int = 730                       # 백테스팅 기간 (2년)
-    interval: str = "day"                 # 데이터 간격
+    """
+    멀티코인 백테스팅 설정 (DEPRECATED - ResearchPassConfig 사용 권장)
 
-    # ============================================================
-    # 필터링 조건 (퀀트/헤지펀드 기준으로 강화)
-    # ============================================================
+    ⚠️ 하위 호환성을 위해 유지되지만, 내부적으로 ResearchPassConfig 값 사용
+    새 코드에서는 ResearchPassConfig를 직접 사용하세요.
+    """
+    # 백테스팅 파라미터 (ResearchPassConfig와 동기화)
+    initial_capital: float = 10_000_000
+    commission: float = 0.0005
+    slippage: float = 0.0001
+    days: int = 730
+    interval: str = "day"
 
-    # 1. 수익성 지표 (Profitability)
-    min_return: float = 15.0              # 최소 수익률 (%) - 2년간 15%
-    min_win_rate: float = 38.0            # 최소 승률 (%)
-    min_profit_factor: float = 1.8        # 최소 손익비
-
-    # 2. 위험조정 수익률 (Risk-Adjusted Returns)
-    min_sharpe_ratio: float = 1.0         # 최소 Sharpe - 기관 기준
-    min_sortino_ratio: float = 1.2        # 최소 Sortino
-    min_calmar_ratio: float = 0.8         # 최소 Calmar
-
-    # 3. 리스크 관리 (Risk Management)
-    max_drawdown: float = 15.0            # 최대 낙폭 (%)
-    max_consecutive_losses: int = 5       # 최대 연속 손실
-    max_volatility: float = 50.0          # 최대 연율 변동성 (%)
-
-    # 4. 통계적 유의성 (Statistical Significance)
-    min_trades: int = 20                  # 최소 거래 수 - 통계적 의미
-
-    # 5. 거래 품질 (Trade Quality)
-    min_avg_win_loss_ratio: float = 1.3   # 평균 수익/손실 비율
-    max_avg_holding_hours: float = 168.0  # 최대 평균 보유 시간 (7일)
+    # Research Pass 기준 사용 (느슨한 기준)
+    min_return: float = 8.0               # Research 기준
+    min_win_rate: float = 30.0            # Research 기준
+    min_profit_factor: float = 1.3        # Research 기준
+    min_sharpe_ratio: float = 0.4         # Research 기준
+    min_sortino_ratio: float = 0.5        # Research 기준
+    min_calmar_ratio: float = 0.25        # Research 기준
+    max_drawdown: float = 30.0            # Research 기준
+    max_consecutive_losses: int = 8       # Research 기준
+    max_volatility: float = 100.0         # Research 기준
+    min_trades: int = 10                  # Research 기준 (ResearchPassConfig와 동기화)
+    min_avg_win_loss_ratio: float = 1.0   # Research 기준 (연동 필터로 대체)
+    max_avg_holding_hours: float = 336.0  # Research 기준
 
     # 점수 가중치
-    weight_return: float = 0.20           # 수익률 가중치
-    weight_win_rate: float = 0.10         # 승률 가중치
-    weight_profit_factor: float = 0.20    # 손익비 가중치
-    weight_sharpe: float = 0.25           # 샤프 비율 가중치 (중요)
-    weight_drawdown: float = 0.15         # 낙폭 가중치
-    weight_sortino: float = 0.10          # 소르티노 가중치
+    weight_return: float = 0.20
+    weight_win_rate: float = 0.10
+    weight_profit_factor: float = 0.20
+    weight_sharpe: float = 0.25
+    weight_drawdown: float = 0.15
+    weight_sortino: float = 0.10
+
+    @classmethod
+    def from_research_config(cls) -> 'MultiBacktestConfig':
+        """ResearchPassConfig에서 생성 (권장)"""
+        rc = ResearchPassConfig()
+        return cls(
+            initial_capital=rc.initial_capital,
+            commission=rc.commission,
+            slippage=rc.slippage,
+            days=rc.days,
+            min_return=rc.min_return,
+            min_win_rate=rc.min_win_rate,
+            min_profit_factor=rc.min_profit_factor,
+            min_sharpe_ratio=rc.min_sharpe_ratio,
+            min_sortino_ratio=rc.min_sortino_ratio,
+            min_calmar_ratio=rc.min_calmar_ratio,
+            max_drawdown=rc.max_drawdown,
+            max_consecutive_losses=rc.max_consecutive_losses,
+            max_volatility=rc.max_volatility,
+            min_trades=rc.min_trades,
+            min_avg_win_loss_ratio=rc.min_avg_win_loss_ratio,
+            max_avg_holding_hours=rc.max_avg_holding_hours,
+        )
 
 
 class MultiCoinBacktest:

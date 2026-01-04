@@ -1,0 +1,48 @@
+%% Scheduler Main Flow (scheduler_main.py)
+%% scheduler_main.py의 시작부터 종료까지 전체 흐름
+
+sequenceDiagram
+    participant User
+    participant SchedulerMain as scheduler_main.py
+    participant Env as Environment
+    participant DB as PostgreSQL
+    participant Scheduler as APScheduler
+    participant Telegram as Telegram API
+    participant GracefulKiller
+
+    User->>SchedulerMain: python scheduler_main.py
+
+    Note over SchedulerMain: 1. 환경 설정
+    SchedulerMain->>Env: load_dotenv() (.env 파일)
+    SchedulerMain->>SchedulerMain: validate_environment_variables()
+    alt 필수 환경변수 누락
+        SchedulerMain-->>User: ❌ 환경변수 검증 실패 (exit 1)
+    end
+
+    Note over SchedulerMain: 2. 시스템 초기화
+    SchedulerMain->>DB: init_db() (테이블 생성)
+    SchedulerMain->>SchedulerMain: set_bot_running(True)
+    SchedulerMain->>Telegram: notify_bot_status("started")
+
+    Note over SchedulerMain: 3. 스케줄러 시작
+    SchedulerMain->>Scheduler: start_scheduler()
+    Scheduler->>Scheduler: add_jobs() (4개 작업 등록)
+    Note right of Scheduler: - trading_job (매시 01분)<br/>- position_management_job (:01,:16,:31,:46)<br/>- portfolio_snapshot_job (매시 01분)<br/>- daily_report_job (09:00)
+    Scheduler->>Scheduler: scheduler.start()
+
+    alt SCHEDULER_RUN_IMMEDIATELY=true
+        Scheduler->>Scheduler: 즉시 실행 작업 등록 (2초 후)
+        Note right of Scheduler: 개발/테스트 모드 전용
+    end
+
+    Note over SchedulerMain: 4. 무한 루프 (상태 모니터링)
+    loop 10초마다
+        SchedulerMain->>GracefulKiller: check kill_now
+        alt 종료 시그널 수신 (Ctrl+C)
+            GracefulKiller-->>SchedulerMain: kill_now = True
+            SchedulerMain->>SchedulerMain: set_bot_running(False)
+            SchedulerMain->>Telegram: notify_bot_status("stopped")
+            SchedulerMain->>Scheduler: stop_scheduler()
+            SchedulerMain-->>User: ✅ Graceful shutdown 완료
+        end
+    end

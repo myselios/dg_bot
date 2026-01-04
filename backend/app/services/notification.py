@@ -84,7 +84,114 @@ class TelegramNotifier:
         except Exception as e:
             logger.error(f"Telegram 메시지 전송 실패: {e}")
             return False
-    
+
+    def _get_filter_table_data(self, metrics: dict, filter_results: dict) -> list:
+        """
+        필터 테이블 데이터 생성
+
+        Args:
+            metrics: 백테스트 메트릭 딕셔너리
+            filter_results: 필터별 통과 여부
+
+        Returns:
+            [(필터명, 기준, 결과, 통과여부), ...] 형태의 리스트
+        """
+        from src.backtesting.quick_filter import ResearchPassConfig
+
+        config = ResearchPassConfig()
+
+        # 필터 정의: (key, 한글명, 방향, 기준값, 단위, 메트릭키)
+        filter_defs = [
+            ('return', '수익률', 'min', config.min_return, '%', 'total_return'),
+            ('win_rate', '승률', 'min', config.min_win_rate, '%', 'win_rate'),
+            ('profit_factor', '손익비', 'min', config.min_profit_factor, '', 'profit_factor'),
+            ('sharpe_ratio', 'Sharpe', 'min', config.min_sharpe_ratio, '', 'sharpe_ratio'),
+            ('sortino_ratio', 'Sortino', 'min', config.min_sortino_ratio, '', 'sortino_ratio'),
+            ('calmar_ratio', 'Calmar', 'min', config.min_calmar_ratio, '', 'calmar_ratio'),
+            ('max_drawdown', 'MDD', 'max', config.max_drawdown, '%', 'max_drawdown'),
+            ('min_trades', '거래수', 'min', config.min_trades, '', 'total_trades'),
+            ('avg_win_loss_ratio', '평균손익', 'min', config.min_avg_win_loss_ratio, '', None),
+        ]
+
+        rows = []
+        for key, name, direction, threshold, unit, metric_key in filter_defs:
+            # 실제값 추출
+            if key == 'avg_win_loss_ratio':
+                avg_win = metrics.get('avg_win', 0)
+                avg_loss = abs(metrics.get('avg_loss', 1))
+                actual = avg_win / avg_loss if avg_loss > 0 else 0
+            elif key == 'max_drawdown':
+                actual = abs(metrics.get(metric_key, 0)) if metric_key else 0
+            elif metric_key:
+                actual = metrics.get(metric_key, 0)
+            else:
+                actual = 0
+
+            # 통과 여부
+            passed = filter_results.get(key, False)
+
+            # 기준값 포맷팅 (min 8% 또는 max 25% - HTML 태그 방지)
+            op = 'min' if direction == 'min' else 'max'
+            if isinstance(threshold, float) and not float(threshold).is_integer():
+                threshold_str = f"{op}{threshold:.1f}{unit}"
+            else:
+                threshold_str = f"{op}{int(threshold)}{unit}"
+
+            # 실제값 포맷팅
+            if isinstance(actual, float) and actual != 0:
+                actual_str = f"{actual:.1f}{unit}"
+            else:
+                actual_str = f"{int(actual) if isinstance(actual, float) else actual}{unit}"
+
+            rows.append((name, threshold_str, actual_str, passed))
+
+        return rows
+
+    def _get_display_width(self, text: str) -> int:
+        """
+        문자열의 표시 너비 계산 (한글=2, 영문/숫자=1)
+        """
+        width = 0
+        for char in text:
+            # 한글, 한자, 일본어 등은 2칸
+            if '\uac00' <= char <= '\ud7af' or '\u4e00' <= char <= '\u9fff':
+                width += 2
+            else:
+                width += 1
+        return width
+
+    def _pad_to_width(self, text: str, target_width: int) -> str:
+        """
+        문자열을 목표 너비에 맞게 패딩
+        """
+        current_width = self._get_display_width(text)
+        padding = target_width - current_width
+        return text + ' ' * max(0, padding)
+
+    def _format_filter_table(self, rows: list) -> str:
+        """
+        필터 테이블을 텍스트로 포맷팅
+
+        Args:
+            rows: [(필터명, 기준, 결과, 통과여부), ...]
+
+        Returns:
+            고정폭 폰트용 테이블 문자열
+        """
+        lines = []
+        # 헤더 (필터=6칸, 기준=8칸, 결과=8칸)
+        lines.append("필터  │기준    │결과    │P")
+        lines.append("──────┼────────┼────────┼─")
+
+        for name, threshold, actual, passed in rows:
+            pf = "✓" if passed else "✗"
+            name_pad = self._pad_to_width(name, 6)
+            threshold_pad = self._pad_to_width(threshold, 8)
+            actual_pad = self._pad_to_width(actual, 8)
+            lines.append(f"{name_pad}│{threshold_pad}│{actual_pad}│{pf}")
+
+        return '\n'.join(lines)
+
     async def notify_trade(
         self,
         symbol: str,
@@ -138,11 +245,15 @@ class TelegramNotifier:
             error_message: 에러 메시지
             context: 추가 컨텍스트 정보
         """
+        # HTML 특수 문자 이스케이프 (< > & 등)
+        error_type_escaped = escape_html(error_type)
+        error_message_escaped = escape_html(error_message)
+
         message = f"""
 ⚠️ <b>에러 발생</b>
 
-🔴 <b>타입:</b> {error_type}
-📝 <b>메시지:</b> {error_message}
+🔴 <b>타입:</b> {error_type_escaped}
+📝 <b>메시지:</b> {error_message_escaped}
 
 🕐 <b>시각:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 """
@@ -606,6 +717,9 @@ class TelegramNotifier:
             selected_coin: 선택된 코인 정보 (없으면 None)
             all_backtest_results: 모든 백테스팅 결과 (상위 N개)
         """
+        # Trading Pass 통과 수 (없으면 백테스트 통과 수 사용)
+        trading_pass_count = scan_summary.get('trading_pass_passed', scan_summary.get('backtest_passed', 0))
+
         message = f"""
 🔍 <b>멀티코인 스캔 결과</b>
 
@@ -614,7 +728,7 @@ class TelegramNotifier:
 ━━━━━━━━━━━━━━━━━━━━
 📈 <b>유동성 스캔:</b> {scan_summary.get('liquidity_scanned', 0)}개 코인
 🔬 <b>백테스팅 통과:</b> {scan_summary.get('backtest_passed', 0)}개 코인
-🤖 <b>AI 분석:</b> {scan_summary.get('ai_analyzed', 0)}개 코인
+🔐 <b>Trading Pass:</b> {trading_pass_count}개 코인
 ✅ <b>최종 선택:</b> {scan_summary.get('selected', 0)}개 코인
 ⏱️ <b>소요 시간:</b> {scan_summary.get('duration_seconds', 0):.1f}초
 """
@@ -635,54 +749,56 @@ class TelegramNotifier:
 📝 <b>선택 사유:</b> {escape_html(selected_coin.get('reason', '')[:100])}
 """
 
-        # 백테스팅 상위 결과 (있는 경우) - 코인별 실패 조건 상세 표시
+        # 백테스팅 상위 결과 (있는 경우) - 코인별 표 형식 표시
         if all_backtest_results and len(all_backtest_results) > 0:
             message += f"""
 ━━━━━━━━━━━━━━━━━━━━
-<b>📋 백테스팅 결과 상세</b>
+<b>📋 스캔 결과 상세</b>
 ━━━━━━━━━━━━━━━━━━━━
 """
-            # 상위 5개만 표시 (섹터 정보 및 실패 조건 포함)
+            # 상위 5개만 표시 (섹터 정보 및 필터 테이블 포함)
             for i, bt_result in enumerate(all_backtest_results[:5], 1):
                 symbol = bt_result.get('symbol', 'N/A')
                 sector = get_coin_sector(symbol)
                 sector_name = get_sector_korean_name(sector)
                 score = bt_result.get('score', 0)
                 passed = bt_result.get('passed', False)
-                passed_emoji = "✅" if passed else "❌"
+                bt_emoji = "✅" if passed else "❌"
 
-                message += f"\n<b>{i}. {passed_emoji} {symbol}</b> [{sector_name}] {score:.1f}점\n"
+                # Trading Pass 정보 (기대값)
+                expectancy = bt_result.get('expectancy', None)
+                trading_pass = bt_result.get('trading_pass', None)
 
-                # 필터 결과 상세 표시
-                filter_results = bt_result.get('filter_results', {})
-                if filter_results:
-                    # 통과한 조건과 실패한 조건 분리
-                    passed_filters = [k for k, v in filter_results.items() if v]
-                    failed_filters = [k for k, v in filter_results.items() if not v]
+                # 헤더: 코인명 + 섹터 + 점수
+                message += f"\n<b>{i}. {symbol}</b> [{sector_name}] {score:.1f}점\n"
 
-                    # 필터 이름 한글화
-                    filter_names = {
-                        'return': '수익률',
-                        'win_rate': '승률',
-                        'profit_factor': '손익비',
-                        'sharpe_ratio': 'Sharpe',
-                        'sortino_ratio': 'Sortino',
-                        'calmar_ratio': 'Calmar',
-                        'max_drawdown': '낙폭',
-                        'max_consecutive_losses': '연속손실',
-                        'volatility': '변동성',
-                        'min_trades': '거래수',
-                        'avg_win_loss_ratio': '평균손익비',
-                        'avg_holding_hours': '보유시간'
-                    }
-
-                    if passed:
-                        message += f"   ✅ 모든 조건 통과 ({len(passed_filters)}/12)\n"
+                # BT/TP 상태를 한 줄로 표시
+                if expectancy is not None:
+                    tp_emoji = "✅" if trading_pass else "❌"
+                    tp_status = f"{expectancy:.2f}R"
+                    # Trading Pass 실패 사유 표시
+                    tp_reason = bt_result.get('trading_pass_reason', '')
+                    if not trading_pass and tp_reason:
+                        # 실패 사유에서 핵심만 추출 (예: "3개 필터 미달: return, sharpe_ratio, ...")
+                        message += f"   📊 BT: {bt_emoji}  🔐 TP: {tp_emoji} {tp_status}\n"
+                        message += f"   └ {escape_html(tp_reason[:60])}\n"
                     else:
-                        # 실패한 조건만 표시
-                        failed_names = [filter_names.get(f, f) for f in failed_filters]
-                        message += f"   ❌ 실패: {', '.join(failed_names)}\n"
-                        message += f"   ✅ 통과: {len(passed_filters)}/12\n"
+                        message += f"   📊 BT: {bt_emoji}  🔐 TP: {tp_emoji} {tp_status}\n"
+                else:
+                    message += f"   📊 BT: {bt_emoji}\n"
+
+                # 필터 결과 상세 표시 (표 형식)
+                filter_results = bt_result.get('filter_results', {})
+                metrics = bt_result.get('metrics', {})
+
+                if filter_results and metrics:
+                    rows = self._get_filter_table_data(metrics, filter_results)
+                    table = self._format_filter_table(rows)
+                    message += f"<pre>{table}</pre>\n"
+                else:
+                    passed_count = len([k for k, v in filter_results.items() if v]) if filter_results else 0
+                    total_count = len(filter_results) if filter_results else 12
+                    message += f"   통과: {passed_count}/{total_count}\n"
 
         message += f"\n🕐 <b>시각:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 

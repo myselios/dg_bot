@@ -103,6 +103,7 @@ class AIConfig:
     # Model settings
     MODEL = get_env_str("AI_MODEL", "gpt-5.2")
     TEMPERATURE = get_env_float("AI_TEMPERATURE", 0.7, min_value=0.0, max_value=2.0)
+    MAX_TOKENS = get_env_int("AI_MAX_TOKENS", 1000, min_value=100, max_value=4096)
     TIMEOUT_SECONDS = get_env_int("AI_TIMEOUT_SECONDS", 30)
     MAX_RETRIES = get_env_int("AI_MAX_RETRIES", 3)
 

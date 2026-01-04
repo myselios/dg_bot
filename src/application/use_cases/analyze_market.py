@@ -55,6 +55,11 @@ class AnalyzeMarketUseCase:
         self,
         ticker: str,
         interval: str = "minute60",
+        *,
+        chart_data: Optional[Dict[str, Any]] = None,
+        technical_indicators: Optional[Dict[str, Any]] = None,
+        current_price: Optional[Decimal] = None,
+        additional_context: Optional[Dict[str, Any]] = None,
     ) -> TradingDecision:
         """
         Perform full market analysis.
@@ -62,6 +67,10 @@ class AnalyzeMarketUseCase:
         Args:
             ticker: Trading pair (e.g., "KRW-BTC")
             interval: Time interval for analysis
+            chart_data: Pre-collected chart data (optional, skips API call if provided)
+            technical_indicators: Pre-calculated indicators (optional)
+            current_price: Current price (optional)
+            additional_context: Additional context for AI analysis (optional)
 
         Returns:
             TradingDecision with analysis result
@@ -74,21 +83,54 @@ class AnalyzeMarketUseCase:
             return self._error_decision(f"Invalid interval: {interval}")
 
         try:
-            # Collect market data
-            market_data = await self.market_data.get_ohlcv(
-                ticker=ticker,
-                interval=interval,
-                count=200,
-            )
+            # Use pre-collected data or fetch from API
+            if chart_data is not None:
+                # Use provided data (from DataCollectionStage)
+                # Note: Don't use 'or' operator with DataFrame - it raises ambiguity error
+                if isinstance(chart_data, dict):
+                    day_data = chart_data.get('day')
+                    minute60_data = chart_data.get('minute60')
+                    if day_data is not None:
+                        market_data = day_data
+                    elif minute60_data is not None:
+                        market_data = minute60_data
+                    else:
+                        market_data = chart_data
+                else:
+                    market_data = chart_data
+            else:
+                # Fetch from API (fallback)
+                market_data = await self.market_data.get_ohlcv(
+                    ticker=ticker,
+                    interval=interval,
+                    count=200,
+                )
 
-            if not market_data:
+            # Check if market_data is empty (handle DataFrame, list, dict, None)
+            if market_data is None:
                 return self._error_decision("No market data available")
 
-            # Get current price
-            current_price = await self.market_data.get_current_price(ticker)
+            # DataFrame 체크
+            if hasattr(market_data, 'empty') and market_data.empty:
+                return self._error_decision("No market data available")
 
-            # Calculate technical indicators
-            indicators = await self.market_data.calculate_indicators(market_data)
+            # 리스트/딕셔너리 체크
+            if hasattr(market_data, '__len__') and not hasattr(market_data, 'empty') and len(market_data) == 0:
+                return self._error_decision("No market data available")
+
+            # Use provided price or fetch from API
+            if current_price is None:
+                current_price = await self.market_data.get_current_price(ticker)
+
+            # Use provided indicators or calculate
+            if technical_indicators is not None:
+                # Convert dict to TechnicalIndicators DTO if needed
+                if isinstance(technical_indicators, dict):
+                    indicators = TechnicalIndicators.from_dict(technical_indicators)
+                else:
+                    indicators = technical_indicators
+            else:
+                indicators = await self.market_data.calculate_indicators(market_data)
 
             # Build analysis request
             request = AnalysisRequest(
@@ -96,6 +138,7 @@ class AnalyzeMarketUseCase:
                 current_price=current_price,
                 market_data=market_data,
                 indicators=indicators,
+                additional_context=additional_context,
             )
 
             # Get AI analysis

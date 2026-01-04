@@ -93,10 +93,15 @@ class TechnicalIndicators:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> TechnicalIndicators:
         """Create from dictionary."""
+        from decimal import InvalidOperation
+
         def to_decimal(value: Any) -> Optional[Decimal]:
             if value is None:
                 return None
-            return Decimal(str(value))
+            try:
+                return Decimal(str(value))
+            except (ValueError, TypeError, InvalidOperation) as e:
+                raise ValueError(f"Cannot convert {value!r} to Decimal: {e}")
 
         return cls(
             rsi=to_decimal(data.get("rsi")),
@@ -134,6 +139,22 @@ class AnalysisRequest:
     indicators: Optional[TechnicalIndicators] = None
     position_info: Optional[Dict[str, Any]] = None
     additional_context: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self):
+        """Validate fields after initialization."""
+        # Prevent DataFrame from being passed as market_data
+        if self.market_data is not None:
+            # Check if it's a pandas DataFrame
+            if hasattr(self.market_data, 'empty'):
+                raise TypeError(
+                    f"market_data must be List[MarketData], not DataFrame. "
+                    f"Got: {type(self.market_data)}"
+                )
+            # Check if it's a list
+            if not isinstance(self.market_data, list):
+                raise TypeError(
+                    f"market_data must be List[MarketData], got: {type(self.market_data)}"
+                )
 
 
 @dataclass(frozen=True)

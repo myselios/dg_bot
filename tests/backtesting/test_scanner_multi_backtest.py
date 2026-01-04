@@ -19,30 +19,30 @@ class TestMultiBacktestConfig:
     """MultiBacktestConfig 데이터클래스 테스트"""
 
     def test_default_config(self):
-        """기본 설정값 테스트"""
+        """기본 설정값 테스트 - Research Pass 기준 (느슨한 기준)"""
         config = MultiBacktestConfig()
 
-        # 수익성 지표
-        assert config.min_return == 15.0
-        assert config.min_win_rate == 38.0
-        assert config.min_profit_factor == 1.8
+        # 수익성 지표 (Research Pass 기준)
+        assert config.min_return == 8.0
+        assert config.min_win_rate == 30.0
+        assert config.min_profit_factor == 1.3
 
-        # 위험조정 수익률
-        assert config.min_sharpe_ratio == 1.0
-        assert config.min_sortino_ratio == 1.2
-        assert config.min_calmar_ratio == 0.8
+        # 위험조정 수익률 (Research Pass 기준)
+        assert config.min_sharpe_ratio == 0.4
+        assert config.min_sortino_ratio == 0.5
+        assert config.min_calmar_ratio == 0.25
 
-        # 리스크 관리
-        assert config.max_drawdown == 15.0
-        assert config.max_consecutive_losses == 5
-        assert config.max_volatility == 50.0
+        # 리스크 관리 (Research Pass 기준)
+        assert config.max_drawdown == 30.0
+        assert config.max_consecutive_losses == 8
+        assert config.max_volatility == 100.0
 
         # 통계적 유의성
         assert config.min_trades == 20
 
-        # 거래 품질
-        assert config.min_avg_win_loss_ratio == 1.3
-        assert config.max_avg_holding_hours == 168.0
+        # 거래 품질 (Research Pass 기준)
+        assert config.min_avg_win_loss_ratio == 1.0
+        assert config.max_avg_holding_hours == 336.0
 
     def test_custom_config(self):
         """커스텀 설정값 테스트"""
@@ -132,14 +132,15 @@ class TestMultiCoinBacktest:
         assert backtest.config.min_return == 25.0
 
     def test_get_filter_criteria_default(self):
-        """기본 필터 기준 반환 테스트"""
+        """기본 필터 기준 반환 테스트 - Research Pass 기준"""
         backtest = MultiCoinBacktest()
         criteria = backtest._get_filter_criteria(None)
 
-        assert criteria['min_return'] == 15.0
-        assert criteria['min_win_rate'] == 38.0
-        assert criteria['min_sharpe_ratio'] == 1.0
-        assert criteria['max_drawdown'] == 15.0
+        # Research Pass 기준 (느슨한 기준)
+        assert criteria['min_return'] == 8.0
+        assert criteria['min_win_rate'] == 30.0
+        assert criteria['min_sharpe_ratio'] == 0.4
+        assert criteria['max_drawdown'] == 30.0
         assert criteria['min_trades'] == 20
 
     def test_get_filter_criteria_custom(self):
@@ -177,12 +178,12 @@ class TestMultiCoinBacktest:
         assert all(results.values())
 
     def test_check_filters_some_fail(self):
-        """일부 필터 실패 테스트"""
+        """일부 필터 실패 테스트 - Research Pass 기준"""
         backtest = MultiCoinBacktest()
 
         metrics = {
-            'total_return': 5.0,  # 15% 미만 - 실패
-            'win_rate': 30.0,     # 38% 미만 - 실패
+            'total_return': 5.0,  # 8% 미만 - 실패
+            'win_rate': 25.0,     # 30% 미만 - 실패
             'profit_factor': 2.0,
             'sharpe_ratio': 1.5,
             'sortino_ratio': 1.8,
@@ -199,12 +200,12 @@ class TestMultiCoinBacktest:
         criteria = backtest._get_filter_criteria(None)
         results = backtest._check_filters(metrics, criteria)
 
-        assert results['return'] is False
-        assert results['win_rate'] is False
+        assert results['return'] is False   # 5.0 < 8.0 (Research 기준)
+        assert results['win_rate'] is False  # 25.0 < 30.0 (Research 기준)
         assert results['sharpe_ratio'] is True
 
     def test_check_filters_drawdown(self):
-        """MDD 필터 테스트"""
+        """MDD 필터 테스트 - Research Pass 기준 (max_drawdown=30%)"""
         backtest = MultiCoinBacktest()
 
         metrics = {
@@ -214,7 +215,7 @@ class TestMultiCoinBacktest:
             'sharpe_ratio': 1.5,
             'sortino_ratio': 1.8,
             'calmar_ratio': 1.2,
-            'max_drawdown': -25.0,  # 15% 초과 - 실패
+            'max_drawdown': -35.0,  # 30% 초과 - 실패 (Research 기준)
             'max_consecutive_losses': 3,
             'volatility': 30.0,
             'total_trades': 30,
@@ -226,7 +227,7 @@ class TestMultiCoinBacktest:
         criteria = backtest._get_filter_criteria(None)
         results = backtest._check_filters(metrics, criteria)
 
-        assert results['max_drawdown'] is False
+        assert results['max_drawdown'] is False  # -35% > 30% limit
 
     def test_calculate_score_high(self):
         """높은 점수 계산 테스트"""

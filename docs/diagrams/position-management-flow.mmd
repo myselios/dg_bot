@@ -1,0 +1,54 @@
+%% Position Management Job Flow
+%% 15분마다 실행되는 position_management_job의 전체 흐름 (규칙 기반 손절/익절)
+
+sequenceDiagram
+    participant Scheduler as APScheduler
+    participant PositionJob as position_management_job()
+    participant Container
+    participant LockPort
+    participant TradingOrchestrator
+    participant Telegram
+    participant Prometheus
+
+    Note over Scheduler: CronTrigger 발동 (:01,:16,:31,:46)
+    Scheduler->>PositionJob: 작업 실행
+
+    Note over PositionJob: 1. Lock 획득 (trading_cycle 공유)
+    PositionJob->>Container: get_lock_port()
+    PositionJob->>LockPort: acquire("trading_cycle", timeout=60)
+
+    alt Lock 획득 실패
+        LockPort-->>PositionJob: False
+        Note right of PositionJob: trading_job이 실행 중
+        PositionJob->>Prometheus: scheduler_job_success_total.inc()
+        PositionJob-->>Scheduler: ⏭️ 스킵 (정상)
+    end
+
+    Note over PositionJob: 2. TradingOrchestrator 초기화
+    PositionJob->>Container: get_trading_orchestrator()
+    Container-->>PositionJob: TradingOrchestrator
+
+    Note over PositionJob: 3. 포지션 관리 실행
+    PositionJob->>TradingOrchestrator: execute_position_management()
+    Note right of TradingOrchestrator: 규칙 기반 손절/익절<br/>(AI 호출 없음)
+    TradingOrchestrator-->>PositionJob: result
+
+    Note over PositionJob: 4. 결과 처리
+    alt status=success
+        alt 청산 발생
+            Note over PositionJob: 📱 청산 알림 (TODO)
+        end
+        PositionJob->>Prometheus: scheduler_job_success_total.inc()
+    else status=skipped
+        Note over PositionJob: 포지션 없음
+        PositionJob->>Prometheus: scheduler_job_success_total.inc()
+    else status=failed
+        PositionJob->>Telegram: notify_error(...)
+        PositionJob->>Prometheus: scheduler_job_failure_total.inc()
+    end
+
+    PositionJob->>Prometheus: scheduler_job_duration_seconds.observe(duration)
+
+    Note over PositionJob: 5. Lock 해제 (finally)
+    PositionJob->>LockPort: release("trading_cycle")
+    PositionJob-->>Scheduler: ✅ 작업 완료

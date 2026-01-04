@@ -22,7 +22,7 @@ from src.trading.indicators import TechnicalIndicators
 from src.trading.signal_analyzer import SignalAnalyzer
 from src.ai.market_correlation import calculate_market_risk
 from src.ai.validator import AIDecisionValidator
-from src.backtesting import QuickBacktestFilter
+from src.backtesting import QuickBacktestFilter, QuickBacktestResult
 from src.utils.logger import Logger
 
 
@@ -162,12 +162,49 @@ class AnalysisStage(BasePipelineStage):
         """
         백테스팅 필터 실행
 
+        HybridRiskCheckStage에서 이미 스캔/선택된 코인은 스킵합니다.
+        (CoinSelector가 이미 ResearchPass + TradingPass 필터를 적용했음)
+
         Args:
             context: 파이프라인 컨텍스트
 
         Returns:
             StageResult: 필터 결과
         """
+        # 스캔으로 선택된 코인이면 중복 백테스팅 스킵
+        if hasattr(context, 'selected_coin') and context.selected_coin is not None:
+            Logger.print_info("📊 스캔에서 이미 필터링 완료 - 백테스팅 스킵")
+
+            # 선택된 코인의 백테스트 결과 활용
+            selected = context.selected_coin
+            if hasattr(selected, 'backtest_score') and selected.backtest_score:
+                # QuickBacktestResult 형태로 변환
+                context.backtest_result = QuickBacktestResult(
+                    passed=True,
+                    result=None,
+                    metrics=selected.backtest_score.metrics or {},
+                    filter_results=selected.backtest_score.filter_results or {},
+                    reason=f"스캔에서 선택됨 (점수: {selected.final_score:.1f}점)"
+                )
+            else:
+                # 백테스트 정보 없으면 기본값
+                context.backtest_result = QuickBacktestResult(
+                    passed=True,
+                    result=None,
+                    metrics={},
+                    filter_results={},
+                    reason=f"스캔에서 선택됨 (점수: {selected.final_score:.1f}점)"
+                )
+
+            Logger.print_success(f"✅ {selected.symbol} 선택됨 ({selected.final_score:.1f}점) - AI 분석 진행")
+
+            return StageResult(
+                success=True,
+                action='continue',
+                message=f"스캔에서 선택된 코인: {selected.symbol}"
+            )
+
+        # 고정 티커 사용 시 기존 백테스팅 수행
         quick_filter = QuickBacktestFilter()
         context.backtest_result = quick_filter.run_quick_backtest(
             context.ticker,
@@ -176,7 +213,7 @@ class AnalysisStage(BasePipelineStage):
 
         if not context.backtest_result.passed:
             Logger.print_error(
-                f"백테스팅 필터링 조건 미달: {context.backtest_result.reason}"
+                f"❌ 백테스팅 필터링 조건 미달: {context.backtest_result.reason}"
             )
             Logger.print_warning("거래를 중단합니다. 보유 포지션을 유지합니다.")
 
@@ -269,8 +306,34 @@ class AnalysisStage(BasePipelineStage):
         """UseCase를 통한 AI 분석 수행"""
         use_case = context.container.get_analyze_market_use_case()
 
-        # UseCase 실행
-        trading_decision = await use_case.analyze(context.ticker)
+        # context에서 현재가 추출
+        current_price = None
+        if context.current_status:
+            current_price = context.current_status.get('current_price')
+
+        # 추가 컨텍스트 구성 (백테스팅 결과, 시장 상관관계 등)
+        additional_context = {}
+        if context.backtest_result:
+            additional_context['backtest_result'] = {
+                'passed': context.backtest_result.passed,
+                'metrics': context.backtest_result.metrics,
+                'reason': context.backtest_result.reason,
+            }
+        if context.market_correlation:
+            additional_context['market_correlation'] = context.market_correlation
+        if context.flash_crash:
+            additional_context['flash_crash'] = context.flash_crash
+        if context.rsi_divergence:
+            additional_context['rsi_divergence'] = context.rsi_divergence
+
+        # UseCase 실행 (context 데이터 전달)
+        trading_decision = await use_case.analyze(
+            ticker=context.ticker,
+            chart_data=context.chart_data,
+            technical_indicators=context.technical_indicators,
+            current_price=current_price,
+            additional_context=additional_context if additional_context else None,
+        )
 
         # TradingDecision → ai_result dict 변환
         context.ai_result = self._convert_trading_decision_to_dict(trading_decision)

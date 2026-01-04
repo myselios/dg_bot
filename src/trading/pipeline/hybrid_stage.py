@@ -390,40 +390,78 @@ class HybridRiskCheckStage(BasePipelineStage):
             best_metrics = {}
 
             # 모든 백테스팅 결과에서 최고 점수 코인 찾기
+            # NOTE: all_backtest_results는 dict 또는 object일 수 있음
             if scan_result and hasattr(scan_result, 'all_backtest_results') and scan_result.all_backtest_results:
                 for bt_result in scan_result.all_backtest_results:
-                    if best_bt_result is None or bt_result.score > best_bt_result.score:
+                    bt_score = bt_result.get('score', 0) if isinstance(bt_result, dict) else getattr(bt_result, 'score', 0)
+                    best_score = best_bt_result.get('score', 0) if isinstance(best_bt_result, dict) else getattr(best_bt_result, 'score', 0) if best_bt_result else 0
+                    if best_bt_result is None or bt_score > best_score:
                         best_bt_result = bt_result
                 if best_bt_result:
-                    best_metrics = best_bt_result.metrics or {}
+                    best_metrics = (best_bt_result.get('metrics') if isinstance(best_bt_result, dict) else getattr(best_bt_result, 'metrics', None)) or {}
 
             # 백테스팅 결과 리스트 생성 (텔레그램용)
             all_bt_results_for_telegram = []
             if scan_result and hasattr(scan_result, 'all_backtest_results') and scan_result.all_backtest_results:
                 for bt in scan_result.all_backtest_results[:5]:  # 상위 5개만
-                    all_bt_results_for_telegram.append({
-                        'symbol': bt.symbol,
-                        'score': bt.score,
-                        'grade': bt.grade,
-                        'passed': bt.passed,
-                        'filter_results': bt.filter_results if hasattr(bt, 'filter_results') else {},
-                        'reason': bt.reason if hasattr(bt, 'reason') else ''
-                    })
+                    if isinstance(bt, dict):
+                        all_bt_results_for_telegram.append({
+                            'symbol': bt.get('symbol', ''),
+                            'score': bt.get('score', 0),
+                            'grade': bt.get('grade', 'F'),
+                            'passed': bt.get('passed', False),
+                            'filter_results': bt.get('filter_results', {}),
+                            'metrics': bt.get('metrics', {}),  # 테이블 표시용
+                            'reason': bt.get('reason', ''),
+                            'expectancy': bt.get('expectancy'),
+                            'trading_pass': bt.get('trading_pass'),
+                            'trading_pass_reason': bt.get('trading_pass_reason', '')
+                        })
+                    else:
+                        all_bt_results_for_telegram.append({
+                            'symbol': getattr(bt, 'symbol', ''),
+                            'score': getattr(bt, 'score', 0),
+                            'grade': getattr(bt, 'grade', 'F'),
+                            'passed': getattr(bt, 'passed', False),
+                            'filter_results': getattr(bt, 'filter_results', {}),
+                            'metrics': getattr(bt, 'metrics', {}),  # 테이블 표시용
+                            'reason': getattr(bt, 'reason', '')
+                        })
+
+            # best_bt_result에서 ticker 추출
+            best_ticker = self.fallback_ticker
+            if best_bt_result:
+                if isinstance(best_bt_result, dict):
+                    best_ticker = best_bt_result.get('ticker') or f"KRW-{best_bt_result.get('symbol', 'ETH')}"
+                else:
+                    best_ticker = getattr(best_bt_result, 'ticker', self.fallback_ticker)
+
+            # best_bt_result에서 filter_results, score 추출 (dict 또는 object)
+            best_filter_results = {}
+            best_score_value = 0
+            if best_bt_result:
+                if isinstance(best_bt_result, dict):
+                    best_filter_results = best_bt_result.get('filter_results', {})
+                    best_score_value = best_bt_result.get('score', 0)
+                else:
+                    best_filter_results = getattr(best_bt_result, 'filter_results', {})
+                    best_score_value = getattr(best_bt_result, 'score', 0)
 
             backtest_callback_data = {
-                'ticker': best_bt_result.ticker if best_bt_result else self.fallback_ticker,
+                'ticker': best_ticker,
                 'backtest_result': {
                     'passed': False,
                     'metrics': best_metrics,
-                    'filter_results': best_bt_result.filter_results if best_bt_result else {},
-                    'reason': f'스캔 결과 진입 적합 코인 없음 (최고 점수: {best_bt_result.score:.1f}점)' if best_bt_result else '스캔 결과 진입 적합 코인 없음'
+                    'filter_results': best_filter_results,
+                    'reason': f'스캔 결과 진입 적합 코인 없음 (최고 점수: {best_score_value:.1f}점)' if best_bt_result else '스캔 결과 진입 적합 코인 없음'
                 },
                 'scan_summary': {
                     'liquidity_scanned': getattr(scan_result, 'liquidity_scanned', 0) if scan_result else 0,
                     'backtest_passed': getattr(scan_result, 'backtest_passed', 0) if scan_result else 0,
+                    'trading_pass_passed': sum(1 for c in getattr(scan_result, 'candidates', []) if c.trading_pass_passed) if scan_result else 0,
                     'ai_analyzed': 0,
                     'selected': 0,
-                    'best_score': best_bt_result.score if best_bt_result else 0,
+                    'best_score': best_score_value,
                     'duration_seconds': getattr(scan_result, 'total_duration_seconds', 0) if scan_result else 0
                 },
                 'selected_coin': None,
@@ -447,7 +485,16 @@ class HybridRiskCheckStage(BasePipelineStage):
                         'backtest_passed': getattr(scan_result, 'backtest_passed', 0),
                         'selected': 0
                     },
-                    'selected_coin': None
+                    'scan_summary': {
+                        'liquidity_scanned': getattr(scan_result, 'liquidity_scanned', 0) if scan_result else 0,
+                        'backtest_passed': getattr(scan_result, 'backtest_passed', 0) if scan_result else 0,
+                        'trading_pass_passed': sum(1 for c in getattr(scan_result, 'candidates', []) if c.trading_pass_passed) if scan_result else 0,
+                        'ai_analyzed': 0,
+                        'selected': 0,
+                        'duration_seconds': getattr(scan_result, 'total_duration_seconds', 0) if scan_result else 0
+                    },
+                    'selected_coin': None,
+                    'all_backtest_results': all_bt_results_for_telegram
                 },
                 message="진입 적합 코인 없음"
             )
@@ -466,14 +513,29 @@ class HybridRiskCheckStage(BasePipelineStage):
         all_bt_results_for_telegram = []
         if scan_result.all_backtest_results:
             for bt in scan_result.all_backtest_results[:5]:  # 상위 5개만
-                all_bt_results_for_telegram.append({
-                    'symbol': bt.symbol,
-                    'score': bt.score,
-                    'grade': bt.grade,
-                    'passed': bt.passed,
-                    'filter_results': bt.filter_results if hasattr(bt, 'filter_results') else {},
-                    'reason': bt.reason if hasattr(bt, 'reason') else ''
-                })
+                if isinstance(bt, dict):
+                    all_bt_results_for_telegram.append({
+                        'symbol': bt.get('symbol', ''),
+                        'score': bt.get('score', 0),
+                        'grade': bt.get('grade', 'F'),
+                        'passed': bt.get('passed', False),
+                        'filter_results': bt.get('filter_results', {}),
+                        'metrics': bt.get('metrics', {}),  # 테이블 표시용
+                        'reason': bt.get('reason', ''),
+                        'expectancy': bt.get('expectancy'),
+                        'trading_pass': bt.get('trading_pass'),
+                        'trading_pass_reason': bt.get('trading_pass_reason', '')
+                    })
+                else:
+                    all_bt_results_for_telegram.append({
+                        'symbol': getattr(bt, 'symbol', ''),
+                        'score': getattr(bt, 'score', 0),
+                        'grade': getattr(bt, 'grade', 'F'),
+                        'passed': getattr(bt, 'passed', False),
+                        'filter_results': getattr(bt, 'filter_results', {}),
+                        'metrics': getattr(bt, 'metrics', {}),  # 테이블 표시용
+                        'reason': getattr(bt, 'reason', '')
+                    })
 
         # 선택된 코인의 백테스팅 메트릭
         selected_metrics = {}
@@ -492,6 +554,7 @@ class HybridRiskCheckStage(BasePipelineStage):
             'scan_summary': {
                 'liquidity_scanned': scan_result.liquidity_scanned,
                 'backtest_passed': scan_result.backtest_passed,
+                'trading_pass_passed': sum(1 for c in scan_result.candidates if c.trading_pass_passed),
                 'ai_analyzed': scan_result.ai_analyzed,
                 'selected': len(scan_result.selected_coins),
                 'best_score': selected_coin.final_score,
@@ -526,10 +589,12 @@ class HybridRiskCheckStage(BasePipelineStage):
                 'scan_summary': {
                     'liquidity_scanned': scan_result.liquidity_scanned,
                     'backtest_passed': scan_result.backtest_passed,
+                    'trading_pass_passed': sum(1 for c in scan_result.candidates if c.trading_pass_passed),
                     'ai_analyzed': scan_result.ai_analyzed,
                     'selected': len(scan_result.selected_coins),
                     'duration_seconds': scan_result.total_duration_seconds
-                }
+                },
+                'all_backtest_results': all_bt_results_for_telegram
             },
             message=f"코인 선택 완료: {selected_coin.symbol}"
         )

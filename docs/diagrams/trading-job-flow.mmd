@@ -1,0 +1,145 @@
+%% Trading Job Flow (backend/app/core/scheduler.py → trading_job)
+%% 1시간마다 실행되는 trading_job의 전체 흐름 (멀티코인 스캔 + AI 분석 + 진입)
+
+sequenceDiagram
+    participant Scheduler as APScheduler
+    participant TradingJob as trading_job()
+    participant Container
+    participant LockPort
+    participant TradingOrchestrator
+    participant IdempotencyPort
+    participant Pipeline as HybridTradingPipeline
+    participant Telegram
+    participant DB as PostgreSQL
+    participant Prometheus
+
+    Note over Scheduler: CronTrigger 발동 (매시 01분)
+    Scheduler->>TradingJob: 작업 실행
+
+    Note over TradingJob: 1. Lock 획득
+    TradingJob->>Container: get_container()
+    Container-->>TradingJob: Container 인스턴스
+    TradingJob->>Container: get_lock_port()
+    Container-->>TradingJob: LockPort
+    TradingJob->>LockPort: acquire("trading_cycle", timeout=600)
+
+    alt Lock 획득 실패
+        LockPort-->>TradingJob: False (다른 작업 실행 중)
+        TradingJob->>Prometheus: scheduler_job_failure_total.inc()
+        TradingJob-->>Scheduler: ⚠️ 락 획득 실패 (종료)
+    end
+
+    Note over TradingJob: 2. TradingOrchestrator 초기화
+    TradingJob->>Container: get_trading_orchestrator()
+    Container-->>TradingJob: TradingOrchestrator
+
+    Note over TradingJob: 3. 텔레그램 알림 #1 (사이클 시작)
+    TradingJob->>Telegram: notify_cycle_start("멀티코인 스캐닝 시작")
+
+    Note over TradingJob: 4. 시장 데이터 수집 (로깅용)
+    TradingJob->>Container: get_upbit_client()
+    TradingJob->>Container: get_data_collector()
+    Note right of TradingJob: current_price, RSI, MA20, MA60 등
+
+    Note over TradingJob: 5. 백테스팅 콜백 등록
+    TradingJob->>TradingOrchestrator: set_on_backtest_complete(callback)
+
+    Note over TradingJob: 6. 거래 사이클 실행 (10분 타임아웃)
+    TradingJob->>TradingOrchestrator: execute_trading_cycle(ticker, enable_scanning=True)
+
+    Note over TradingOrchestrator: 6.1 Idempotency 체크
+    TradingOrchestrator->>Container: get_idempotency_port()
+    Container-->>TradingOrchestrator: IdempotencyPort
+    TradingOrchestrator->>TradingOrchestrator: _get_current_candle_ts()
+    TradingOrchestrator->>TradingOrchestrator: make_idempotency_key(ticker, "1h", candle_ts, "trading_cycle")
+    TradingOrchestrator->>IdempotencyPort: check_key(idempotency_key)
+
+    alt 중복 키 (이미 실행됨)
+        IdempotencyPort-->>TradingOrchestrator: True
+        TradingOrchestrator-->>TradingJob: {'status': 'skipped', 'reason': 'Duplicate key'}
+        TradingJob->>Prometheus: scheduler_job_success_total.inc()
+        TradingJob->>LockPort: release("trading_cycle")
+        TradingJob-->>Scheduler: ⏭️ 스킵 (정상 종료)
+    end
+
+    alt Idempotency 체크 실패
+        IdempotencyPort-->>TradingOrchestrator: Exception
+        TradingOrchestrator-->>TradingJob: {'status': 'blocked', 'error': 'Idempotency check failed'}
+        TradingJob->>Prometheus: scheduler_job_failure_total.inc()
+        TradingJob->>LockPort: release("trading_cycle")
+        TradingJob-->>Scheduler: ⛔ 거래 차단 (fail-close)
+    end
+
+    Note over TradingOrchestrator: 6.2 하이브리드 파이프라인 생성
+    TradingOrchestrator->>TradingOrchestrator: create_hybrid_trading_pipeline(...)
+    Note right of TradingOrchestrator: 4단계 파이프라인:<br/>1. HybridRiskCheckStage<br/>2. DataCollectionStage<br/>3. AnalysisStage<br/>4. ExecutionStage
+
+    Note over TradingOrchestrator: 6.3 파이프라인 실행
+    TradingOrchestrator->>Pipeline: execute(context)
+
+    Note over Pipeline: Stage 1: HybridRiskCheckStage
+    Pipeline->>Pipeline: 포지션 확인 + 멀티코인 스캔
+    alt enable_scanning=True
+        Pipeline->>Pipeline: CoinSelector.scan_liquidity()
+        Pipeline->>Pipeline: MultiBacktest.run_multi_backtest()
+        Pipeline->>Pipeline: 백테스팅 콜백 호출
+        Pipeline->>TradingJob: on_backtest_complete_callback(backtest_data)
+        Note over TradingJob: 📱 알림 #2: 스캔 결과 + 백테스팅
+        TradingJob->>Telegram: notify_scan_result(scan_summary, selected_coin, all_backtest_results)
+    end
+
+    Note over Pipeline: Stage 2: DataCollectionStage
+    Pipeline->>Pipeline: 시장 데이터 수집
+
+    Note over Pipeline: Stage 3: AnalysisStage
+    Pipeline->>Pipeline: 기술적 분석 + AI 분석
+    Note right of Pipeline: Quick Filter → (통과 시) AI 호출
+
+    Note over Pipeline: Stage 4: ExecutionStage
+    Pipeline->>Pipeline: 거래 실행 (buy/sell/hold)
+    Pipeline-->>TradingOrchestrator: result
+
+    Note over TradingOrchestrator: 6.4 Idempotency 키 마킹
+    alt status=success or skipped
+        TradingOrchestrator->>IdempotencyPort: mark_key(idempotency_key, ttl_hours=24)
+    end
+
+    TradingOrchestrator-->>TradingJob: result
+
+    Note over TradingJob: 7. 결과 처리
+    alt status=success
+        Note over TradingJob: 7.1 메트릭 기록
+        TradingJob->>Prometheus: record_ai_decision(symbol, decision, confidence)
+        TradingJob->>DB: AIDecisionCreate 저장
+
+        alt decision=buy or sell
+            TradingJob->>Prometheus: record_trade(symbol, side, volume, fee)
+            TradingJob->>DB: TradeCreate 저장
+        end
+
+        Note over TradingJob: 7.2 포트폴리오 정보 수집
+        TradingJob->>Container: get_upbit_client()
+        Note right of TradingJob: KRW 잔고 + 암호화폐 잔고
+
+        Note over TradingJob: 📱 알림 #3: AI 의사결정 상세
+        TradingJob->>Telegram: notify_ai_decision(symbol, decision, confidence, reason, duration)
+
+        Note over TradingJob: 📱 알림 #4: 포트폴리오 현황
+        TradingJob->>Telegram: notify_portfolio_status(symbol, portfolio_data, trade_result)
+
+        TradingJob->>Prometheus: scheduler_job_success_total.inc()
+        TradingJob->>Prometheus: scheduler_job_duration_seconds.observe(duration)
+
+    else status=skipped
+        Note over TradingJob: Idempotency 스킵 (정상)
+        TradingJob->>Prometheus: scheduler_job_success_total.inc()
+
+    else status=failed
+        Note over TradingJob: 에러 처리
+        TradingJob->>Telegram: notify_error(error_type, error_message, context)
+        TradingJob->>Prometheus: scheduler_job_failure_total.inc()
+    end
+
+    Note over TradingJob: 8. Lock 해제 (finally)
+    TradingJob->>LockPort: release("trading_cycle")
+    TradingJob-->>Scheduler: ✅ 작업 완료

@@ -215,39 +215,39 @@ class TestScannerIntegration:
 
     @pytest.mark.asyncio
     async def test_multi_backtest_filtering(self):
-        """백테스팅 필터링 통합 테스트"""
+        """백테스팅 필터링 통합 테스트 - Research Pass 기준"""
         config = MultiBacktestConfig()
         backtest = MultiCoinBacktest(config=config)
 
-        # 엄격한 기준에서 확실히 실패하는 나쁜 지표
+        # Research Pass 기준에서 확실히 실패하는 나쁜 지표
         bad_metrics = {
-            'total_return': 1.0,        # 3% 기준 미달
-            'win_rate': 25.0,           # 35% 기준 미달
-            'profit_factor': 0.8,       # 1.3 기준 미달
-            'sharpe_ratio': 0.3,        # 0.8 기준 미달
-            'sortino_ratio': 0.4,
-            'calmar_ratio': 0.2,
-            'max_drawdown': -30.0,      # 20% 기준 초과
-            'max_consecutive_losses': 10,
-            'volatility': 80.0,
-            'total_trades': 2,          # 3 기준 미달
+            'total_return': 1.0,        # 8% 기준 미달 (Research)
+            'win_rate': 25.0,           # 30% 기준 미달 (Research)
+            'profit_factor': 0.8,       # 1.3 기준 미달 (Research)
+            'sharpe_ratio': 0.2,        # 0.4 기준 미달 (Research)
+            'sortino_ratio': 0.3,       # 0.5 기준 미달 (Research)
+            'calmar_ratio': 0.1,        # 0.25 기준 미달 (Research)
+            'max_drawdown': -40.0,      # 30% 기준 초과 (Research)
+            'max_consecutive_losses': 10,  # 8 기준 초과 (Research)
+            'volatility': 120.0,        # 100% 기준 초과 (Research)
+            'total_trades': 10,         # 20 기준 미달 (Research)
             'avg_win': 2.0,
             'avg_loss': -4.0,
-            'avg_holding_period_hours': 300.0
+            'avg_holding_period_hours': 400.0  # 336 기준 초과 (Research)
         }
 
         criteria = backtest._get_filter_criteria(None)
         filter_results = backtest._check_filters(bad_metrics, criteria)
 
-        # 엄격한 기준에서 여러 필터 확실히 실패
+        # Research Pass 기준에서 여러 필터 확실히 실패
         failed_filters = [k for k, v in filter_results.items() if not v]
-        assert len(failed_filters) >= 4, f"Expected at least 4 filters to fail, got: {failed_filters}"
+        assert len(failed_filters) >= 6, f"Expected at least 6 filters to fail, got: {failed_filters}"
 
-        # 주요 필터들 실패 확인
-        assert filter_results['return'] is False, "return filter should fail"
-        assert filter_results['win_rate'] is False, "win_rate filter should fail"
-        assert filter_results['sharpe_ratio'] is False, "sharpe_ratio filter should fail"
-        assert filter_results['max_drawdown'] is False, "max_drawdown filter should fail"
+        # 주요 필터들 실패 확인 (Research Pass 기준)
+        assert filter_results['return'] is False, "return filter should fail (1.0 < 8.0)"
+        assert filter_results['win_rate'] is False, "win_rate filter should fail (25.0 < 30.0)"
+        assert filter_results['sharpe_ratio'] is False, "sharpe_ratio filter should fail (0.2 < 0.4)"
+        assert filter_results['max_drawdown'] is False, "max_drawdown filter should fail (40.0 > 30.0)"
 
         # 점수는 30점 이하 (매우 나쁜 지표)
         score = backtest._calculate_score(bad_metrics)

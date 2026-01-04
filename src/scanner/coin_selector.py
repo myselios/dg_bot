@@ -55,13 +55,23 @@ class CoinCandidate:
 
     @property
     def is_ready_for_entry(self) -> bool:
-        """진입 준비 완료 여부 (Trading Pass 통과 필수)"""
-        return (
-            self.selected and
-            self.trading_pass_passed and  # ⚠️ Trading Pass 필수
-            self.entry_signal is not None and
-            self.entry_signal.decision == 'buy'
-        )
+        """
+        진입 준비 완료 여부 (Trading Pass 통과 필수)
+
+        AI 분석이 없는 경우 (entry_signal=None):
+          - Trading Pass 통과만으로 진입 허용 (테스트 모드)
+        AI 분석이 있는 경우:
+          - AI decision == 'buy' 필요
+        """
+        if not self.selected or not self.trading_pass_passed:
+            return False
+
+        # AI 분석 없으면 Trading Pass만으로 진입 허용
+        if self.entry_signal is None:
+            return True
+
+        # AI 분석 있으면 buy 결정 필요
+        return self.entry_signal.decision == 'buy'
 
 
 @dataclass
@@ -307,6 +317,26 @@ class CoinSelector:
         Logger.print_info("\n🏆 5단계: 최종 선택")
         selected_coins = self._select_final_coins(candidates)
 
+        # backtest_results에 Trading Pass 정보 병합
+        candidate_map = {c.symbol: c for c in candidates}
+        enriched_backtest_results = []
+        for bt_result in backtest_results:
+            result_dict = {
+                'symbol': bt_result.symbol,
+                'score': bt_result.score,
+                'grade': bt_result.grade,
+                'passed': bt_result.passed,
+                'metrics': bt_result.metrics,
+                'filter_results': bt_result.filter_results,
+            }
+            # Trading Pass 정보 추가
+            if bt_result.symbol in candidate_map:
+                candidate = candidate_map[bt_result.symbol]
+                result_dict['expectancy'] = candidate.expectancy_R
+                result_dict['trading_pass'] = candidate.trading_pass_passed
+                result_dict['trading_pass_reason'] = candidate.trading_pass_reason
+            enriched_backtest_results.append(result_dict)
+
         # 결과 생성
         result = self._create_result(
             start_time=start_time,
@@ -315,7 +345,7 @@ class CoinSelector:
             ai_analyzed=ai_analyzed,
             candidates=candidates,
             selected_coins=selected_coins,
-            all_backtest_results=backtest_results  # 모든 결과 포함
+            all_backtest_results=enriched_backtest_results  # Trading Pass 포함
         )
 
         # 최종 결과 출력
@@ -438,8 +468,8 @@ class CoinSelector:
         if entry_signal and entry_signal.decision != 'buy':
             return False
 
-        # 최종 점수가 50점 이상이면 선택
-        return final_score >= 50
+        # 최종 점수가 40점 이상이면 선택 (WEAK PASS 포함)
+        return final_score >= 40
 
     def _generate_selection_reason(
         self,

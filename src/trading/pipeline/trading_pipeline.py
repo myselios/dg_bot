@@ -209,7 +209,17 @@ class TradingPipeline:
                 'ticker': context.selected_coin.ticker,
                 'symbol': context.selected_coin.symbol,
                 'score': context.selected_coin.final_score,
+                'grade': getattr(context.selected_coin, 'final_grade', ''),
+                'reason': getattr(context.selected_coin, 'selection_reason', '')
             }
+
+        # 백테스팅 콜백 데이터에서 scan_summary, all_backtest_results 추출
+        if hasattr(context, 'pending_backtest_callback_data') and context.pending_backtest_callback_data:
+            callback_data = context.pending_backtest_callback_data
+            if 'scan_summary' in callback_data:
+                response['scan_summary'] = callback_data['scan_summary']
+            if 'all_backtest_results' in callback_data:
+                response['all_backtest_results'] = callback_data['all_backtest_results']
 
         return response
 
