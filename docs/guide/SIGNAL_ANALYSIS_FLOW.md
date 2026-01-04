@@ -338,9 +338,9 @@ AI는 신호 분석의 매수/매도 점수를 **알지 못합니다**.
 ```
 신호 분석 (참고용 로깅)
         ↓
-AI 분석 (GPT-4) ← 최종 결정
+AI 분석 (OpenAI via AIPort) ← 최종 결정
         ↓
-AI 판단 검증 (AIDecisionValidator)
+AI 판단 검증 (ValidationPort)
         ↓
 거래 실행 (ExecutionStage)
 ```
