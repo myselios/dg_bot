@@ -8,7 +8,9 @@
 ## 1. 개요
 
 백테스팅은 과거 데이터를 기반으로 트레이딩 전략의 성능을 검증하는 시스템입니다.
-이 프로젝트에서는 **2단 게이트 구조(Research/Trading Pass)**와 **12가지 필터**를 사용하여 AI에게 전달할 후보를 선별하고, 실거래 전 최종 검증을 수행합니다.
+이 프로젝트에서는 **단일 백테스팅 필터(12개 필터 + Expectancy)**를 사용하여 실거래 적합성을 검증합니다.
+
+**2026-01-04 변경**: 기존 2단 게이트 구조(Research/Trading Pass)를 단일 백테스팅 필터로 통합했습니다. AI 진입 분석 단계는 제거되었으며, 백테스팅 통과 후 선택적으로 AI에 문의할 수 있습니다.
 
 ---
 
@@ -18,22 +20,22 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    BACKTESTING PIPELINE                          │
+│                    BACKTESTING PIPELINE (단순화)                 │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
-│                     1. 코인 스캔 (10개)                          │
+│                     1. 유동성 스캔 (10개)                        │
 │  - 유동성 상위 코인 선별                                         │
 │  - 거래량, 시가총액 기반 필터링                                   │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│              2. 백테스트 실행 (1회 - 캐싱)                        │
+│              2. 백테스팅 평가 (12개 필터 + Expectancy)            │
 │                                                                  │
 │   ┌──────────────────────────────────────────────────────────┐  │
-│   │  Backtester.run()                                        │  │
-│   │  ├─ prepare_indicators() - 지표 사전 계산 (O(N))         │  │
+│   │  Backtester.run() - 1회 실행                             │  │
+│   │  ├─ prepare_indicators() - 지표 사전 계산                │  │
 │   │  ├─ RuleBasedBreakoutStrategy                            │  │
 │   │  │   ├─ Gate 0: 추세 필터 (MA50 위)                      │  │
 │   │  │   ├─ Gate 1: 응축 확인 (BB squeeze)                   │  │
@@ -42,40 +44,22 @@
 │   │  └─ BacktestResult.metrics 반환                          │  │
 │   └──────────────────────────────────────────────────────────┘  │
 │                                                                  │
-│   📊 metrics: 12개 성능 지표 계산                                │
+│   📊 evaluate_backtest(metrics, BacktestConfig)                  │
+│   ✓ 12개 필터 전체 통과 필요                                     │
+│   ✓ Expectancy Filter (기대값 양수 검증)                         │
+│   ✓ 월별 PF 검증 (레짐 가드)                                     │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ 통과: 0-2개
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     3. 최종 선택                                 │
+│  - 백테스팅 통과 코인 중 상위 N개 선택                            │
+│  - (선택사항) AI에 문의하여 최종 결정                             │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
-          ┌────────────────┴────────────────┐
-          ▼                                 ▼
-┌─────────────────────┐       ┌─────────────────────┐
-│  Research Pass 평가  │       │  (Trading Pass는   │
-│  (느슨한 기준)       │       │   나중에 적용)      │
-│                     │       └─────────────────────┘
-│  ✓ 12개 필터 체크   │
-│  ✓ 핵심 4개 통과 OR │
-│    8개 이상 통과    │
-└──────────┬──────────┘
-           │ 통과: 3-5개
-           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     3. AI 분석 (GPT-4)                           │
-│  - 기술적 분석                                                   │
-│  - 시장 상황 판단                                                │
-│  - 진입/청산 결정                                                │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │ BUY 신호
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│              4. Trading Pass 평가 (엄격한 기준)                   │
-│                                                                  │
-│  ✓ 12개 필터 전체 통과 필요                                      │
-│  ✓ Expectancy Filter (기대값 양수 검증)                          │
-│  ✓ 레짐 가드 (월별 PF 검증)                                      │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │ 통과
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     5. 실거래 실행                               │
+│                     4. 실거래 실행                               │
 │  - Upbit API를 통한 주문 실행                                    │
 │  - 포지션 관리 (15분 주기)                                       │
 └─────────────────────────────────────────────────────────────────┘
@@ -85,11 +69,12 @@
 
 ```
 src/backtesting/
-├── quick_filter.py          # 12가지 필터 + 2단 게이트
-│   ├── QuickBacktestConfig   # 현재 기준 (가장 엄격)
-│   ├── ResearchPassConfig    # Research 기준 (느슨)
-│   ├── TradingPassConfig     # Trading 기준 (중간)
-│   └── QuickBacktestFilter   # 필터 평가 클래스
+├── quick_filter.py          # 12가지 필터 + Expectancy
+│   ├── BacktestConfig        # 백테스팅 설정 (단일 게이트)
+│   ├── QuickBacktestFilter   # 필터 평가 클래스
+│   │   └── evaluate_backtest() # 단일 백테스팅 평가 메서드
+│   ├── (Deprecated) ResearchPassConfig  # 구 2단 게이트 - 호환성 유지
+│   └── (Deprecated) TradingPassConfig   # 구 2단 게이트 - 호환성 유지
 │
 ├── backtester.py            # 백테스트 엔진
 │   ├── Backtester            # 시뮬레이션 실행
@@ -140,66 +125,57 @@ src/backtesting/
 | **Minimum** | >= | 값이 기준 이상이어야 통과 | return, win_rate, profit_factor, sharpe, sortino, calmar, min_trades, avg_win_loss_ratio |
 | **Maximum** | <= | 값이 기준 이하여야 통과 | max_drawdown, max_consecutive_losses, volatility, avg_holding_hours |
 
-### 3.3 3단 임계값 비교
+### 3.3 현재 임계값 (BacktestConfig 기본값)
 
-| # | 필터 | 현재 (엄격) | Research (느슨) | Trading (중간) |
-|---|------|-------------|-----------------|----------------|
-| 1 | min_return | 15% | **8%** | 12% |
-| 2 | min_win_rate | 38% | **30%** | 35% |
-| 3 | min_profit_factor | 1.8 | **1.3** | 1.5 |
-| 4 | min_sharpe_ratio | 1.0 | **0.4** | 0.7 |
-| 5 | min_sortino_ratio | 1.2 | **0.5** | 0.9 |
-| 6 | min_calmar_ratio | 0.8 | **0.25** | 0.4 |
-| 7 | max_drawdown | 15% | **30%** | 25% |
-| 8 | max_consecutive_losses | 5 | **8** | 6 |
-| 9 | max_volatility | 50% | **100%** | 80% |
-| 10 | min_trades | 20 | **20** | 25 |
-| 11 | min_avg_win_loss_ratio | 1.3 | **연동*** | 연동* |
-| 12 | max_avg_holding_hours | 168h | **336h** | 240h |
+| # | 필터 | 임계값 | 비고 |
+|---|------|--------|------|
+| 1 | min_return | 9.0% | 총 수익률 |
+| 2 | min_win_rate | 35.0% | 승률 |
+| 3 | min_profit_factor | 1.5 | 총이익/총손실 |
+| 4 | min_sharpe_ratio | 0.7 | 위험조정수익 |
+| 5 | min_sortino_ratio | 0.9 | 하방리스크조정 |
+| 6 | min_calmar_ratio | 0.4 | 수익/MDD |
+| 7 | max_drawdown | 25.0% | 최대낙폭 |
+| 8 | max_consecutive_losses | 6 | 연속손실 |
+| 9 | max_volatility | 80.0% | 연율변동성 |
+| 10 | min_trades | 10 | 최소거래수 |
+| 11 | min_avg_win_loss_ratio | 1.0 | 평균손익비 |
+| 12 | max_avg_holding_hours | 240h | 평균보유시간 |
 
-*연동: 기대값 기반 동적 계산 (승률에 따라 필요 손익비 결정)
-
-**⚠️ min_trades 조정 이력 (2026-01-04)**:
-- 기존 Trading 50회 → 25회로 완화
-- 근거: 상위 20개 코인 분석 결과, 일봉 2년 기준 최대 거래 수 28회 (BTC)
-- 50회 기준 통과율: 0% (비현실적) → 25회 기준 약 50% 통과
+*avg_win_loss_ratio는 Expectancy 필터에서 승률 기반 동적 검증도 수행
 
 ---
 
-## 4. 2단 게이트 구조
+## 4. 백테스팅 필터 구조 (단일 게이트)
 
-### 4.1 Research Pass (느슨한 기준)
+**2026-01-04 변경**: 기존 2단 게이트(Research/Trading Pass)를 단일 백테스팅 필터로 통합
 
-**목적**: AI에게 전달할 후보 확보 (통과율 30-50% 목표)
+### 4.1 BacktestConfig (단일 설정)
 
-```python
-# 통과 조건 (OR 조건)
-passed = core_passed or passed_count >= 8
-
-# 핵심 필터 (AND 조건)
-core_filters = ['return', 'profit_factor', 'sharpe_ratio', 'max_drawdown']
-```
-
-**특징**:
-- 핵심 4개 필터 통과 시 PASS
-- 또는 12개 중 8개 이상 통과 시 PASS
-- AI가 분석할 기회를 주기 위한 느슨한 기준
-
-### 4.2 Trading Pass (엄격한 기준)
-
-**목적**: 실거래 보호 (기대값 양수만 허용)
+**목적**: 실거래 적합성 검증 (엄격한 기준)
 
 ```python
+# BacktestConfig 기본값 (구 TradingPassConfig 기준)
+config = BacktestConfig(
+    days=730,
+    min_return=9.0,
+    min_win_rate=35.0,
+    min_profit_factor=1.5,
+    # ... 12개 필터 임계값
+)
+
 # 통과 조건 (AND 조건)
-passed = all(filter_results.values())  # 모든 필터 통과 필요
+result = evaluate_backtest(metrics, config)
+passed = result.passed  # 모든 필터 + Expectancy 통과 필요
 ```
 
 **특징**:
 - 12개 필터 전체 통과 필요
-- Expectancy Filter 추가 검증
+- Expectancy Filter 필수 검증
 - 레짐 가드 (월별 PF 검증)
+- AI 분석 없이 백테스팅만으로 실거래 진입 결정
 
-### 4.3 Expectancy Filter (기대값 연동 필터)
+### 4.2 Expectancy Filter (기대값 연동 필터)
 
 승률과 손익비의 논리적 충돌을 수학적으로 차단합니다.
 
@@ -377,9 +353,9 @@ strategy.prepare_indicators(data)  # 백테스트 시작 전 1회 호출
 run_id = filter.start_scan_cycle()
 metrics = filter.get_or_run_backtest(ticker)  # 캐시 활용
 
-# Research/Trading Pass는 같은 metrics에 다른 임계값 적용
-research_result = filter.evaluate_research_pass(metrics)
-trading_result = filter.evaluate_trading_pass(metrics)
+# 단일 백테스팅 평가
+result = filter.evaluate_backtest(metrics, BacktestConfig())
+print(f"통과: {result.passed}, 사유: {result.reason}")
 ```
 
 ---
@@ -389,21 +365,13 @@ trading_result = filter.evaluate_trading_pass(metrics)
 ### 8.1 기본 백테스트 실행
 
 ```python
-from src.backtesting.quick_filter import QuickBacktestFilter, QuickBacktestConfig
-
-# 설정
-config = QuickBacktestConfig(
-    days=730,           # 2년
-    initial_capital=10_000_000,
-    commission=0.0005,  # 0.05%
-    slippage=0.0001,    # 0.01%
-)
+from src.backtesting.quick_filter import QuickBacktestFilter, BacktestConfig
 
 # 필터 생성
-filter = QuickBacktestFilter(config)
+qf = QuickBacktestFilter()
 
 # 백테스트 실행
-result = filter.run_quick_backtest(ticker="KRW-BTC")
+result = qf.run_quick_backtest(ticker="KRW-BTC")
 
 # 결과 확인
 print(f"통과: {result.passed}")
@@ -411,25 +379,22 @@ print(f"수익률: {result.metrics['total_return']:.2f}%")
 print(f"Sharpe: {result.metrics['sharpe_ratio']:.2f}")
 ```
 
-### 8.2 2단 게이트 평가
+### 8.2 백테스팅 평가 (단일 게이트)
 
 ```python
 # 스캔 사이클 시작
-run_id = filter.start_scan_cycle()
+run_id = qf.start_scan_cycle()
 
 # 백테스트 실행 (1회)
-metrics = filter.get_or_run_backtest("KRW-BTC")
+metrics = qf.get_or_run_backtest("KRW-BTC")
 
-# Research Pass 평가
-research = filter.evaluate_research_pass(metrics)
-print(f"Research Pass: {research.passed} ({research.reason})")
+# 단일 백테스팅 평가 (12개 필터 + Expectancy)
+config = BacktestConfig()  # 기본값 사용
+result = qf.evaluate_backtest(metrics, config)
+print(f"백테스팅 통과: {result.passed} ({result.reason})")
 
-# Trading Pass 평가
-trading = filter.evaluate_trading_pass(metrics)
-print(f"Trading Pass: {trading.passed} ({trading.reason})")
-
-# Expectancy 체크
-exp = filter.check_expectancy_with_metrics(metrics)
+# Expectancy 상세 체크 (선택사항)
+exp = qf.check_expectancy_with_metrics(metrics)
 print(f"기대값: {exp['net_expectancy']:.3f}R (통과: {exp['passed']})")
 ```
 
@@ -457,7 +422,7 @@ print(f"Verdict: {report['verdict']}")  # 필터 조정 필요 여부
 
 | 파일 | 설명 |
 |------|------|
-| [src/backtesting/quick_filter.py](../../src/backtesting/quick_filter.py) | 12가지 필터 + 2단 게이트 |
+| [src/backtesting/quick_filter.py](../../src/backtesting/quick_filter.py) | 12가지 필터 + 단일 게이트 |
 | [src/backtesting/backtester.py](../../src/backtesting/backtester.py) | 백테스트 엔진 |
 | [src/backtesting/rule_based_strategy.py](../../src/backtesting/rule_based_strategy.py) | 변동성 돌파 전략 |
 | [src/backtesting/expectancy_filter.py](../../src/backtesting/expectancy_filter.py) | 기대값 연동 필터 |
@@ -477,9 +442,9 @@ print(f"Verdict: {report['verdict']}")  # 필터 조정 필요 여부
 
 | 날짜 | 변경 내용 |
 |------|----------|
-| 2026-01-04 | **2단 게이트 파이프라인 완전 통합**: CoinSelector에 Trading Pass 검증 단계(4-1단계) 추가. AI 분석 후 Trading Pass + Expectancy 검증을 거쳐 실거래 진입 결정. |
-| 2026-01-04 | **Expectancy Filter 필수화**: `evaluate_trading_pass()`에 Expectancy 검증 통합. 기대값 음수인 전략은 Trading Pass 실패로 처리. |
-| 2026-01-04 | **MultiBacktestConfig 통합**: Research Pass 기준으로 변경하여 설정 중복 제거. `from_research_config()` 팩토리 메서드 추가. |
-| 2026-01-04 | **메트릭 버그 수정**: `avg_win_loss_ratio`, `avg_holding_period_hours`가 0으로 계산되던 문제 해결. 원인: `portfolio.py`에서 `entry_time`/`exit_time`에 `datetime.now()` 사용. 수정: 백테스트 시 bar timestamp 전달. |
+| 2026-01-04 | **🔥 단일 게이트로 통합**: 2단 게이트(Research/Trading Pass) → BacktestConfig로 통합. AI 진입 분석 단계 완전 제거. 파이프라인 단순화: 유동성 스캔 → 백테스팅 → 최종 선택. |
+| 2026-01-04 | **evaluate_backtest() 메서드 추가**: 단일 백테스팅 평가 메서드. 12개 필터 + Expectancy 통합 검증. ResearchPass/TradingPass는 deprecated로 표시(호환성 유지). |
+| 2026-01-04 | **CoinSelector AI 코드 제거**: entry_signal, ai_analyzed 필드 제거. _apply_backtest()로 메서드명 변경. 백테스팅 점수만 사용하는 단순 구조. |
 | 2026-01-04 | **min_trades 조정**: Trading Pass `min_trades` 50 → 25로 완화. 상위 20개 코인 분석 결과 최대 거래 수 28회 (BTC 기준). |
+| 2026-01-04 | **메트릭 버그 수정**: `avg_win_loss_ratio`, `avg_holding_period_hours`가 0으로 계산되던 문제 해결. |
 | 2026-01-03 | 문서 최초 작성 |

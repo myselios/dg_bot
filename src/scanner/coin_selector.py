@@ -19,13 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
 
-if TYPE_CHECKING:
-    # Type checking을 위한 임시 타입 (실제로는 사용되지 않음)
-    from typing import Any as EntryAnalyzer
-    from typing import Any as EntrySignal
-else:
-    EntryAnalyzer = None
-    EntrySignal = None
+# AI 분석 관련 타입은 제거됨 (Clean Architecture 마이그레이션)
 
 from src.scanner.liquidity_scanner import LiquidityScanner, CoinInfo
 from src.scanner.data_sync import HistoricalDataSync
@@ -45,41 +39,29 @@ from src.utils.logger import Logger
 
 @dataclass
 class CoinCandidate:
-    """코인 후보 (전체 분석 결과 통합)"""
+    """코인 후보 (백테스팅 결과 기반)"""
     ticker: str
     symbol: str
     coin_info: Optional[CoinInfo]         # 유동성 정보
-    backtest_score: Optional[BacktestScore]  # 백테스팅 결과 (Research Pass)
-    entry_signal: Optional[EntrySignal]    # AI 진입 분석 결과
-    final_score: float                     # 최종 점수
+    backtest_score: Optional[BacktestScore]  # 백테스팅 결과
+    final_score: float                     # 최종 점수 (백테스팅 점수)
     final_grade: str                       # 최종 등급
     selected: bool                         # 최종 선택 여부
     selection_reason: str                  # 선택/미선택 사유
     analysis_time: datetime = field(default_factory=datetime.now)
-    # 2단 게이트 결과 (2026-01-04 추가)
-    trading_pass_passed: bool = False      # Trading Pass 통과 여부
-    trading_pass_reason: str = ""          # Trading Pass 결과 사유
+    # 백테스팅 평가 결과
+    backtest_passed: bool = False          # 백테스팅 통과 여부
+    backtest_reason: str = ""              # 백테스팅 결과 사유
     expectancy_R: float = 0.0              # 기대값 (R 단위)
 
     @property
     def is_ready_for_entry(self) -> bool:
         """
-        진입 준비 완료 여부 (Trading Pass 통과 필수)
+        진입 준비 완료 여부 (백테스팅 통과 필수)
 
-        AI 분석이 없는 경우 (entry_signal=None):
-          - Trading Pass 통과만으로 진입 허용 (테스트 모드)
-        AI 분석이 있는 경우:
-          - AI decision == 'buy' 필요
+        백테스팅 통과 + 선택된 코인만 진입 가능
         """
-        if not self.selected or not self.trading_pass_passed:
-            return False
-
-        # AI 분석 없으면 Trading Pass만으로 진입 허용
-        if self.entry_signal is None:
-            return True
-
-        # AI 분석 있으면 buy 결정 필요
-        return self.entry_signal.decision == 'buy'
+        return self.selected and self.backtest_passed
 
 
 @dataclass
@@ -88,7 +70,6 @@ class ScanResult:
     scan_time: datetime
     liquidity_scanned: int                # 유동성 스캔 코인 수
     backtest_passed: int                  # 백테스팅 통과 코인 수
-    ai_analyzed: int                      # AI 분석 코인 수
     candidates: List[CoinCandidate]       # 최종 후보
     selected_coins: List[CoinCandidate]   # 선택된 코인
     total_duration_seconds: float         # 전체 소요 시간
@@ -102,9 +83,8 @@ class CoinSelector:
     전체 스캐닝 파이프라인을 조율합니다:
     1. 유동성 스캔 (상위 10개, ScannerConfig.LIQUIDITY_TOP_N 참조)
     2. 데이터 동기화
-    3. 병렬 백테스팅 (상위 5개 선별)
-    4. AI 진입 분석 (상위 5개)
-    5. 최종 선택 (상위 2개)
+    3. 병렬 백테스팅 (12개 필터 + Expectancy 검증)
+    4. 최종 선택 (상위 2개)
 
     사용 예시:
         selector = CoinSelector()
@@ -118,13 +98,11 @@ class CoinSelector:
         liquidity_scanner: Optional[LiquidityScanner] = None,
         data_sync: Optional[HistoricalDataSync] = None,
         multi_backtest: Optional[MultiCoinBacktest] = None,
-        entry_analyzer: Optional[EntryAnalyzer] = None,  # DEPRECATED - 무시됨
         sector_diversifier: Optional[SectorDiversifier] = None,
         # 스캔 파라미터
         liquidity_top_n: int = 10,
         min_volume_krw: float = 10_000_000_000,  # 100억원
         backtest_top_n: int = 5,
-        ai_top_n: int = 5,  # DEPRECATED - 무시됨
         final_select_n: int = 2,
         # 섹터 분산 파라미터
         enable_sector_diversification: bool = True,
@@ -136,36 +114,23 @@ class CoinSelector:
             liquidity_scanner: 유동성 스캐너
             data_sync: 데이터 동기화 관리자
             multi_backtest: 멀티 백테스터
-            entry_analyzer: DEPRECATED - 무시됨 (Clean Architecture 마이그레이션)
             sector_diversifier: 섹터 분산 선택기
             liquidity_top_n: 유동성 스캔 상위 N개
             min_volume_krw: 최소 거래대금
             backtest_top_n: 백테스팅 통과 상위 N개
-            ai_top_n: DEPRECATED - 무시됨
             final_select_n: 최종 선택 N개
             enable_sector_diversification: 섹터 분산 활성화 여부
             one_per_sector: True면 섹터당 1개만 선택
             exclude_unknown_sector: True면 미분류 섹터 코인 제외
         """
-        import warnings
-        if entry_analyzer is not None:
-            warnings.warn(
-                "entry_analyzer is deprecated and ignored. "
-                "EntryAnalyzer has been removed in Clean Architecture migration.",
-                DeprecationWarning,
-                stacklevel=2
-            )
-
         self.liquidity_scanner = liquidity_scanner or LiquidityScanner(min_volume_krw=min_volume_krw)
         self.data_sync = data_sync or HistoricalDataSync()
         self.multi_backtest = multi_backtest or MultiCoinBacktest(data_sync=self.data_sync)
-        # self.entry_analyzer = None  # 제거됨
         self.sector_diversifier = sector_diversifier or SectorDiversifier()
 
         self.liquidity_top_n = liquidity_top_n
         self.min_volume_krw = min_volume_krw
         self.backtest_top_n = backtest_top_n
-        # self.ai_top_n = ai_top_n  # 제거됨
         self.final_select_n = final_select_n
 
         # 섹터 분산 설정
@@ -267,7 +232,6 @@ class CoinSelector:
                 start_time=start_time,
                 liquidity_scanned=len(filtered_coins),
                 backtest_passed=0,
-                ai_analyzed=0,
                 candidates=[],
                 selected_coins=[],
                 all_backtest_results=backtest_results  # 모든 결과 포함
@@ -276,26 +240,22 @@ class CoinSelector:
         self.multi_backtest.print_results(passed_backtests)
 
         # ========================================
-        # 4단계: 후보 생성 (백테스팅 결과 기반)
+        # 4단계: 후보 생성 및 백테스팅 검증
         # ========================================
-        # EntryAnalyzer 제거됨 - 백테스팅 통과 코인을 직접 후보로 사용
-        ai_analyzed = 0  # AI 분석 단계 제거됨
+        Logger.print_info("\n📋 4단계: 후보 생성 및 백테스팅 검증")
         candidates: List[CoinCandidate] = []
 
-        Logger.print_info("\n📋 4단계: 후보 생성 (백테스팅 통과 코인)")
         for bt_result in passed_backtests:
-            candidates.append(self._create_candidate(bt_result=bt_result, entry_signal=None))
+            candidates.append(self._create_candidate(bt_result=bt_result))
         Logger.print_info(f"  생성된 후보: {len(candidates)}개")
 
-        # ========================================
-        # 4-1단계: Trading Pass 검증 (2단 게이트)
-        # ========================================
-        Logger.print_info("\n🔐 4-1단계: Trading Pass 검증 (Expectancy 포함)")
-        candidates = self._apply_trading_pass(candidates)
+        # 백테스팅 최종 검증 (Expectancy 포함)
+        Logger.print_info("\n🔐 백테스팅 최종 검증 (12개 필터 + Expectancy)")
+        candidates = self._apply_backtest(candidates)
 
-        # Trading Pass 통과 코인 수
-        trading_passed = sum(1 for c in candidates if c.trading_pass_passed)
-        Logger.print_info(f"  Trading Pass 통과: {trading_passed}/{len(candidates)}")
+        # 백테스팅 통과 코인 수
+        backtest_final_passed = sum(1 for c in candidates if c.backtest_passed)
+        Logger.print_info(f"  백테스팅 통과: {backtest_final_passed}/{len(candidates)}")
 
         # ========================================
         # 5단계: 최종 선택
@@ -303,7 +263,7 @@ class CoinSelector:
         Logger.print_info("\n🏆 5단계: 최종 선택")
         selected_coins = self._select_final_coins(candidates)
 
-        # backtest_results에 Trading Pass 정보 병합
+        # backtest_results에 백테스팅 검증 정보 병합
         candidate_map = {c.symbol: c for c in candidates}
         enriched_backtest_results = []
         for bt_result in backtest_results:
@@ -315,12 +275,12 @@ class CoinSelector:
                 'metrics': bt_result.metrics,
                 'filter_results': bt_result.filter_results,
             }
-            # Trading Pass 정보 추가
+            # 백테스팅 검증 정보 추가
             if bt_result.symbol in candidate_map:
                 candidate = candidate_map[bt_result.symbol]
                 result_dict['expectancy'] = candidate.expectancy_R
-                result_dict['trading_pass'] = candidate.trading_pass_passed
-                result_dict['trading_pass_reason'] = candidate.trading_pass_reason
+                result_dict['backtest_passed'] = candidate.backtest_passed
+                result_dict['backtest_reason'] = candidate.backtest_reason
             enriched_backtest_results.append(result_dict)
 
         # 결과 생성
@@ -328,10 +288,9 @@ class CoinSelector:
             start_time=start_time,
             liquidity_scanned=len(filtered_coins),
             backtest_passed=len(passed_backtests),
-            ai_analyzed=ai_analyzed,
             candidates=candidates,
             selected_coins=selected_coins,
-            all_backtest_results=enriched_backtest_results  # Trading Pass 포함
+            all_backtest_results=enriched_backtest_results
         )
 
         # 최종 결과 출력
@@ -339,51 +298,31 @@ class CoinSelector:
 
         return result
 
-    def _prepare_analysis_data(self, bt_result: BacktestScore) -> Dict[str, Any]:
-        """AI 분석을 위한 데이터 준비"""
-        # 기본 데이터 구조
-        data = {
-            'ticker': bt_result.ticker,
-            'backtest_metrics': bt_result.metrics,
-            'backtest_grade': bt_result.grade,
-            'backtest_score': bt_result.score
-        }
-
-        # 유동성 정보 추가
-        if bt_result.coin_info:
-            data['liquidity'] = {
-                'volume_24h': bt_result.coin_info.acc_trade_price_24h,
-                'volatility_24h': bt_result.coin_info.volatility_24h,
-                'volatility_7d': bt_result.coin_info.volatility_7d,
-                'change_rate': bt_result.coin_info.signed_change_rate
-            }
-
-        return data
-
     def _create_candidate(
         self,
-        bt_result: BacktestScore,
-        entry_signal: Optional[EntrySignal]
+        bt_result: BacktestScore
     ) -> CoinCandidate:
-        """코인 후보 생성"""
-        # 최종 점수 계산
-        final_score = self._calculate_final_score(bt_result, entry_signal)
+        """코인 후보 생성 (백테스팅 결과 기반)"""
+        # 최종 점수: 백테스팅 점수 그대로 사용
+        final_score = bt_result.score
 
-        # 최종 등급 결정
-        final_grade = self._determine_final_grade(bt_result, entry_signal, final_score)
+        # 최종 등급: 백테스팅 등급 사용
+        final_grade = bt_result.grade
 
-        # 선택 여부 결정
-        selected = self._should_select(bt_result, entry_signal, final_score)
+        # 선택 여부: 백테스팅 통과 여부
+        selected = bt_result.passed
 
-        # 사유 생성
-        selection_reason = self._generate_selection_reason(bt_result, entry_signal, selected)
+        # 사유: 백테스팅 결과 기반
+        if selected:
+            selection_reason = f"백테스팅 통과 ({bt_result.grade})"
+        else:
+            selection_reason = "백테스팅 미통과"
 
         return CoinCandidate(
             ticker=bt_result.ticker,
             symbol=bt_result.symbol,
             coin_info=bt_result.coin_info,
             backtest_score=bt_result,
-            entry_signal=entry_signal,
             final_score=final_score,
             final_grade=final_grade,
             selected=selected,
@@ -392,66 +331,34 @@ class CoinSelector:
 
     def _calculate_final_score(
         self,
-        bt_result: BacktestScore,
-        entry_signal: Optional[EntrySignal]
+        bt_result: BacktestScore
     ) -> float:
-        """최종 점수 계산"""
-        # 기본 점수: 백테스팅 점수 (60%)
-        base_score = bt_result.score * 0.6
-
-        # AI 점수 (40%)
-        if entry_signal:
-            ai_score = entry_signal.score * 0.4
-        else:
-            # AI 분석 없으면 백테스팅 등급으로 추정
-            if bt_result.grade == "STRONG PASS":
-                ai_score = 70 * 0.4
-            elif bt_result.grade == "WEAK PASS":
-                ai_score = 50 * 0.4
-            else:
-                ai_score = 30 * 0.4
-
-        return round(base_score + ai_score, 1)
+        """최종 점수 계산 (백테스팅 점수만 사용)"""
+        return bt_result.score
 
     def _determine_final_grade(
         self,
         bt_result: BacktestScore,
-        entry_signal: Optional[EntrySignal],
         final_score: float
     ) -> str:
-        """최종 등급 결정"""
+        """최종 등급 결정 (백테스팅 기반)"""
         if not bt_result.passed:
             return "FAIL"
 
-        if entry_signal:
-            if entry_signal.decision != 'buy':
-                return "HOLD"
-            if entry_signal.confidence == 'high' and final_score >= 70:
-                return "STRONG BUY"
-            elif entry_signal.confidence in ['high', 'medium'] and final_score >= 50:
-                return "BUY"
-            else:
-                return "WEAK BUY"
+        # 백테스팅 등급 기반
+        if bt_result.grade == "STRONG PASS":
+            return "BUY"
         else:
-            # AI 없으면 백테스팅 등급 기반
-            if bt_result.grade == "STRONG PASS":
-                return "BUY"
-            else:
-                return "WEAK BUY"
+            return "WEAK BUY"
 
     def _should_select(
         self,
         bt_result: BacktestScore,
-        entry_signal: Optional[EntrySignal],
         final_score: float
     ) -> bool:
-        """선택 여부 결정"""
+        """선택 여부 결정 (백테스팅 기반)"""
         # 백테스팅 미통과면 선택 안함
         if not bt_result.passed:
-            return False
-
-        # AI 분석이 있고 buy가 아니면 선택 안함
-        if entry_signal and entry_signal.decision != 'buy':
             return False
 
         # 최종 점수가 40점 이상이면 선택 (WEAK PASS 포함)
@@ -460,23 +367,16 @@ class CoinSelector:
     def _generate_selection_reason(
         self,
         bt_result: BacktestScore,
-        entry_signal: Optional[EntrySignal],
         selected: bool
     ) -> str:
-        """선택/미선택 사유 생성"""
+        """선택/미선택 사유 생성 (백테스팅 기반)"""
         if not selected:
             if not bt_result.passed:
                 return f"백테스팅 미통과: {bt_result.reason}"
-            if entry_signal and entry_signal.decision != 'buy':
-                return f"AI 거부: {entry_signal.reason}"
             return "점수 미달"
 
         # 선택된 경우
-        reasons = []
-        reasons.append(f"백테스팅 {bt_result.grade}")
-        if entry_signal:
-            reasons.append(f"AI {entry_signal.confidence} 신뢰도")
-        return " + ".join(reasons)
+        return f"백테스팅 {bt_result.grade}"
 
     def _select_final_coins(self, candidates: List[CoinCandidate]) -> List[CoinCandidate]:
         """최종 코인 선택"""
@@ -501,7 +401,6 @@ class CoinSelector:
             scan_time=start_time,
             liquidity_scanned=0,
             backtest_passed=0,
-            ai_analyzed=0,
             candidates=[],
             selected_coins=[],
             total_duration_seconds=(datetime.now() - start_time).total_seconds()
@@ -512,7 +411,6 @@ class CoinSelector:
         start_time: datetime,
         liquidity_scanned: int,
         backtest_passed: int,
-        ai_analyzed: int,
         candidates: List[CoinCandidate],
         selected_coins: List[CoinCandidate],
         all_backtest_results: Optional[List] = None
@@ -522,7 +420,6 @@ class CoinSelector:
             scan_time=start_time,
             liquidity_scanned=liquidity_scanned,
             backtest_passed=backtest_passed,
-            ai_analyzed=ai_analyzed,
             candidates=candidates,
             selected_coins=selected_coins,
             total_duration_seconds=(datetime.now() - start_time).total_seconds(),
@@ -538,9 +435,8 @@ class CoinSelector:
         print()
         print("파이프라인 요약:")
         print(f"  1. 유동성 스캔: {result.liquidity_scanned}개")
-        print(f"  2. 백테스팅 통과: {result.backtest_passed}개")
-        print(f"  3. AI 분석: {result.ai_analyzed}개")
-        print(f"  4. 최종 선택: {len(result.selected_coins)}개")
+        print(f"  2. 백테스팅 검증: {result.backtest_passed}개")
+        print(f"  3. 최종 선택: {len(result.selected_coins)}개")
         print()
 
         if result.selected_coins:
@@ -565,51 +461,51 @@ class CoinSelector:
                 coins_str += f" (+{len(sector_coins) - 3})"
             print(f"    {get_sector_korean_name(sector):12}: {count}개 ({coins_str})")
 
-    def _apply_trading_pass(self, candidates: List[CoinCandidate]) -> List[CoinCandidate]:
+    def _apply_backtest(self, candidates: List[CoinCandidate]) -> List[CoinCandidate]:
         """
-        Trading Pass 검증 적용 (2단 게이트)
+        백테스팅 최종 검증 적용
 
-        AI 분석 후 Trading Pass를 적용하여 실거래 적합성을 최종 검증합니다.
-        - TradingPassConfig 임계값 사용 (중간 엄격도)
+        12개 필터 + Expectancy 필터로 실거래 적합성을 최종 검증합니다.
+        - BacktestConfig 임계값 사용
         - Expectancy Filter 필수 (기대값 양수)
 
         Args:
             candidates: 후보 코인 리스트
 
         Returns:
-            Trading Pass 결과가 업데이트된 후보 리스트
+            백테스팅 검증 결과가 업데이트된 후보 리스트
         """
-        trading_filter = QuickBacktestFilter(TradingPassConfig())
+        backtest_filter = QuickBacktestFilter(BacktestConfig())
 
         for candidate in candidates:
             # 백테스트 결과가 없으면 스킵
             if not candidate.backtest_score or not candidate.backtest_score.metrics:
-                candidate.trading_pass_passed = False
-                candidate.trading_pass_reason = "백테스트 결과 없음"
+                candidate.backtest_passed = False
+                candidate.backtest_reason = "백테스트 결과 없음"
                 continue
 
-            # Trading Pass 평가
+            # 백테스팅 검증
             metrics = candidate.backtest_score.metrics
-            pass_result = trading_filter.evaluate_trading_pass(metrics)
+            pass_result = backtest_filter.evaluate_backtest(metrics)
 
             # Expectancy 정보 추출
-            exp_result = trading_filter.check_expectancy_with_metrics(metrics)
+            exp_result = backtest_filter.check_expectancy_with_metrics(metrics)
 
             # 결과 업데이트
-            candidate.trading_pass_passed = pass_result.passed
-            candidate.trading_pass_reason = pass_result.reason
+            candidate.backtest_passed = pass_result.passed
+            candidate.backtest_reason = pass_result.reason
             candidate.expectancy_R = exp_result.get('net_expectancy', 0.0)
 
             # 로그 출력
             status = "✅" if pass_result.passed else "❌"
             Logger.print_info(
-                f"  [{candidate.symbol}] {status} Trading Pass "
+                f"  [{candidate.symbol}] {status} 백테스팅 검증 "
                 f"(기대값: {candidate.expectancy_R:.3f}R)"
             )
 
-            # Trading Pass 실패 시 selected=False로 변경
+            # 백테스팅 실패 시 selected=False로 변경
             if not pass_result.passed:
                 candidate.selected = False
-                candidate.selection_reason = f"Trading Pass 미통과: {pass_result.reason}"
+                candidate.selection_reason = f"백테스팅 미통과: {pass_result.reason}"
 
         return candidates

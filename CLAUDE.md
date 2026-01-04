@@ -432,6 +432,95 @@ python -m pytest tests/test_module.py::TestClass::test_method -v
 
 ---
 
+## 10.1) 🔴 테스트 환경 의존성 관리 (절대 규칙)
+
+### 원칙: 의존성 문제로 테스트 스킵 금지
+
+**⚠️ 테스트 실행 전 환경 검증은 필수입니다.**
+
+의존성 문제로 인해 테스트를 스킵하는 것은 **절대 금지**입니다.
+테스트 실패는 코드 문제를 발견하는 유일한 방법이며, 환경 문제로 테스트를 건너뛰면 실거래에서 치명적 버그가 발생할 수 있습니다.
+
+### 테스트 실행 전 체크리스트
+
+작업 시작 시 반드시 다음을 확인:
+
+```bash
+# 1. Python 버전 및 SSL 모듈 확인
+python3 --version
+python3 -c "import ssl; print('SSL:', ssl.OPENSSL_VERSION)"
+
+# 2. 핵심 의존성 import 테스트
+python3 -c "import pyupbit, pytest, pandas, numpy; print('✅ 핵심 의존성 OK')"
+
+# 3. 테스트 프레임워크 동작 확인
+python -m pytest --version
+```
+
+### 의존성 문제 발생 시 즉시 해결
+
+**절대 스킵하지 말고, 즉시 수정:**
+
+#### 1. SSL/OpenSSL 문제
+```bash
+# 증상: ImportError: No module named '_ssl'
+# 해결: OpenSSL 설치 + Python 재설치
+
+brew install openssl@1.1
+LDFLAGS="-L/opt/homebrew/opt/openssl@1.1/lib" \
+CPPFLAGS="-I/opt/homebrew/opt/openssl@1.1/include" \
+pyenv install --force $(python3 --version | awk '{print $2}')
+
+# 검증
+python3 -c "import ssl; print('✅ SSL OK:', ssl.OPENSSL_VERSION)"
+```
+
+#### 2. 패키지 누락
+```bash
+# 증상: ModuleNotFoundError: No module named 'pyupbit'
+# 해결: requirements.txt 재설치
+
+pip3 install -r requirements.txt
+
+# 검증
+python3 -c "import pyupbit; print('✅ pyupbit OK')"
+```
+
+#### 3. pytest 실행 불가
+```bash
+# 증상: pytest: command not found
+# 해결: pytest 재설치
+
+pip3 install pytest pytest-cov pytest-mock pytest-asyncio
+
+# 검증
+python -m pytest --version
+```
+
+### 의존성 문제 예방
+
+**작업 시작 시 항상 실행:**
+
+```bash
+# 환경 검증 스크립트 (프로젝트 루트에 저장)
+./scripts/verify_env.sh
+```
+
+**환경 변경 후 재검증:**
+- Python 버전 변경 시
+- 새로운 패키지 추가 시
+- 시스템 라이브러리 업데이트 시
+
+### Definition of Done에 추가
+
+모든 작업 완료 조건에 다음 추가:
+
+- [ ] 테스트 환경 검증 완료 (`python -m pytest tests/ -v`)
+- [ ] 의존성 문제 없음 (import 테스트 통과)
+- [ ] 환경 문제로 스킵한 테스트 없음
+
+---
+
 ## 11) Common Issues (Debug checklist)
 
 ### Import errors

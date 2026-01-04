@@ -6,12 +6,12 @@
 
 주요 기능:
 - 병렬 백테스팅 실행 (비동기)
-- Research Pass 기준 필터링 (느슨한 기준으로 후보 확보)
+- 백테스팅 기준 필터링 (12개 필터 + Expectancy 검증)
 - 점수 기반 순위화
 
-⚠️ 2026-01-04 변경: MultiBacktestConfig 제거, ResearchPassConfig 사용
-- 설정 중복 제거 및 단일 소스 원칙 적용
-- Research Pass 기준으로 후보 선별 (30-50% 통과율 목표)
+⚠️ 2026-01-04 변경: 2단 게이트 통합
+- Research Pass, Trading Pass → 단일 BacktestConfig로 통합
+- 백테스팅 통과 코인을 직접 선별
 """
 import asyncio
 from concurrent.futures import ThreadPoolExecutor

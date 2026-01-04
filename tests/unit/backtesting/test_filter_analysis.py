@@ -126,10 +126,10 @@ class TestFilterStatisticsCollection:
 
         result = filter_obj.analyze_filter_results(sample_metrics_failing)
 
-        # min_trades 필터: 25 >= 20, max(0, 20 - 25) = 0 (통과)
+        # min_trades 필터: 25 >= 10, max(0, 10 - 25) = 0 (통과)
         trades_stats = result.filter_stats['min_trades']
         assert trades_stats.metric_value == 25
-        assert trades_stats.threshold == 20
+        assert trades_stats.threshold == 10  # BacktestConfig 기본값
         assert trades_stats.fail_distance == pytest.approx(0.0, abs=0.01)
         assert trades_stats.passed is True
 

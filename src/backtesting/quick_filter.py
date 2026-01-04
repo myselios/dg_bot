@@ -80,7 +80,56 @@ class PassResult:
 
 
 # ============================================================
-# Phase 1: 2단 게이트 Config 클래스
+# Phase 1: 백테스팅 Config 클래스
+# ============================================================
+
+@dataclass
+class BacktestConfig:
+    """
+    백테스팅 설정 (단일 게이트)
+
+    12개 필터 기준으로 실거래 적합성 검증:
+    - 수익성: return, win_rate, profit_factor
+    - 위험조정수익: sharpe, sortino, calmar
+    - 리스크관리: max_drawdown, max_consecutive_losses, volatility
+    - 통계유의성: min_trades
+    - 거래품질: avg_win_loss_ratio, avg_holding_hours
+
+    기존 TradingPassConfig 기준을 사용하여 실거래 보호.
+    임계값은 실전 테스트를 통해 추후 조정 가능.
+    """
+    # 백테스팅 기본 설정
+    days: int = 730
+    use_local_data: bool = True
+    initial_capital: float = 10_000_000
+    commission: float = 0.0005
+    slippage: float = 0.0001
+
+    # 수익성 지표
+    min_return: float = 9.0
+    min_win_rate: float = 35.0
+    min_profit_factor: float = 1.5
+
+    # 위험조정 수익률
+    min_sharpe_ratio: float = 0.7
+    min_sortino_ratio: float = 0.9
+    min_calmar_ratio: float = 0.4
+
+    # 리스크 관리
+    max_drawdown: float = 25.0
+    max_consecutive_losses: int = 6
+    max_volatility: float = 80.0
+
+    # 통계적 유의성
+    min_trades: int = 10
+
+    # 거래 품질
+    min_avg_win_loss_ratio: float = 1.0
+    max_avg_holding_hours: float = 240.0
+
+
+# ============================================================
+# DEPRECATED: 2단 게이트 Config 클래스 (하위 호환성)
 # ============================================================
 
 @dataclass
@@ -123,6 +172,8 @@ class ResearchPassConfig:
 @dataclass
 class TradingPassConfig:
     """
+    ⚠️ DEPRECATED: BacktestConfig 사용 권장
+
     Trading Pass 설정 (중간 엄격도 - 실거래 보호용)
 
     목표: Research 통과 코인 중 기대값 양수만 실거래
@@ -1258,6 +1309,76 @@ class QuickBacktestFilter:
             failed_filters=failed_filters,
             reason=reason
         )
+
+    def evaluate_backtest(
+        self,
+        metrics: Dict[str, Any],
+        config: Optional['BacktestConfig'] = None
+    ) -> PassResult:
+        """
+        백테스팅 평가 (단일 게이트)
+
+        12개 필터 + Expectancy 필터로 실거래 적합성을 검증합니다.
+        모든 필터 통과 시에만 PASS.
+
+        Args:
+            metrics: 백테스트 성능 지표
+            config: 사용할 BacktestConfig (None이면 기본값 사용)
+
+        Returns:
+            PassResult: 평가 결과
+        """
+        # BacktestConfig 사용 (기본값 또는 주입된 config)
+        if config is None:
+            config = BacktestConfig()
+
+        filter_results = self._check_filters(metrics, config=config)
+
+        # Expectancy Filter 필수 조건 추가
+        exp_result = self.check_expectancy_with_metrics(metrics)
+        filter_results['expectancy'] = exp_result['passed']
+
+        passed_count = sum(1 for v in filter_results.values() if v)
+        failed_count = len(filter_results) - passed_count
+        failed_filters = [k for k, v in filter_results.items() if not v]
+
+        # 모든 필터 통과 필요 (Expectancy 포함)
+        passed = all(filter_results.values())
+
+        # 필터명 한글 매핑
+        filter_name_map = {
+            'return': '수익률', 'win_rate': '승률', 'profit_factor': '손익비',
+            'sharpe_ratio': 'Sharpe', 'sortino_ratio': 'Sortino', 'calmar_ratio': 'Calmar',
+            'max_drawdown': 'MDD', 'max_consecutive_losses': '연속손실', 'volatility': '변동성',
+            'min_trades': '거래수', 'avg_win_loss_ratio': '평균손익', 'avg_holding_hours': '보유시간',
+            'expectancy': '기대값',
+        }
+
+        if passed:
+            reason = f"모든 {len(filter_results)}개 필터 통과 (기대값: {exp_result['net_expectancy']:.3f}R)"
+        else:
+            failed_names = [filter_name_map.get(f, f) for f in failed_filters[:3]]
+            reason = f"{failed_count}개 필터 미달: {', '.join(failed_names)}"
+            if len(failed_filters) > 3:
+                reason += f" 외 {len(failed_filters) - 3}개"
+            # Expectancy 실패 시 추가 정보
+            if not exp_result['passed']:
+                reason += f" (기대값: {exp_result['net_expectancy']:.3f}R < 0.05R)"
+
+        return PassResult(
+            passed=passed,
+            pass_type='backtest',
+            passed_count=passed_count,
+            failed_count=failed_count,
+            failed_filters=failed_filters,
+            reason=reason
+        )
+
+    # ============================================================
+    # DEPRECATED: 2단 게이트 평가 메서드 (하위 호환성)
+    # ============================================================
+    # evaluate_research_pass(), evaluate_trading_pass()는
+    # evaluate_backtest() 사용을 권장합니다.
 
     # ============================================================
     # Phase 3: 캐싱 메커니즘 및 Expectancy 통합
