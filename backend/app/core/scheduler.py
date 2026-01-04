@@ -465,7 +465,7 @@ async def trading_job():
 
             # 📱 2) 백테스팅 알림은 콜백에서 AI 분석 전에 이미 전송됨 (on_backtest_complete_callback)
 
-            # 📱 3) AI 의사결정 상세 알림 (전체 텍스트) - 실제 선택된 코인 사용
+            # 📱 3) 의사결정 상세 알림 (AI 또는 신호 기반) - 실제 선택된 코인 사용
             try:
                 await notify_ai_decision(
                     symbol=actual_ticker,  # 실제 선택된 코인 사용
@@ -473,10 +473,11 @@ async def trading_job():
                     confidence=result.get('confidence', 'medium'),
                     reason=result.get('reason', '분석 중'),
                     duration=duration,
+                    signal_analysis=result.get('signal_analysis'),  # Phase 1: SignalAnalyzer 결과
                 )
-                logger.info("✅ AI 의사결정 상세 알림 전송 완료")
+                logger.info("✅ 의사결정 상세 알림 전송 완료")
             except Exception as telegram_error:
-                logger.warning(f"AI 의사결정 알림 전송 실패: {telegram_error}")
+                logger.warning(f"의사결정 알림 전송 실패: {telegram_error}")
             
             # 📱 4) 포트폴리오 현황 알림 - 실제 선택된 코인 사용
             try:

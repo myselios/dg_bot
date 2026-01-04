@@ -34,10 +34,20 @@ class AnalysisStage(BasePipelineStage):
 
     Container가 있으면 AnalyzeMarketUseCase를 사용하고,
     없으면 레거시 ai_service를 사용합니다 (호환성 유지).
+
+    entry_mode=True일 때:
+    - AI 분석을 스킵하고 SignalAnalyzer 결과만 사용
+    - strong_buy/buy → "buy"로 다운캐스트
+    - API 비용 절감 및 빠른 의사결정
     """
 
-    def __init__(self):
+    def __init__(self, entry_mode: bool = False):
+        """
+        Args:
+            entry_mode: True면 AI 스킵하고 SignalAnalyzer 결과만 사용
+        """
         super().__init__(name="Analysis")
+        self.entry_mode = entry_mode
 
     def _get_ai_service(self, context: PipelineContext) -> Any:
         """
@@ -85,12 +95,17 @@ class AnalysisStage(BasePipelineStage):
             # 5. 신호 분석
             self._analyze_signals(context)
 
-            # 6. AI 분석
+            # 6. entry_mode에 따른 분기
+            if self.entry_mode:
+                # entry_mode=True: AI 스킵, SignalAnalyzer 결과만 사용
+                return self._handle_signal_based_entry(context)
+
+            # 7. AI 분석 (entry_mode=False일 때만)
             ai_result = await self._perform_ai_analysis(context)
             if not ai_result.success:
                 return ai_result
 
-            # 7. AI 판단 검증
+            # 8. AI 판단 검증
             validation_result = self._validate_ai_decision(context)
             if validation_result.action == 'continue':
                 Logger.print_success("✅ 분석 완료 - 거래 실행 단계로 진행")
@@ -288,6 +303,69 @@ class AnalysisStage(BasePipelineStage):
         for signal in context.signal_analysis['signals'][:10]:
             print(f"  • {signal}")
         print(Logger._separator() + "\n")
+
+    def _handle_signal_based_entry(self, context: PipelineContext) -> StageResult:
+        """
+        신호 기반 진입 처리 (entry_mode=True)
+
+        AI를 스킵하고 SignalAnalyzer 결과만 사용하여 즉시 매수/홀드 결정.
+        strong_buy/buy → "buy"로 다운캐스트.
+
+        Args:
+            context: 파이프라인 컨텍스트
+
+        Returns:
+            StageResult: 신호 기반 결정 결과
+        """
+        if not context.signal_analysis:
+            Logger.print_warning("⚠️ 신호 분석 결과 없음 - hold 처리")
+            context.ai_result = {
+                'decision': 'hold',
+                'confidence': 'low',
+                'reason': '신호 분석 결과 없음',
+            }
+            return StageResult(
+                success=True,
+                action='continue',
+                message="신호 분석 결과 없음 - hold"
+            )
+
+        raw_decision = context.signal_analysis['decision']
+        total_score = context.signal_analysis['total_score']
+        confidence = context.signal_analysis['confidence']
+
+        # strong_buy/buy → buy, strong_sell/sell → sell (다운캐스트)
+        if raw_decision in ('strong_buy', 'buy'):
+            decision = 'buy'
+        elif raw_decision in ('strong_sell', 'sell'):
+            decision = 'sell'
+        else:
+            decision = 'hold'
+
+        # ai_result 형식으로 변환 (ExecutionStage 호환)
+        reason = f"Signal: {raw_decision} (score: {total_score:.1f})"
+        context.ai_result = {
+            'decision': decision,
+            'confidence': confidence,
+            'reason': reason,
+        }
+
+        Logger.print_header("📊 신호 기반 진입 결정 (AI 스킵)")
+        print(f"원본 결정: {raw_decision}")
+        print(f"다운캐스트: {decision}")
+        print(f"신뢰도: {confidence}")
+        print(f"총 점수: {total_score:.1f}")
+        print(Logger._separator() + "\n")
+
+        # 결정 출력
+        Logger.print_decision(decision, confidence, reason)
+        Logger.print_success("✅ 신호 기반 분석 완료 - 거래 실행 단계로 진행")
+
+        return StageResult(
+            success=True,
+            action='continue',
+            message=f"신호 기반 결정: {decision}"
+        )
 
     def _has_use_case(self, context: PipelineContext) -> bool:
         """Container와 UseCase 사용 가능 여부 확인"""

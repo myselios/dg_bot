@@ -620,16 +620,18 @@ class TelegramNotifier:
         confidence: str,
         reason: str,
         duration: float,
+        signal_analysis: dict = None,  # Phase 1: SignalAnalyzer 결과 추가
     ) -> bool:
         """
         AI 의사결정 상세 알림 (전체 텍스트, 분할 전송)
-        
+
         Args:
             symbol: 거래 심볼
             decision: 결정 (buy/sell/hold)
             confidence: 신뢰도
             reason: AI 판단 이유 (전체)
             duration: 소요 시간
+            signal_analysis: SignalAnalyzer 결과 (선택적)
         """
         decision_emoji_map = {
             'buy': '💰',
@@ -638,14 +640,18 @@ class TelegramNotifier:
         }
         decision_emoji = decision_emoji_map.get(decision, '❓')
         decision_kr = {'buy': '매수', 'sell': '매도', 'hold': '관망'}.get(decision, decision)
-        
-        confidence_map = {'high': 0.8, 'medium': 0.5, 'low': 0.3}
+
+        confidence_map = {'high': 0.8, 'medium': 0.5, 'low': 0.3, 'very_low': 0.1}
         confidence_value = confidence_map.get(confidence, 0.5)
         confidence_bar = "█" * int(confidence_value * 10) + "░" * (10 - int(confidence_value * 10))
-        
+
+        # entry_mode 판단: AI reason이 "Signal:"로 시작하면 신호 기반 진입
+        is_signal_based = reason.startswith("Signal:")
+        title = "📊 신호 기반 의사결정" if is_signal_based else "🤖 AI 의사결정 상세"
+
         # 메시지 헤더
         message = f"""
-🤖 <b>AI 의사결정 상세</b>
+{title}
 
 ━━━━━━━━━━━━━━━━━━━━
 <b>📋 결정 정보</b>
@@ -654,9 +660,31 @@ class TelegramNotifier:
 📈 <b>신뢰도:</b> {confidence.upper()} ({confidence_value * 100:.0f}%)
    {confidence_bar}
 ⏱️ <b>분석 소요 시간:</b> {duration:.2f}초
+"""
 
+        # SignalAnalyzer 결과 추가
+        if signal_analysis:
+            raw_decision = signal_analysis.get('decision', '')
+            total_score = signal_analysis.get('total_score', 0)
+            buy_score = signal_analysis.get('buy_score', 0)
+            sell_score = signal_analysis.get('sell_score', 0)
+            signals = signal_analysis.get('signals', [])[:5]  # 상위 5개만
+
+            message += f"""
 ━━━━━━━━━━━━━━━━━━━━
-<b>💭 AI 판단 근거</b>
+<b>📈 신호 분석 결과</b>
+━━━━━━━━━━━━━━━━━━━━
+🎯 <b>원본 결정:</b> {raw_decision}
+📊 <b>총 점수:</b> {total_score:.1f} (매수: {buy_score:.1f} / 매도: {sell_score:.1f})
+"""
+            if signals:
+                message += "\n<b>주요 신호:</b>\n"
+                for sig in signals:
+                    message += f"  • {escape_html(sig)}\n"
+
+        message += f"""
+━━━━━━━━━━━━━━━━━━━━
+<b>💭 {'신호 기반 판단' if is_signal_based else 'AI 판단 근거'}</b>
 ━━━━━━━━━━━━━━━━━━━━
 """
         
@@ -761,31 +789,24 @@ class TelegramNotifier:
                 passed = bt_result.get('passed', False)
                 bt_emoji = "✅" if passed else "❌"
 
-                # Trading Pass 정보 (기대값)
+                # 기대값 및 실제값 (백테스팅 결과에 포함)
                 expectancy = bt_result.get('expectancy', None)
-                trading_pass = bt_result.get('trading_pass', None)
+                metrics = bt_result.get('metrics', {})
+                total_return = metrics.get('total_return', None)
 
                 # 헤더: 코인명 + 섹터 + 점수
                 message += f"\n<b>{i}. {symbol}</b> [{sector_name}] {score:.1f}점\n"
 
-                # BT/TP 상태를 한 줄로 표시
-                if expectancy is not None:
-                    tp_emoji = "✅" if trading_pass else "❌"
-                    tp_status = f"{expectancy:.2f}R"
-                    # Trading Pass 실패 사유 표시
-                    tp_reason = bt_result.get('trading_pass_reason', '')
-                    if not trading_pass and tp_reason:
-                        # 실패 사유에서 핵심만 추출 (예: "3개 필터 미달: return, sharpe_ratio, ...")
-                        message += f"   📊 BT: {bt_emoji}  🔐 TP: {tp_emoji} {tp_status}\n"
-                        message += f"   └ {escape_html(tp_reason[:60])}\n"
-                    else:
-                        message += f"   📊 BT: {bt_emoji}  🔐 TP: {tp_emoji} {tp_status}\n"
+                # 백테스팅 상태 표시 (단일 게이트)
+                if expectancy is not None or total_return is not None:
+                    exp_str = f"{expectancy:.2f}R" if expectancy is not None else "N/A"
+                    ret_str = f"{total_return:.2f}%" if total_return is not None else "N/A"
+                    message += f"   📊 백테스트: {bt_emoji} (기대값: {exp_str}, 실제값: {ret_str})\n"
                 else:
-                    message += f"   📊 BT: {bt_emoji}\n"
+                    message += f"   📊 백테스트: {bt_emoji}\n"
 
                 # 필터 결과 상세 표시 (표 형식)
                 filter_results = bt_result.get('filter_results', {})
-                metrics = bt_result.get('metrics', {})
 
                 if filter_results and metrics:
                     rows = self._get_filter_table_data(metrics, filter_results)
@@ -932,10 +953,11 @@ async def notify_ai_decision(
     confidence: str,
     reason: str,
     duration: float,
+    signal_analysis: dict = None,  # Phase 1: SignalAnalyzer 결과 추가
 ) -> bool:
     """AI 의사결정 상세 알림 (전역 함수)"""
     return await notifier.notify_ai_decision(
-        symbol, decision, confidence, reason, duration
+        symbol, decision, confidence, reason, duration, signal_analysis
     )
 
 

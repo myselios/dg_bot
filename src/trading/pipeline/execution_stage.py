@@ -300,6 +300,8 @@ class ExecutionStage(BasePipelineStage):
             'flash_crash': context.flash_crash,
             'rsi_divergence': context.rsi_divergence,
             'backtest_result': context.backtest_result,
+            # Phase 1: SignalAnalyzer 결과 추가
+            'signal_analysis': context.signal_analysis if hasattr(context, 'signal_analysis') else None,
         }
 
         # 거래 실행 결과 추가

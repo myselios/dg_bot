@@ -200,7 +200,9 @@ class TradingPipeline:
             'price': current_price,
             'amount': coin_balance,
             'total': current_price * coin_balance if current_price and coin_balance else 0,
-            'pipeline_status': 'completed'
+            'pipeline_status': 'completed',
+            # Phase 1: SignalAnalyzer 결과 추가
+            'signal_analysis': context.signal_analysis if hasattr(context, 'signal_analysis') else None
         }
 
         # 선택된 코인 정보 포함 (멀티코인 스캐닝 결과)
@@ -237,7 +239,9 @@ def create_hybrid_trading_pipeline(
     liquidity_top_n: int = 10,
     min_volume_krw: float = 10_000_000_000,
     backtest_top_n: int = 5,
-    final_select_n: int = 2
+    final_select_n: int = 2,
+    # 진입 모드 파라미터 (Phase 1: 신호 기반 진입)
+    entry_mode: bool = True  # True: AI 스킵, SignalAnalyzer만 사용
 ) -> TradingPipeline:
     """
     통합 하이브리드 트레이딩 파이프라인 생성
@@ -297,7 +301,7 @@ def create_hybrid_trading_pipeline(
             scanner_config=scanner_config
         ),
         DataCollectionStage(),
-        AnalysisStage(),
+        AnalysisStage(entry_mode=entry_mode),  # Phase 1: entry_mode=True → AI 스킵
         ExecutionStage(),
     ]
 

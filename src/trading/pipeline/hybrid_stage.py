@@ -57,6 +57,10 @@ class HybridRiskCheckStage(BasePipelineStage):
         'final_select_n': 2    # 최종 선택 2개
     }
 
+    # ATR 하드 필터 임계값 (Phase 1: 신호 기반 진입)
+    # ENTRY 모드에서만 적용, MANAGEMENT 모드에서는 제외
+    ATR_HARD_FILTER_PCT = 10.0  # ATR% > 10% 시 진입 차단
+
     def __init__(
         self,
         stop_loss_pct: float = -5.0,
@@ -211,32 +215,149 @@ class HybridRiskCheckStage(BasePipelineStage):
         """
         MANAGEMENT 모드 처리 (포지션 관리)
 
-        ⚠️ PositionAnalyzer 제거됨 - Clean Architecture 마이그레이션 완료
-        포지션 관리는 position_management_job (15분 간격)에서 처리됩니다.
-        이 스테이지에서는 포지션이 있는지만 확인하고 스킵합니다.
-
-        TODO: ManagePositionUseCase + ValidationPort로 재구현 필요
+        Phase 3: 규칙 기반 체크 + AI 검증 통합
+        1. 각 포지션에 대해 손익률 확인
+        2. 손절 조건 (PnL <= stop_loss_pct) → 즉시 매도 (AI 스킵)
+        3. 익절 조건 (PnL >= take_profit_pct) → 즉시 매도 (AI 스킵)
+        4. 중립 → AI 검증 호출 가능 (선택적)
         """
         Logger.print_info(f"📋 포지션 관리 모드: {len(portfolio_status.positions)}개 포지션")
-        Logger.print_info("  포지션 관리는 position_management_job에서 처리됩니다.")
 
-        # 포지션 관리는 별도 job에서 처리
-        # 여기서는 추가 진입 가능 여부만 판단
         actions_taken = []
-        for portfolio_pos in portfolio_status.positions:
-            Logger.print_info(f"  [{portfolio_pos.symbol}] 보유 중 (관리는 별도 job)")
-            actions_taken.append({
-                'ticker': portfolio_pos.ticker,
-                'action': 'hold',
-                'reason': 'position_management_job에서 관리'
-            })
+        exit_positions = []
 
+        for portfolio_pos in portfolio_status.positions:
+            pnl_pct = portfolio_pos.profit_rate
+            Logger.print_info(f"  [{portfolio_pos.symbol}] PnL: {pnl_pct:.2f}%")
+
+            # 규칙 기반 체크
+            action_result = self._check_position_rules(
+                portfolio_pos,
+                pnl_pct,
+                context
+            )
+
+            actions_taken.append(action_result)
+
+            # 매도 액션이 있으면 실행 대기열에 추가
+            if action_result['action'] in ['sell', 'exit']:
+                exit_positions.append(action_result)
+
+        # 매도 액션 실행
+        if exit_positions:
+            Logger.print_header(f"🔻 {len(exit_positions)}개 포지션 청산 실행")
+            for exit_action in exit_positions:
+                sell_result = self._execute_position_exit(context, exit_action)
+                exit_action['execution_result'] = sell_result
+
+            return StageResult(
+                success=True,
+                action='exit',
+                data={
+                    'status': 'success',
+                    'decision': 'sell',
+                    'actions': actions_taken,
+                    'exit_count': len(exit_positions),
+                    'reason': f'{len(exit_positions)}개 포지션 청산 (규칙 기반)'
+                },
+                message=f"{len(exit_positions)}개 포지션 청산 완료"
+            )
+
+        # 모든 포지션 HOLD
         return StageResult(
             success=True,
             action='continue',
             data={'actions': actions_taken},
-            message="포지션 확인 완료 (관리는 별도 job)"
+            message="포지션 관리 완료 (변동 없음)"
         )
+
+    def _check_position_rules(
+        self,
+        position,
+        pnl_pct: float,
+        context: PipelineContext
+    ) -> Dict[str, Any]:
+        """
+        포지션 규칙 기반 체크 (Phase 3)
+
+        손절/익절 조건:
+        - 손절: PnL <= stop_loss_pct (기본 -5%)
+        - 익절: PnL >= take_profit_pct (기본 +10%)
+
+        Returns:
+            Dict with 'ticker', 'action', 'reason', 'pnl_pct', 'ai_used'
+        """
+        # 손절 조건 체크
+        if pnl_pct <= self.stop_loss_pct:
+            Logger.print_warning(f"    ⚠️ 손절 트리거: {pnl_pct:.2f}% <= {self.stop_loss_pct}%")
+            return {
+                'ticker': position.ticker,
+                'symbol': position.symbol,
+                'action': 'sell',
+                'reason': f'손절 조건 충족 (PnL: {pnl_pct:.2f}%)',
+                'pnl_pct': pnl_pct,
+                'ai_used': False,
+                'trigger': 'stop_loss'
+            }
+
+        # 익절 조건 체크
+        if pnl_pct >= self.take_profit_pct:
+            Logger.print_success(f"    ✅ 익절 트리거: {pnl_pct:.2f}% >= {self.take_profit_pct}%")
+            return {
+                'ticker': position.ticker,
+                'symbol': position.symbol,
+                'action': 'sell',
+                'reason': f'익절 조건 충족 (PnL: {pnl_pct:.2f}%)',
+                'pnl_pct': pnl_pct,
+                'ai_used': False,
+                'trigger': 'take_profit'
+            }
+
+        # 중립 상태 - AI 검증 옵션 (현재는 HOLD)
+        # TODO: AI 검증 호출 조건 추가 (Phase 3 확장)
+        Logger.print_info(f"    ⏸️ 중립 상태 유지: {self.stop_loss_pct}% < {pnl_pct:.2f}% < {self.take_profit_pct}%")
+        return {
+            'ticker': position.ticker,
+            'symbol': position.symbol,
+            'action': 'hold',
+            'reason': f'규칙 기반 HOLD (PnL: {pnl_pct:.2f}%)',
+            'pnl_pct': pnl_pct,
+            'ai_used': False,
+            'trigger': None
+        }
+
+    def _execute_position_exit(
+        self,
+        context: PipelineContext,
+        exit_action: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        포지션 청산 실행
+
+        Args:
+            context: 파이프라인 컨텍스트
+            exit_action: 청산 액션 정보
+
+        Returns:
+            실행 결과 딕셔너리
+        """
+        ticker = exit_action['ticker']
+        reason = exit_action['reason']
+
+        try:
+            # trading_service를 통해 매도 실행
+            trading_service = context.trading_service
+            if trading_service:
+                Logger.print_info(f"  💸 {ticker} 전량 매도 실행: {reason}")
+                result = trading_service.execute_sell(ticker)
+                return {'success': True, 'result': result}
+            else:
+                Logger.print_warning(f"  ⚠️ trading_service 없음 - 매도 실행 불가")
+                return {'success': False, 'error': 'trading_service not available'}
+
+        except Exception as e:
+            Logger.print_error(f"  ❌ 매도 실행 오류: {str(e)}")
+            return {'success': False, 'error': str(e)}
 
     def _handle_entry_mode(
         self,
@@ -249,8 +370,27 @@ class HybridRiskCheckStage(BasePipelineStage):
         스캔 활성화 여부에 따라:
         - enable_scanning=True: 코인 스캔 후 동적 티커
         - enable_scanning=False: 고정 fallback_ticker 사용
+
+        ATR 하드 필터 적용:
+        - ATR% > 10% 시 진입 차단 (CoinScan/Backtest 이전에 체크)
         """
         Logger.print_info("🔍 진입 모드: 신규 진입 탐색")
+
+        # ATR 하드 필터 체크 (ENTRY 분기 직후, CoinScan/Backtest 이전)
+        atr_check = self._check_atr_volatility(context)
+        if not atr_check['allowed']:
+            Logger.print_warning(f"⚠️ ATR 필터: {atr_check['reason']}")
+            return StageResult(
+                success=True,
+                action='skip',
+                data={
+                    'status': 'success',
+                    'decision': 'hold',
+                    'reason': atr_check['reason'],
+                    'atr_pct': atr_check.get('atr_pct', 0)
+                },
+                message=f"극단적 변동성으로 진입 차단 (ATR={atr_check.get('atr_pct', 0):.1f}%)"
+            )
 
         # 진입 가능 자본 확인
         available_capital = portfolio_status.available_capital
@@ -352,11 +492,9 @@ class HybridRiskCheckStage(BasePipelineStage):
                             'grade': bt.get('grade', 'F'),
                             'passed': bt.get('passed', False),
                             'filter_results': bt.get('filter_results', {}),
-                            'metrics': bt.get('metrics', {}),  # 테이블 표시용
+                            'metrics': bt.get('metrics', {}),
                             'reason': bt.get('reason', ''),
                             'expectancy': bt.get('expectancy'),
-                            'trading_pass': bt.get('trading_pass'),
-                            'trading_pass_reason': bt.get('trading_pass_reason', '')
                         })
                     else:
                         all_bt_results_for_telegram.append({
@@ -457,11 +595,9 @@ class HybridRiskCheckStage(BasePipelineStage):
                         'grade': bt.get('grade', 'F'),
                         'passed': bt.get('passed', False),
                         'filter_results': bt.get('filter_results', {}),
-                        'metrics': bt.get('metrics', {}),  # 테이블 표시용
+                        'metrics': bt.get('metrics', {}),
                         'reason': bt.get('reason', ''),
                         'expectancy': bt.get('expectancy'),
-                        'trading_pass': bt.get('trading_pass'),
-                        'trading_pass_reason': bt.get('trading_pass_reason', '')
                     })
                 else:
                     all_bt_results_for_telegram.append({
@@ -470,8 +606,8 @@ class HybridRiskCheckStage(BasePipelineStage):
                         'grade': getattr(bt, 'grade', 'F'),
                         'passed': getattr(bt, 'passed', False),
                         'filter_results': getattr(bt, 'filter_results', {}),
-                        'metrics': getattr(bt, 'metrics', {}),  # 테이블 표시용
-                        'reason': getattr(bt, 'reason', '')
+                        'metrics': getattr(bt, 'metrics', {}),
+                        'reason': getattr(bt, 'reason', ''),
                     })
 
         # 선택된 코인의 백테스팅 메트릭
@@ -570,6 +706,73 @@ class HybridRiskCheckStage(BasePipelineStage):
 
         return list(set(exclude))
 
+    def _check_atr_volatility(self, context: PipelineContext) -> Dict[str, Any]:
+        """
+        ATR 기반 변동성 체크 (하드 필터)
+
+        ENTRY 모드에서만 적용.
+        ATR% > 10% 시 진입 차단.
+
+        Args:
+            context: 파이프라인 컨텍스트
+
+        Returns:
+            Dict with 'allowed', 'reason', 'atr_pct' keys
+        """
+        try:
+            # context에서 ATR 정보 확인
+            atr_pct = None
+
+            # 1. context.atr_pct가 직접 설정된 경우
+            if hasattr(context, 'atr_pct') and context.atr_pct is not None:
+                atr_pct = context.atr_pct
+
+            # 2. technical_indicators에서 ATR 계산
+            elif hasattr(context, 'technical_indicators') and context.technical_indicators:
+                indicators = context.technical_indicators
+                atr = indicators.get('atr')
+                current_price = indicators.get('current_price')
+
+                # current_status에서 현재가 가져오기
+                if current_price is None and hasattr(context, 'current_status') and context.current_status:
+                    current_price = context.current_status.get('current_price')
+
+                if atr and current_price and current_price > 0:
+                    atr_pct = (atr / current_price) * 100
+
+            # ATR 정보 없으면 통과 (첫 스캔 시 아직 데이터 없음)
+            if atr_pct is None:
+                Logger.print_info("  ATR 정보 없음 - 필터 스킵")
+                return {
+                    'allowed': True,
+                    'reason': 'ATR 정보 없음 (스킵)',
+                    'atr_pct': 0
+                }
+
+            Logger.print_info(f"  ATR%: {atr_pct:.1f}% (임계값: {self.ATR_HARD_FILTER_PCT}%)")
+
+            # ATR% > 임계값이면 진입 차단
+            if atr_pct > self.ATR_HARD_FILTER_PCT:
+                return {
+                    'allowed': False,
+                    'reason': f'ATR% ({atr_pct:.1f}%) > {self.ATR_HARD_FILTER_PCT}% - 극단적 변동성',
+                    'atr_pct': atr_pct
+                }
+
+            return {
+                'allowed': True,
+                'reason': f'ATR% ({atr_pct:.1f}%) 정상 범위',
+                'atr_pct': atr_pct
+            }
+
+        except Exception as e:
+            Logger.print_warning(f"ATR 체크 오류: {str(e)} - 필터 스킵")
+            return {
+                'allowed': True,
+                'reason': f'ATR 체크 오류: {str(e)}',
+                'atr_pct': 0
+            }
+
     def _get_coin_selector(self):
         """코인 선택기 반환 (지연 초기화)"""
         if self._coin_selector is None:
@@ -588,11 +791,9 @@ class HybridRiskCheckStage(BasePipelineStage):
                 liquidity_scanner=liquidity_scanner,
                 data_sync=data_sync,
                 multi_backtest=multi_backtest,
-                entry_analyzer=None,  # AI 분석은 AnalysisStage에서
                 liquidity_top_n=self.scanner_config.get('liquidity_top_n', 10),
                 min_volume_krw=self.scanner_config.get('min_volume_krw', 10_000_000_000),
                 backtest_top_n=self.scanner_config.get('backtest_top_n', 5),
-                ai_top_n=0,  # 이 스테이지에서는 AI 분석 안함
                 final_select_n=self.scanner_config.get('final_select_n', 2)
             )
 

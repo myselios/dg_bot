@@ -5,10 +5,110 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from src.domain.entities.trade import OrderSide, OrderType, OrderStatus
 from src.domain.value_objects.money import Money, Currency
+
+
+@dataclass(frozen=True)
+class SignalDecisionDTO:
+    """
+    SignalAnalyzer 결과를 담는 Application 계층 DTO.
+
+    생성: AnalysisStage.execute() 내 from_signal_analysis() 호출
+    소비: ExecutionStage (주문 결정), DecisionRecordPort (저장)
+
+    Note: Stage는 Adapter에 직접 접근하지 않음.
+          반드시 Application Service → Port 경로 사용.
+    """
+    # 결정 결과
+    decision: str                    # "buy" | "hold" | "sell"
+    confidence: str                  # "high" | "medium" | "low" | "very_low"
+    reason: str                      # 판단 근거 요약
+
+    # 신호 상세 (로깅/추적용)
+    raw_decision: str                # 원본: "strong_buy" | "buy" | "hold" | "sell" | "strong_sell"
+    total_score: float               # buy_score - sell_score
+    buy_score: float
+    sell_score: float
+    signal_strength: float           # abs(total_score)
+    signals: List[str]               # 개별 신호 목록 (최대 10개)
+
+    # 메타데이터
+    ticker: str
+    current_price: Decimal
+    timestamp: datetime
+
+    @classmethod
+    def from_signal_analysis(
+        cls,
+        ticker: str,
+        price: Decimal,
+        analysis: Dict[str, Any],
+        timestamp: datetime,  # 외부에서 주입 (TimeProviderPort 사용)
+    ) -> "SignalDecisionDTO":
+        """
+        SignalAnalyzer.analyze_signals() 결과에서 생성.
+
+        Note: timestamp는 datetime.now() 직접 호출 대신
+              TimeProviderPort.now()를 통해 호출자가 주입해야 함.
+              이는 테스트 재현성과 시간 의존성 분리를 위함.
+
+        Args:
+            ticker: 티커 심볼 (e.g., "KRW-BTC")
+            price: 현재가
+            analysis: SignalAnalyzer.analyze_signals() 결과
+            timestamp: 결정 시점 (TimeProviderPort에서 주입)
+
+        Returns:
+            SignalDecisionDTO 인스턴스
+        """
+        raw_decision = analysis["decision"]
+
+        # strong_buy/buy → buy, strong_sell/sell → sell (동일 비용 처리)
+        if raw_decision in ("strong_buy", "buy"):
+            decision = "buy"
+        elif raw_decision in ("strong_sell", "sell"):
+            decision = "sell"
+        else:
+            decision = "hold"
+
+        return cls(
+            decision=decision,
+            confidence=analysis["confidence"],
+            reason=f"Signal: {raw_decision} (score: {analysis['total_score']:.1f})",
+            raw_decision=raw_decision,
+            total_score=analysis["total_score"],
+            buy_score=analysis["buy_score"],
+            sell_score=analysis["sell_score"],
+            signal_strength=analysis["signal_strength"],
+            signals=analysis["signals"][:10],  # 최대 10개
+            ticker=ticker,
+            current_price=price,
+            timestamp=timestamp,
+        )
+
+    def is_buy_signal(self) -> bool:
+        """매수 신호인지 확인."""
+        return self.decision == "buy"
+
+    def is_sell_signal(self) -> bool:
+        """매도 신호인지 확인."""
+        return self.decision == "sell"
+
+    def is_hold_signal(self) -> bool:
+        """홀드 신호인지 확인."""
+        return self.decision == "hold"
+
+    def get_effective_confidence(self) -> str:
+        """
+        ExecutionStage 호환용 confidence 반환.
+        very_low는 low로 downgrade (로그/DB에는 원본 유지).
+        """
+        if self.confidence == "very_low":
+            return "low"
+        return self.confidence
 
 
 @dataclass(frozen=True)

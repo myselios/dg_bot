@@ -4,8 +4,9 @@ AnalyzeMarketUseCase - Business logic for market analysis.
 This use case coordinates between market data collection and AI analysis
 to produce trading decisions.
 """
+from datetime import datetime
 from decimal import Decimal
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import re
 
 from src.application.ports.outbound.market_data_port import MarketDataPort
@@ -15,7 +16,58 @@ from src.application.dto.analysis import (
     TradingDecision,
     DecisionType,
     TechnicalIndicators,
+    MarketData,
 )
+
+
+def _convert_to_market_data_list(
+    ticker: str,
+    data: Any
+) -> List[MarketData]:
+    """
+    DataFrame 또는 다른 데이터를 List[MarketData]로 변환.
+
+    Args:
+        ticker: Trading pair (e.g., "KRW-BTC")
+        data: DataFrame, list, or dict 형태의 시장 데이터
+
+    Returns:
+        List[MarketData]
+    """
+    # 이미 List[MarketData]인 경우
+    if isinstance(data, list):
+        if len(data) > 0 and isinstance(data[0], MarketData):
+            return data
+        # 빈 리스트
+        if len(data) == 0:
+            return []
+        # dict 리스트인 경우
+        if isinstance(data[0], dict):
+            return [
+                MarketData.from_ohlcv(ticker, row)
+                for row in data
+            ]
+
+    # DataFrame인 경우
+    if hasattr(data, 'iterrows'):
+        result = []
+        for idx, row in data.iterrows():
+            # row를 dict로 변환
+            row_dict = row.to_dict()
+            # timestamp 처리: index가 datetime인 경우
+            if isinstance(idx, datetime):
+                row_dict['timestamp'] = idx
+            elif 'timestamp' not in row_dict and 'index' in row_dict:
+                row_dict['timestamp'] = row_dict['index']
+            result.append(MarketData.from_ohlcv(ticker, row_dict))
+        return result
+
+    # dict 하나인 경우
+    if isinstance(data, dict):
+        return [MarketData.from_ohlcv(ticker, data)]
+
+    # 알 수 없는 타입
+    return []
 
 
 # Valid intervals for market data
@@ -132,11 +184,14 @@ class AnalyzeMarketUseCase:
             else:
                 indicators = await self.market_data.calculate_indicators(market_data)
 
+            # Convert market_data to List[MarketData] (AnalysisRequest 요구사항)
+            market_data_list = _convert_to_market_data_list(ticker, market_data)
+
             # Build analysis request
             request = AnalysisRequest(
                 ticker=ticker,
                 current_price=current_price,
-                market_data=market_data,
+                market_data=market_data_list,
                 indicators=indicators,
                 additional_context=additional_context,
             )
@@ -184,11 +239,14 @@ class AnalyzeMarketUseCase:
             # Calculate technical indicators
             indicators = await self.market_data.calculate_indicators(market_data)
 
+            # Convert market_data to List[MarketData]
+            market_data_list = _convert_to_market_data_list(ticker, market_data)
+
             # Build analysis request
             request = AnalysisRequest(
                 ticker=ticker,
                 current_price=current_price,
-                market_data=market_data,
+                market_data=market_data_list,
                 indicators=indicators,
                 additional_context={"analysis_type": "entry"},
             )
@@ -238,11 +296,14 @@ class AnalyzeMarketUseCase:
             # Calculate technical indicators
             indicators = await self.market_data.calculate_indicators(market_data)
 
+            # Convert market_data to List[MarketData]
+            market_data_list = _convert_to_market_data_list(ticker, market_data)
+
             # Build analysis request with position info
             request = AnalysisRequest(
                 ticker=ticker,
                 current_price=current_price,
-                market_data=market_data,
+                market_data=market_data_list,
                 indicators=indicators,
                 position_info=position_info,
                 additional_context={"analysis_type": "exit"},

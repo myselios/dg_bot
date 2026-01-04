@@ -7,6 +7,7 @@ from src.application.dto.analysis import (
     DecisionType,
 )
 from src.application.dto.trading import (
+    SignalDecisionDTO,
     OrderRequest,
     OrderResponse,
     BalanceInfo,
@@ -19,6 +20,7 @@ __all__ = [
     "AnalysisRequest",
     "TradingDecision",
     "DecisionType",
+    "SignalDecisionDTO",
     "OrderRequest",
     "OrderResponse",
     "BalanceInfo",
