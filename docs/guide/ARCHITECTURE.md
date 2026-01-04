@@ -1,15 +1,5 @@
 # AI 자동매매 시스템 아키텍처
 
-> ⚠️ **Clean Architecture Migration 완료 (2026-01-04)**
->
-> 레거시 AI 코드(EntryAnalyzer, PositionAnalyzer, AIDecisionValidator, EnhancedOpenAIAdapter)가 Clean Architecture 기반으로 완전히 마이그레이션되었습니다.
->
-> - **Port 기반 추상화**: AIPort, ValidationPort, PromptPort, DecisionRecordPort
-> - **Use Case 중심**: AnalyzeMarketUseCase, ManagePositionUseCase, AnalyzeBreakoutUseCase
-> - **Adapter 구현**: OpenAIAdapter, ValidationAdapter, YAMLPromptAdapter
->
-> 📚 상세 내용: [CLEAN_ARCHITECTURE_MIGRATION.md](../CLEAN_ARCHITECTURE_MIGRATION.md)
-
 ## 📋 시스템 개요
 
 AI 기반 암호화폐 자동매매 시스템으로, **멀티코인 스캐닝 + 하이브리드 파이프라인 아키텍처**입니다.

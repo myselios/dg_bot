@@ -717,9 +717,6 @@ class TelegramNotifier:
             selected_coin: 선택된 코인 정보 (없으면 None)
             all_backtest_results: 모든 백테스팅 결과 (상위 N개)
         """
-        # Trading Pass 통과 수 (없으면 백테스트 통과 수 사용)
-        trading_pass_count = scan_summary.get('trading_pass_passed', scan_summary.get('backtest_passed', 0))
-
         message = f"""
 🔍 <b>멀티코인 스캔 결과</b>
 
@@ -728,7 +725,6 @@ class TelegramNotifier:
 ━━━━━━━━━━━━━━━━━━━━
 📈 <b>유동성 스캔:</b> {scan_summary.get('liquidity_scanned', 0)}개 코인
 🔬 <b>백테스팅 통과:</b> {scan_summary.get('backtest_passed', 0)}개 코인
-🔐 <b>Trading Pass:</b> {trading_pass_count}개 코인
 ✅ <b>최종 선택:</b> {scan_summary.get('selected', 0)}개 코인
 ⏱️ <b>소요 시간:</b> {scan_summary.get('duration_seconds', 0):.1f}초
 """

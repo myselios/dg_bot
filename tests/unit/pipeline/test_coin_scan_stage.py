@@ -72,7 +72,6 @@ class TestCoinScanStage:
                 symbol="ETH",
                 coin_info=None,
                 backtest_score=backtest_score,
-                entry_signal=None,
                 final_score=83.0,
                 final_grade="BUY",
                 selected=True,
@@ -84,7 +83,6 @@ class TestCoinScanStage:
             scan_time=datetime.now(),
             liquidity_scanned=20,
             backtest_passed=5,
-            ai_analyzed=2,
             candidates=candidates,
             selected_coins=candidates,
             total_duration_seconds=30.5
@@ -97,7 +95,6 @@ class TestCoinScanStage:
             scan_time=datetime.now(),
             liquidity_scanned=20,
             backtest_passed=0,
-            ai_analyzed=0,
             candidates=[],
             selected_coins=[],
             total_duration_seconds=15.0

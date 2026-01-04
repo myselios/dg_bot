@@ -175,7 +175,6 @@ class CoinScanStage(BasePipelineStage):
                     'scan_summary': {
                         'liquidity_scanned': scan_result.liquidity_scanned,
                         'backtest_passed': scan_result.backtest_passed,
-                        'ai_analyzed': scan_result.ai_analyzed,
                         'selected': len(scan_result.selected_coins),
                         'duration_seconds': scan_result.total_duration_seconds
                     }

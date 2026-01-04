@@ -399,8 +399,6 @@ class HybridRiskCheckStage(BasePipelineStage):
                 'scan_summary': {
                     'liquidity_scanned': getattr(scan_result, 'liquidity_scanned', 0) if scan_result else 0,
                     'backtest_passed': getattr(scan_result, 'backtest_passed', 0) if scan_result else 0,
-                    'trading_pass_passed': sum(1 for c in getattr(scan_result, 'candidates', []) if c.trading_pass_passed) if scan_result else 0,
-                    'ai_analyzed': 0,
                     'selected': 0,
                     'best_score': best_score_value,
                     'duration_seconds': getattr(scan_result, 'total_duration_seconds', 0) if scan_result else 0
@@ -429,8 +427,6 @@ class HybridRiskCheckStage(BasePipelineStage):
                     'scan_summary': {
                         'liquidity_scanned': getattr(scan_result, 'liquidity_scanned', 0) if scan_result else 0,
                         'backtest_passed': getattr(scan_result, 'backtest_passed', 0) if scan_result else 0,
-                        'trading_pass_passed': sum(1 for c in getattr(scan_result, 'candidates', []) if c.trading_pass_passed) if scan_result else 0,
-                        'ai_analyzed': 0,
                         'selected': 0,
                         'duration_seconds': getattr(scan_result, 'total_duration_seconds', 0) if scan_result else 0
                     },
@@ -495,8 +491,6 @@ class HybridRiskCheckStage(BasePipelineStage):
             'scan_summary': {
                 'liquidity_scanned': scan_result.liquidity_scanned,
                 'backtest_passed': scan_result.backtest_passed,
-                'trading_pass_passed': sum(1 for c in scan_result.candidates if c.trading_pass_passed),
-                'ai_analyzed': scan_result.ai_analyzed,
                 'selected': len(scan_result.selected_coins),
                 'best_score': selected_coin.final_score,
                 'duration_seconds': scan_result.total_duration_seconds
@@ -530,8 +524,6 @@ class HybridRiskCheckStage(BasePipelineStage):
                 'scan_summary': {
                     'liquidity_scanned': scan_result.liquidity_scanned,
                     'backtest_passed': scan_result.backtest_passed,
-                    'trading_pass_passed': sum(1 for c in scan_result.candidates if c.trading_pass_passed),
-                    'ai_analyzed': scan_result.ai_analyzed,
                     'selected': len(scan_result.selected_coins),
                     'duration_seconds': scan_result.total_duration_seconds
                 },

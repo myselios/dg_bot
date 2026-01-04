@@ -410,7 +410,7 @@ class TestCoinSelectorIntegration:
                             assert coin.ticker != 'KRW-BTC'
 
     def test_final_score_calculation(self):
-        """최종 점수 계산 테스트"""
+        """최종 점수 계산 테스트 (백테스팅 점수 100%)"""
         selector = CoinSelector()
 
         # BacktestScore 객체 생성
@@ -425,14 +425,10 @@ class TestCoinSelectorIntegration:
             reason='테스트'
         )
 
-        # AI 점수 모킹
-        ai_score = MagicMock()
-        ai_score.score = 70.0
+        final = selector._calculate_final_score(bt_result)
 
-        final = selector._calculate_final_score(bt_result, ai_score)
-
-        # 백테스팅 60% + AI 40%
-        assert final == 80.0 * 0.6 + 70.0 * 0.4  # 76.0
+        # 백테스팅 점수 100%
+        assert final == 80.0
 
 
 @pytest.mark.integration

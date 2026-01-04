@@ -294,7 +294,6 @@ class TelegramBotService:
         if scan_summary:
             liquidity_scanned = scan_summary.get('liquidity_scanned', 0)
             backtest_passed = scan_summary.get('backtest_passed', 0)
-            ai_analyzed = scan_summary.get('ai_analyzed', 0)
             selected = scan_summary.get('selected', 0)
             duration = scan_summary.get('duration_seconds', 0)
 
@@ -305,8 +304,6 @@ class TelegramBotService:
             lines.append("━━━━━━━━━━━━━━━━━━━━")
             lines.append(f"📈 <b>유동성 스캔:</b> {liquidity_scanned}개 코인")
             lines.append(f"🔬 <b>백테스팅 통과:</b> {backtest_passed}개 코인")
-            if ai_analyzed:
-                lines.append(f"🤖 <b>AI 분석:</b> {ai_analyzed}개 코인")
             lines.append(f"✅ <b>최종 선택:</b> {selected}개 코인")
             if duration:
                 lines.append(f"⏱️ <b>소요 시간:</b> {duration:.1f}초")

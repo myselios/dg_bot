@@ -30,17 +30,8 @@ class TradingEngine:
         self.db = db_session
         self.symbol = settings.TRADING_SYMBOL
         
-        # TODO: 기존 서비스 초기화
-        # from src.api.upbit_client import UpbitClient
-        # from src.ai.service import AIService
-        # from src.trading.indicators import TechnicalIndicators
-        
-        # self.upbit = UpbitClient(
-        #     access_key=settings.UPBIT_ACCESS_KEY,
-        #     secret_key=settings.UPBIT_SECRET_KEY,
-        # )
-        # self.ai_service = AIService()
-        # self.indicators = TechnicalIndicators()
+        # 서비스 초기화는 Container를 통해 수행
+        # Container.get_exchange_port(), Container.get_ai_port() 등 사용
     
     async def run(self) -> Dict[str, Any]:
         """

@@ -31,7 +31,6 @@ class TestCoinCandidate:
             symbol="BTC",
             coin_info=None,
             backtest_score=backtest_score,
-            entry_signal=None,
             final_score=83.0,
             final_grade="BUY",
             selected=True,
@@ -45,21 +44,17 @@ class TestCoinCandidate:
         assert candidate.selected is True
 
     def test_candidate_is_ready_for_entry_true(self):
-        """진입 준비 완료 테스트 - True (Trading Pass 통과 필수)"""
-        entry_signal = MagicMock()
-        entry_signal.decision = 'buy'
-
+        """진입 준비 완료 테스트 - True (백테스팅 통과 필수)"""
         candidate = CoinCandidate(
             ticker="KRW-BTC",
             symbol="BTC",
             coin_info=None,
             backtest_score=None,
-            entry_signal=entry_signal,
             final_score=80.0,
             final_grade="BUY",
             selected=True,
             selection_reason="테스트",
-            trading_pass_passed=True,  # 2단 게이트: Trading Pass 통과 필수
+            backtest_passed=True,
             expectancy_R=0.15
         )
 
@@ -67,15 +62,11 @@ class TestCoinCandidate:
 
     def test_candidate_is_ready_for_entry_false_not_selected(self):
         """진입 준비 완료 테스트 - 선택 안됨"""
-        entry_signal = MagicMock()
-        entry_signal.decision = 'buy'
-
         candidate = CoinCandidate(
             ticker="KRW-BTC",
             symbol="BTC",
             coin_info=None,
             backtest_score=None,
-            entry_signal=entry_signal,
             final_score=80.0,
             final_grade="BUY",
             selected=False,
@@ -95,7 +86,6 @@ class TestScanResult:
             symbol="BTC",
             coin_info=None,
             backtest_score=None,
-            entry_signal=None,
             final_score=80.0,
             final_grade="BUY",
             selected=True,
@@ -106,7 +96,6 @@ class TestScanResult:
             scan_time=datetime.now(),
             liquidity_scanned=20,
             backtest_passed=5,
-            ai_analyzed=3,
             candidates=[candidate],
             selected_coins=[candidate],
             total_duration_seconds=30.5
@@ -114,7 +103,6 @@ class TestScanResult:
 
         assert result.liquidity_scanned == 20
         assert result.backtest_passed == 5
-        assert result.ai_analyzed == 3
         assert len(result.selected_coins) == 1
 
     def test_scan_result_empty(self):
@@ -123,7 +111,6 @@ class TestScanResult:
             scan_time=datetime.now(),
             liquidity_scanned=0,
             backtest_passed=0,
-            ai_analyzed=0,
             candidates=[],
             selected_coins=[],
             total_duration_seconds=1.0
@@ -142,7 +129,6 @@ class TestCoinSelector:
         assert selector.liquidity_top_n == 10
         assert selector.min_volume_krw == 10_000_000_000
         assert selector.backtest_top_n == 5
-        # ai_top_n 제거됨 - Clean Architecture 마이그레이션
         assert selector.final_select_n == 2
 
     def test_initialization_custom(self):
@@ -151,21 +137,18 @@ class TestCoinSelector:
             liquidity_top_n=30,
             min_volume_krw=20_000_000_000,
             backtest_top_n=10,
-            # ai_top_n 제거됨
             final_select_n=3
         )
 
         assert selector.liquidity_top_n == 30
         assert selector.min_volume_krw == 20_000_000_000
         assert selector.backtest_top_n == 10
-        # ai_top_n 제거됨 - Clean Architecture 마이그레이션
         assert selector.final_select_n == 3
 
     def test_calculate_final_score(self):
-        """최종 점수 계산 테스트"""
+        """최종 점수 계산 테스트 (백테스팅 점수 100%)"""
         selector = CoinSelector()
 
-        # BacktestScore 객체 생성
         bt_result = BacktestScore(
             ticker="KRW-BTC",
             symbol="BTC",
@@ -177,40 +160,12 @@ class TestCoinSelector:
             reason="테스트"
         )
 
-        # EntrySignal 객체 모킹
-        entry_signal = MagicMock()
-        entry_signal.score = 70.0
+        final_score = selector._calculate_final_score(bt_result)
 
-        final_score = selector._calculate_final_score(bt_result, entry_signal)
+        assert final_score == 80.0
 
-        # 백테스팅 60% + AI 40%
-        expected = 80.0 * 0.6 + 70.0 * 0.4  # 76.0
-        assert final_score == expected
-
-    def test_calculate_final_score_no_ai(self):
-        """AI 없이 최종 점수 계산 테스트"""
-        selector = CoinSelector()
-
-        # BacktestScore 객체 생성
-        bt_result = BacktestScore(
-            ticker="KRW-BTC",
-            symbol="BTC",
-            passed=True,
-            score=80.0,
-            grade="STRONG PASS",
-            metrics={'total_return': 20.0},
-            filter_results={'return': True},
-            reason="테스트"
-        )
-
-        final_score = selector._calculate_final_score(bt_result, None)
-
-        # 백테스팅 60% + AI 추정 40% (STRONG PASS = 70점)
-        expected = 80.0 * 0.6 + 70.0 * 0.4  # 76.0
-        assert final_score == expected
-
-    def test_determine_final_grade_strong_buy(self):
-        """최종 등급 결정 테스트 - STRONG BUY"""
+    def test_determine_final_grade_buy(self):
+        """최종 등급 결정 테스트 - BUY"""
         selector = CoinSelector()
 
         bt_result = BacktestScore(
@@ -224,13 +179,28 @@ class TestCoinSelector:
             reason="테스트"
         )
 
-        entry_signal = MagicMock()
-        entry_signal.decision = 'buy'
-        entry_signal.confidence = 'high'
+        grade = selector._determine_final_grade(bt_result, 85.0)
 
-        grade = selector._determine_final_grade(bt_result, entry_signal, 75.0)
+        assert grade == "BUY"
 
-        assert grade == "STRONG BUY"
+    def test_determine_final_grade_weak_buy(self):
+        """최종 등급 결정 테스트 - WEAK BUY"""
+        selector = CoinSelector()
+
+        bt_result = BacktestScore(
+            ticker="KRW-BTC",
+            symbol="BTC",
+            passed=True,
+            score=55.0,
+            grade="WEAK PASS",
+            metrics={},
+            filter_results={},
+            reason="테스트"
+        )
+
+        grade = selector._determine_final_grade(bt_result, 55.0)
+
+        assert grade == "WEAK BUY"
 
     def test_should_select_true(self):
         """선택 여부 결정 테스트 - True"""
@@ -247,10 +217,7 @@ class TestCoinSelector:
             reason="테스트"
         )
 
-        entry_signal = MagicMock()
-        entry_signal.decision = 'buy'
-
-        should_select = selector._should_select(bt_result, entry_signal, 70.0)
+        should_select = selector._should_select(bt_result, 70.0)
 
         assert should_select is True
 
@@ -269,7 +236,7 @@ class TestCoinSelector:
             reason="테스트"
         )
 
-        should_select = selector._should_select(bt_result, None, 30.0)
+        should_select = selector._should_select(bt_result, 30.0)
 
         assert should_select is False
 
