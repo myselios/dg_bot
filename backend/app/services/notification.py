@@ -87,34 +87,40 @@ class TelegramNotifier:
 
     def _get_filter_table_data(self, metrics: dict, filter_results: dict) -> list:
         """
-        필터 테이블 데이터 생성
+        필터 테이블 데이터 생성 (Phase 7: 티어별 구조)
 
         Args:
             metrics: 백테스트 메트릭 딕셔너리
             filter_results: 필터별 통과 여부
 
         Returns:
-            [(필터명, 기준, 결과, 통과여부), ...] 형태의 리스트
+            [(티어, 필터명, 기준, 결과, 통과여부, 가중치), ...] 형태의 리스트
         """
-        from src.backtesting.quick_filter import ResearchPassConfig
+        from src.backtesting.quick_filter import BacktestConfig, FILTER_WEIGHTS
 
-        config = ResearchPassConfig()
+        config = BacktestConfig()
 
-        # 필터 정의: (key, 한글명, 방향, 기준값, 단위, 메트릭키)
+        # 티어별 필터 정의: (tier, key, 한글명, 방향, 기준값, 단위, 메트릭키, 가중치)
+        # Tier 1: 핵심 AND (필수 통과)
+        # Tier 2: 중요 가중치 (5.0점)
+        # Tier 3: 권장 가중치 (2.0점)
         filter_defs = [
-            ('return', '수익률', 'min', config.min_return, '%', 'total_return'),
-            ('win_rate', '승률', 'min', config.min_win_rate, '%', 'win_rate'),
-            ('profit_factor', '손익비', 'min', config.min_profit_factor, '', 'profit_factor'),
-            ('sharpe_ratio', 'Sharpe', 'min', config.min_sharpe_ratio, '', 'sharpe_ratio'),
-            ('sortino_ratio', 'Sortino', 'min', config.min_sortino_ratio, '', 'sortino_ratio'),
-            ('calmar_ratio', 'Calmar', 'min', config.min_calmar_ratio, '', 'calmar_ratio'),
-            ('max_drawdown', 'MDD', 'max', config.max_drawdown, '%', 'max_drawdown'),
-            ('min_trades', '거래수', 'min', config.min_trades, '', 'total_trades'),
-            ('avg_win_loss_ratio', '평균손익', 'min', config.min_avg_win_loss_ratio, '', None),
+            # Tier 1: 핵심 AND (expectancy는 별도 계산)
+            (1, 'return', '수익률', 'min', config.min_return, '%', 'total_return', 'AND'),
+            (1, 'profit_factor', '손익비', 'min', config.min_profit_factor, '', 'profit_factor', 'AND'),
+            (1, 'sharpe_ratio', 'Sharpe', 'min', config.min_sharpe_ratio, '', 'sharpe_ratio', 'AND'),
+            # Tier 2: 중요 가중치 (5.0점)
+            (2, 'max_drawdown', 'MDD', 'max', config.max_drawdown, '%', 'max_drawdown', 2.0),
+            (2, 'sortino_ratio', 'Sortino', 'min', config.min_sortino_ratio, '', 'sortino_ratio', 1.5),
+            (2, 'min_trades', '거래수', 'min', config.min_trades, '', 'total_trades', 1.0),
+            (2, 'win_rate', '승률', 'min', config.min_win_rate, '%', 'win_rate', 0.5),
+            # Tier 3: 권장 가중치 (2.0점)
+            (3, 'calmar_ratio', 'Calmar', 'min', config.min_calmar_ratio, '', 'calmar_ratio', 1.0),
+            (3, 'avg_win_loss_ratio', '평균손익', 'min', config.min_avg_win_loss_ratio, '', None, 0.5),
         ]
 
         rows = []
-        for key, name, direction, threshold, unit, metric_key in filter_defs:
+        for tier, key, name, direction, threshold, unit, metric_key, weight in filter_defs:
             # 실제값 추출
             if key == 'avg_win_loss_ratio':
                 avg_win = metrics.get('avg_win', 0)
@@ -143,7 +149,8 @@ class TelegramNotifier:
             else:
                 actual_str = f"{int(actual) if isinstance(actual, float) else actual}{unit}"
 
-            rows.append((name, threshold_str, actual_str, passed))
+            # 티어 및 가중치 정보 포함
+            rows.append((tier, name, threshold_str, actual_str, passed, weight))
 
         return rows
 
@@ -170,25 +177,40 @@ class TelegramNotifier:
 
     def _format_filter_table(self, rows: list) -> str:
         """
-        필터 테이블을 텍스트로 포맷팅
+        필터 테이블을 텍스트로 포맷팅 (Phase 7: 티어별)
 
         Args:
-            rows: [(필터명, 기준, 결과, 통과여부), ...]
+            rows: [(티어, 필터명, 기준, 결과, 통과여부, 가중치), ...]
 
         Returns:
             고정폭 폰트용 테이블 문자열
         """
         lines = []
-        # 헤더 (필터=6칸, 기준=8칸, 결과=8칸)
-        lines.append("필터  │기준    │결과    │P")
-        lines.append("──────┼────────┼────────┼─")
 
-        for name, threshold, actual, passed in rows:
+        # 티어별 그룹화
+        tier_names = {1: "T1(AND)", 2: "T2(5.0)", 3: "T3(2.0)"}
+        current_tier = 0
+
+        for tier, name, threshold, actual, passed, weight in rows:
+            # 티어 변경 시 헤더 추가
+            if tier != current_tier:
+                if current_tier != 0:
+                    lines.append("")  # 티어 간 빈 줄
+                tier_label = tier_names.get(tier, f"T{tier}")
+                lines.append(f"[{tier_label}]")
+                current_tier = tier
+
             pf = "✓" if passed else "✗"
+            # 가중치 표시 (AND 또는 숫자)
+            if weight == 'AND':
+                weight_str = ""
+            else:
+                weight_str = f"({weight})"
+
             name_pad = self._pad_to_width(name, 6)
             threshold_pad = self._pad_to_width(threshold, 8)
             actual_pad = self._pad_to_width(actual, 8)
-            lines.append(f"{name_pad}│{threshold_pad}│{actual_pad}│{pf}")
+            lines.append(f"{name_pad}│{threshold_pad}│{actual_pad}│{pf}{weight_str}")
 
         return '\n'.join(lines)
 

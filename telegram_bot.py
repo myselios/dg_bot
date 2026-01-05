@@ -197,10 +197,10 @@ class TelegramBotService:
         Returns:
             포맷팅된 문자열 (예: "거래수(5/10), Sharpe(0.3/0.4)")
         """
-        from src.backtesting.quick_filter import ResearchPassConfig
+        from src.backtesting.quick_filter import BacktestConfig
 
-        # 기준값 (ResearchPassConfig 기준)
-        config = ResearchPassConfig()
+        # 기준값 (BacktestConfig 기준 - Phase 7 통합)
+        config = BacktestConfig()
         thresholds = {
             'return': ('min', config.min_return, '%'),
             'win_rate': ('min', config.min_win_rate, '%'),

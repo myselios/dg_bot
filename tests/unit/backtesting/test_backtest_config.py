@@ -37,8 +37,8 @@ class TestBacktestConfig:
         assert config.max_consecutive_losses == 6
         assert config.max_volatility == 80.0
 
-        # 통계적 유의성
-        assert config.min_trades == 10
+        # 통계적 유의성 (Phase 7: 10 → 30, Central Limit Theorem)
+        assert config.min_trades == 30
 
         # 거래 품질
         assert config.min_avg_win_loss_ratio == 1.0
@@ -60,7 +60,7 @@ class TestBacktestConfig:
 
         # 나머지는 기본값 유지
         assert config.commission == 0.0005
-        assert config.min_trades == 10
+        assert config.min_trades == 30  # Phase 7: 10 → 30
 
     def test_backtest_config_threshold_ranges(self):
         """임계값 범위 검증 테스트"""

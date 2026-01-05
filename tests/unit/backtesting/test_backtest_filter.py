@@ -31,7 +31,7 @@ class TestBacktestFilterConfig:
         assert config.min_profit_factor == 1.5
         assert config.min_sharpe_ratio == 0.7
         assert config.max_drawdown == 25.0
-        assert config.min_trades == 10
+        assert config.min_trades == 30  # Phase 7: 10 → 30
 
 
 class TestBacktestEvaluation:
@@ -52,7 +52,7 @@ class TestBacktestEvaluation:
             'max_drawdown': 15.0,
             'consecutive_losses': 3,
             'volatility': 50.0,
-            'total_trades': 20,
+            'total_trades': 35,  # Phase 7: min_trades=30 충족
             'avg_win_loss_ratio': 2.0,
             'avg_holding_hours': 120.0,
             # Expectancy 계산을 위한 필드

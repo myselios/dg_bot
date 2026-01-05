@@ -23,7 +23,11 @@ import pandas as pd
 from src.backtesting.runner import BacktestRunner
 from src.backtesting.rule_based_strategy import RuleBasedBreakoutStrategy
 from src.backtesting.backtester import BacktestResult
-from src.backtesting.quick_filter import ResearchPassConfig  # ⚠️ 통합된 Config 사용
+from src.backtesting.quick_filter import (
+    BacktestConfig,
+    QuickBacktestFilter,
+    ResearchPassConfig,  # 하위 호환성 유지
+)
 from src.scanner.data_sync import HistoricalDataSync
 from src.scanner.liquidity_scanner import CoinInfo
 from src.utils.logger import Logger
@@ -244,9 +248,16 @@ class MultiCoinBacktest:
             # 메트릭 추출
             metrics = backtest_result.metrics
 
-            # 필터링
-            filter_results = self._check_filters(metrics, criteria)
-            passed = all(filter_results.values())
+            # Phase 7: 가중치 기반 필터링 (BacktestConfig + weighted evaluation)
+            backtest_filter = QuickBacktestFilter(BacktestConfig())
+            pass_result = backtest_filter.evaluate_backtest_weighted(metrics)
+
+            passed = pass_result.passed
+            # 모든 필터 결과 추출 (통과/실패 모두)
+            filter_results = backtest_filter._check_filters(metrics)
+            # expectancy 필터 추가
+            exp_result = backtest_filter.check_expectancy_with_metrics(metrics)
+            filter_results['expectancy'] = exp_result.get('passed', False)
 
             # 점수 계산
             score = self._calculate_score(metrics)
@@ -254,8 +265,8 @@ class MultiCoinBacktest:
             # 등급 결정
             grade = self._determine_grade(score, passed)
 
-            # 사유 생성
-            reason = self._generate_reason(metrics, filter_results, passed)
+            # 사유 생성 (weighted evaluation 결과 사용)
+            reason = pass_result.reason
 
             result = BacktestScore(
                 ticker=ticker,

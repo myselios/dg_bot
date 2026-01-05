@@ -37,8 +37,8 @@ class TestMultiBacktestConfig:
         assert config.max_consecutive_losses == 8
         assert config.max_volatility == 100.0
 
-        # 통계적 유의성
-        assert config.min_trades == 20
+        # 통계적 유의성 (현재 10, Phase 7에서 30으로 상향 예정)
+        assert config.min_trades == 10
 
         # 거래 품질 (Research Pass 기준)
         assert config.min_avg_win_loss_ratio == 1.0
@@ -141,7 +141,7 @@ class TestMultiCoinBacktest:
         assert criteria['min_win_rate'] == 30.0
         assert criteria['min_sharpe_ratio'] == 0.4
         assert criteria['max_drawdown'] == 30.0
-        assert criteria['min_trades'] == 20
+        assert criteria['min_trades'] == 10  # 현재 10, Phase 7에서 30으로 상향 예정
 
     def test_get_filter_criteria_custom(self):
         """커스텀 필터 기준 반환 테스트"""

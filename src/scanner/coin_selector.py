@@ -266,6 +266,8 @@ class CoinSelector:
         # backtest_results에 백테스팅 검증 정보 병합
         candidate_map = {c.symbol: c for c in candidates}
         enriched_backtest_results = []
+        # 미통과 코인의 expectancy 계산용 필터
+        backtest_filter = QuickBacktestFilter(BacktestConfig())
         for bt_result in backtest_results:
             result_dict = {
                 'symbol': bt_result.symbol,
@@ -281,6 +283,12 @@ class CoinSelector:
                 result_dict['expectancy'] = candidate.expectancy_R
                 result_dict['backtest_passed'] = candidate.backtest_passed
                 result_dict['backtest_reason'] = candidate.backtest_reason
+            else:
+                # 미통과 코인도 expectancy 계산하여 표시 (N/A 방지)
+                exp_result = backtest_filter.check_expectancy_with_metrics(bt_result.metrics)
+                result_dict['expectancy'] = exp_result.get('net_expectancy', 0.0)
+                result_dict['backtest_passed'] = False
+                result_dict['backtest_reason'] = bt_result.reason
             enriched_backtest_results.append(result_dict)
 
         # 결과 생성
@@ -484,9 +492,9 @@ class CoinSelector:
                 candidate.backtest_reason = "백테스트 결과 없음"
                 continue
 
-            # 백테스팅 검증
+            # 백테스팅 검증 (Phase 7: 가중치 기반 평가)
             metrics = candidate.backtest_score.metrics
-            pass_result = backtest_filter.evaluate_backtest(metrics)
+            pass_result = backtest_filter.evaluate_backtest_weighted(metrics)
 
             # Expectancy 정보 추출
             exp_result = backtest_filter.check_expectancy_with_metrics(metrics)

@@ -19,6 +19,41 @@ from ..utils.logger import Logger
 
 
 # ============================================================
+# Phase 7: 가중치 기반 필터 평가 상수
+# ============================================================
+
+# 핵심 필터 (Tier 1) - AND 조건, 반드시 통과 필수
+CORE_FILTERS = {
+    'return',           # 수익성 기본
+    'profit_factor',    # 총 이익/손실 (>1.5 권장)
+    'sharpe_ratio',     # 위험조정수익 (업계 표준)
+    'expectancy'        # 실제 기대값 (수수료 반영)
+}
+
+# 가중 필터 (Tier 2~4) - 가중치 기반 점수
+FILTER_WEIGHTS = {
+    # Tier 2 (중요) - 5.0점
+    'max_drawdown': 2.0,       # 실거래 생존력 핵심
+    'sortino_ratio': 1.5,      # 하방 리스크 측정
+    'min_trades': 1.0,         # 통계적 유의성
+    'win_rate': 0.5,           # 심리적 안정성
+
+    # Tier 3 (권장) - 2.0점
+    'calmar_ratio': 1.0,       # MDD 대비 수익률
+    'avg_win_loss_ratio': 0.5, # 거래 품질
+    'max_consecutive_losses': 0.5,  # 심리적 내구성
+
+    # Tier 4 (선택) - 1.0점
+    'volatility': 0.5,         # 업종 특성 의존
+    'avg_holding_hours': 0.5,  # 전략 스타일 의존
+}
+
+# 가중 필터 총점 및 통과 임계값
+WEIGHTED_FILTER_TOTAL = 8.0  # 총 8.0점 만점
+WEIGHTED_FILTER_THRESHOLD = 5.0  # 5.0점 이상 통과 (62.5%)
+
+
+# ============================================================
 # Phase 0: 필터별 통계 수집을 위한 데이터클래스
 # ============================================================
 
@@ -97,6 +132,10 @@ class BacktestConfig:
 
     기존 TradingPassConfig 기준을 사용하여 실거래 보호.
     임계값은 실전 테스트를 통해 추후 조정 가능.
+
+    Phase 7 (v5.0):
+    - use_weighted_evaluation: 가중치 기반 평가 활성화
+    - min_trades: 10 → 30 (통계적 최소, Central Limit Theorem)
     """
     # 백테스팅 기본 설정
     days: int = 730
@@ -120,12 +159,15 @@ class BacktestConfig:
     max_consecutive_losses: int = 6
     max_volatility: float = 80.0
 
-    # 통계적 유의성
-    min_trades: int = 10
+    # 통계적 유의성 (Phase 7: 10 → 30, Central Limit Theorem 기반)
+    min_trades: int = 30
 
     # 거래 품질
     min_avg_win_loss_ratio: float = 1.0
     max_avg_holding_hours: float = 240.0
+
+    # Phase 7: 가중치 기반 평가 활성화 (기본값 True로 변경)
+    use_weighted_evaluation: bool = True
 
 
 # ============================================================
@@ -265,6 +307,9 @@ class QuickBacktestConfig:
     # 5. 거래 품질 (Trade Quality)
     min_avg_win_loss_ratio: float = 1.3  # 평균 수익/평균 손실 비율
     max_avg_holding_hours: float = 168.0  # 최대 평균 보유 시간 (7일) - 너무 길면 자본 효율 저하
+
+    # Phase 7: 가중치 기반 평가 (레거시 호환성 - ALL AND 유지)
+    use_weighted_evaluation: bool = False
 
     @classmethod
     def create_research_config(cls) -> 'ResearchPassConfig':
@@ -412,19 +457,27 @@ class QuickBacktestFilter:
             )
             
             rule_metrics = rule_backtest_result.metrics
-            
+
             # 룰 기반 결과 출력
             self._print_metrics_summary(rule_metrics, "룰 기반")
-            
+
             # 룰 기반 필터링 조건 체크
             rule_filter_results = self._check_filters(rule_metrics)
-            rule_passed = all(rule_filter_results.values())
-            
-            reason = self._generate_reason(rule_metrics, rule_filter_results, rule_passed)
-            
+
+            # Phase 7: 가중치 평가 활성화 시 evaluate_backtest_weighted 사용
+            if self.config.use_weighted_evaluation:
+                weighted_result = self.evaluate_backtest_weighted(rule_metrics)
+                rule_passed = weighted_result.passed
+                reason = weighted_result.reason
+                rule_filter_results['expectancy'] = weighted_result.passed_count > 0
+                Logger.print_info(f"🎯 가중치 평가: {reason}")
+            else:
+                rule_passed = all(rule_filter_results.values())
+                reason = self._generate_reason(rule_metrics, rule_filter_results, rule_passed)
+
             # 결과 출력
             self._print_results(rule_metrics, rule_filter_results, rule_passed, is_rule_based=True)
-            
+
             return QuickBacktestResult(
                 passed=rule_passed,
                 result=rule_backtest_result,
@@ -1368,6 +1421,97 @@ class QuickBacktestFilter:
         return PassResult(
             passed=passed,
             pass_type='backtest',
+            passed_count=passed_count,
+            failed_count=failed_count,
+            failed_filters=failed_filters,
+            reason=reason
+        )
+
+    # ============================================================
+    # Phase 7: 가중치 기반 필터 평가 메서드 (v5.0)
+    # ============================================================
+
+    def evaluate_backtest_weighted(
+        self,
+        metrics: Dict[str, Any],
+        config: Optional['BacktestConfig'] = None
+    ) -> PassResult:
+        """
+        가중치 기반 백테스팅 평가 (Phase 7)
+
+        핵심 필터 AND + 가중 점수 기반 평가:
+        1. Tier 1 (핵심 4개) 모두 통과 필수: return, profit_factor, sharpe_ratio, expectancy
+        2. Tier 2~4 (나머지 9개) 가중 점수 >= 5.0점
+
+        총점: 8.0점 만점, 통과 기준: 5.0점 이상 (62.5%)
+
+        Args:
+            metrics: 백테스트 성능 지표
+            config: 사용할 BacktestConfig (None이면 기본값 사용)
+
+        Returns:
+            PassResult: 평가 결과
+        """
+        # BacktestConfig 사용 (기본값 또는 주입된 config)
+        if config is None:
+            config = BacktestConfig(use_weighted_evaluation=True)
+
+        # Step 1: 기본 필터 결과 계산
+        filter_results = self._check_filters(metrics, config=config)
+
+        # Expectancy Filter 추가
+        exp_result = self.check_expectancy_with_metrics(metrics)
+        filter_results['expectancy'] = exp_result['passed']
+
+        # Step 2: 핵심 필터 (Tier 1) 체크 - AND 조건
+        core_passed = all(
+            filter_results.get(f, False) for f in CORE_FILTERS
+        )
+        failed_core = [
+            f for f in CORE_FILTERS if not filter_results.get(f, False)
+        ]
+
+        # Step 3: 가중 점수 계산 (Tier 2~4)
+        weighted_score = 0.0
+        for filter_name, weight in FILTER_WEIGHTS.items():
+            if filter_results.get(filter_name, False):
+                weighted_score += weight
+
+        # Step 4: 최종 판정
+        weighted_passed = weighted_score >= WEIGHTED_FILTER_THRESHOLD
+        final_passed = core_passed and weighted_passed
+
+        # Step 5: 결과 집계
+        passed_count = sum(1 for v in filter_results.values() if v)
+        failed_count = len(filter_results) - passed_count
+        failed_filters = [k for k, v in filter_results.items() if not v]
+
+        # 필터명 한글 매핑
+        filter_name_map = {
+            'return': '수익률', 'win_rate': '승률', 'profit_factor': '손익비',
+            'sharpe_ratio': 'Sharpe', 'sortino_ratio': 'Sortino', 'calmar_ratio': 'Calmar',
+            'max_drawdown': 'MDD', 'max_consecutive_losses': '연속손실', 'volatility': '변동성',
+            'min_trades': '거래수', 'avg_win_loss_ratio': '평균손익', 'avg_holding_hours': '보유시간',
+            'expectancy': '기대값',
+        }
+
+        # Step 6: 사유 생성
+        if final_passed:
+            reason = (
+                f"핵심 4개 통과, 가중 점수: {weighted_score:.1f}/{WEIGHTED_FILTER_TOTAL:.1f} 통과"
+            )
+        elif not core_passed:
+            failed_core_names = [filter_name_map.get(f, f) for f in failed_core]
+            reason = f"핵심 필터 미달: {', '.join(failed_core_names)}"
+        else:
+            reason = (
+                f"가중 점수 미달: {weighted_score:.1f}/{WEIGHTED_FILTER_TOTAL:.1f} "
+                f"(최소 {WEIGHTED_FILTER_THRESHOLD:.1f} 필요)"
+            )
+
+        return PassResult(
+            passed=final_passed,
+            pass_type='weighted',
             passed_count=passed_count,
             failed_count=failed_count,
             failed_filters=failed_filters,
