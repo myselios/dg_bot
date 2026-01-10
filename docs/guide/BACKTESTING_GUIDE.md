@@ -72,9 +72,8 @@ src/backtesting/
 ├── quick_filter.py          # 12가지 필터 + Expectancy
 │   ├── BacktestConfig        # 백테스팅 설정 (단일 게이트)
 │   ├── QuickBacktestFilter   # 필터 평가 클래스
-│   │   └── evaluate_backtest() # 단일 백테스팅 평가 메서드
-│   ├── (Deprecated) ResearchPassConfig  # 구 2단 게이트 - 호환성 유지
-│   └── (Deprecated) TradingPassConfig   # 구 2단 게이트 - 호환성 유지
+│   │   ├── evaluate_backtest()         # 단일 백테스팅 평가 (ALL AND)
+│   │   └── evaluate_backtest_weighted() # 가중치 기반 평가 (Phase 7)
 │
 ├── backtester.py            # 백테스트 엔진
 │   ├── Backtester            # 시뮬레이션 실행
@@ -442,9 +441,11 @@ print(f"Verdict: {report['verdict']}")  # 필터 조정 필요 여부
 
 | 날짜 | 변경 내용 |
 |------|----------|
-| 2026-01-04 | **🔥 단일 게이트로 통합**: 2단 게이트(Research/Trading Pass) → BacktestConfig로 통합. AI 진입 분석 단계 완전 제거. 파이프라인 단순화: 유동성 스캔 → 백테스팅 → 최종 선택. |
-| 2026-01-04 | **evaluate_backtest() 메서드 추가**: 단일 백테스팅 평가 메서드. 12개 필터 + Expectancy 통합 검증. ResearchPass/TradingPass는 deprecated로 표시(호환성 유지). |
-| 2026-01-04 | **CoinSelector AI 코드 제거**: entry_signal, ai_analyzed 필드 제거. _apply_backtest()로 메서드명 변경. 백테스팅 점수만 사용하는 단순 구조. |
+| 2026-01-05 | **🔥 DEPRECATED 코드 완전 삭제**: ResearchPassConfig, TradingPassConfig, QuickBacktestConfig 삭제. evaluate_research_pass(), evaluate_trading_pass(), 3단 비교 분석 함수 삭제. BacktestConfig + evaluate_backtest_weighted()가 단일 표준. |
+| 2026-01-05 | **Phase 7 가중치 필터**: Tier 1 (핵심 AND 4개) + Tier 2-4 (가중 점수) 2단계 평가. min_trades 충족 못해도 가중 점수로 통과 가능. |
+| 2026-01-04 | **단일 게이트로 통합**: 2단 게이트(Research/Trading Pass) → BacktestConfig로 통합. AI 진입 분석 단계 완전 제거. |
+| 2026-01-04 | **evaluate_backtest() 메서드 추가**: 단일 백테스팅 평가 메서드. 12개 필터 + Expectancy 통합 검증. |
+| 2026-01-04 | **CoinSelector AI 코드 제거**: entry_signal, ai_analyzed 필드 제거. _apply_backtest()로 메서드명 변경. |
 | 2026-01-04 | **min_trades 조정**: Trading Pass `min_trades` 50 → 25로 완화. 상위 20개 코인 분석 결과 최대 거래 수 28회 (BTC 기준). |
 | 2026-01-04 | **메트릭 버그 수정**: `avg_win_loss_ratio`, `avg_holding_period_hours`가 0으로 계산되던 문제 해결. |
 | 2026-01-03 | 문서 최초 작성 |
