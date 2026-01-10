@@ -2,8 +2,8 @@
 
 **작성일**: 2026-01-04
 **Last Updated**: 2026-01-10
-**상태**: ✅ Phase 1-6 완료 - Phase 7 대기
-**버전**: v5.1 (Phase 1-6 구현 완료)
+**상태**: ✅ Phase 1-7 완료
+**버전**: v5.2 (Phase 1-7 구현 완료, 테스트 검증 완료)
 
 ---
 
@@ -32,21 +32,21 @@
 | 🔴 Critical | days → bar count 혼동 | data_provider.py | 분봉 데이터 부족 | 🔍 검토 필요 |
 | 🟠 High | 인프라 어댑터 직접 생성 | backtester.py | Clean Arch 위반 | ✅ 해결 (DI 지원) |
 | 🟠 High | 주문 실패 silent pass | backtester.py | 결과 신뢰성 저하 | ✅ 해결 (logging 추가) |
-| 🟠 High | ALL AND 필터 과도한 엄격함 | quick_filter.py | 좋은 전략 과다 배제 | 📋 Phase 7 예정 |
+| 🟠 High | ALL AND 필터 과도한 엄격함 | quick_filter.py | 좋은 전략 과다 배제 | ✅ 해결 (가중 필터 구현) |
 | 🟡 Medium | AI 전략/2단 게이트 잔존 | ai_strategy.py | 정책 혼선 | ✅ 해결 (파일 삭제) |
 | 🟡 Medium | config 파라미터 무시 | quick_filter.py | 메시지 불일치 | 🔍 검토 필요 |
 | 🟡 Medium | profit_factor inf | performance.py | 필터 우회 | ⚠️ 현상 유지 (테스트 통과) |
-| 🟡 Medium | min_trades=10 통계적 부족 | quick_filter.py | 유의성 저하 | 📋 Phase 7 예정 |
+| 🟡 Medium | min_trades=10 통계적 부족 | quick_filter.py | 유의성 저하 | ✅ 해결 (min_trades=30) |
 | 🟢 Low | 시간 갭 경고 분봉 미지원 | data_provider.py | 검증 약화 | 🔍 검토 필요 |
 | 🟢 Low | print 기반 로그 | backtester.py | 로그 관리 어려움 | ✅ 해결 (logging 전환) |
 
 ### 1.3 성공 기준
 - [x] 모든 Critical 이슈 해결 (Expectancy 수정 완료)
-- [x] 대부분의 High 이슈 해결 (DI, logging 완료)
+- [x] 대부분의 High 이슈 해결 (DI, logging, 가중 필터 완료)
 - [x] Clean Architecture 경계 준수 (DI 테스트 통과)
-- [x] backtesting 테스트 211개 통과
-- [ ] 문서와 코드 일치 (진행 중)
-- [ ] Phase 7 가중치 필터 구현 (선택적)
+- [x] backtesting 테스트 216개 통과
+- [x] 문서와 코드 일치 (v5.2 동기화 완료)
+- [x] Phase 7 가중치 필터 구현 완료
 
 ---
 
