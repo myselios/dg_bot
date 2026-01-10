@@ -23,11 +23,7 @@ import pandas as pd
 from src.backtesting.runner import BacktestRunner
 from src.backtesting.rule_based_strategy import RuleBasedBreakoutStrategy
 from src.backtesting.backtester import BacktestResult
-from src.backtesting.quick_filter import (
-    BacktestConfig,
-    QuickBacktestFilter,
-    ResearchPassConfig,  # 하위 호환성 유지
-)
+from src.backtesting.quick_filter import BacktestConfig, QuickBacktestFilter
 from src.scanner.data_sync import HistoricalDataSync
 from src.scanner.liquidity_scanner import CoinInfo
 from src.utils.logger import Logger
@@ -53,31 +49,31 @@ class BacktestScore:
 @dataclass
 class MultiBacktestConfig:
     """
-    멀티코인 백테스팅 설정 (DEPRECATED - ResearchPassConfig 사용 권장)
+    멀티코인 백테스팅 설정
 
-    ⚠️ 하위 호환성을 위해 유지되지만, 내부적으로 ResearchPassConfig 값 사용
-    새 코드에서는 ResearchPassConfig를 직접 사용하세요.
+    Note: 실제 필터링은 BacktestConfig + QuickBacktestFilter 사용
+    이 클래스는 백테스터 실행 파라미터 및 점수 계산 가중치 용도로 유지
     """
-    # 백테스팅 파라미터 (ResearchPassConfig와 동기화)
+    # 백테스팅 파라미터
     initial_capital: float = 10_000_000
     commission: float = 0.0005
     slippage: float = 0.0001
     days: int = 730
     interval: str = "day"
 
-    # Research Pass 기준 사용 (느슨한 기준)
-    min_return: float = 8.0               # Research 기준
-    min_win_rate: float = 30.0            # Research 기준
-    min_profit_factor: float = 1.3        # Research 기준
-    min_sharpe_ratio: float = 0.4         # Research 기준
-    min_sortino_ratio: float = 0.5        # Research 기준
-    min_calmar_ratio: float = 0.25        # Research 기준
-    max_drawdown: float = 30.0            # Research 기준
-    max_consecutive_losses: int = 8       # Research 기준
-    max_volatility: float = 100.0         # Research 기준
-    min_trades: int = 10                  # Research 기준 (ResearchPassConfig와 동기화)
-    min_avg_win_loss_ratio: float = 1.0   # Research 기준 (연동 필터로 대체)
-    max_avg_holding_hours: float = 336.0  # Research 기준
+    # 필터 임계값 (참고용 - 실제 필터링은 BacktestConfig 사용)
+    min_return: float = 9.0
+    min_win_rate: float = 35.0
+    min_profit_factor: float = 1.5
+    min_sharpe_ratio: float = 0.7
+    min_sortino_ratio: float = 0.8
+    min_calmar_ratio: float = 0.35
+    max_drawdown: float = 25.0
+    max_consecutive_losses: int = 6
+    max_volatility: float = 80.0
+    min_trades: int = 30
+    min_avg_win_loss_ratio: float = 1.2
+    max_avg_holding_hours: float = 240.0
 
     # 점수 가중치
     weight_return: float = 0.20
@@ -86,29 +82,6 @@ class MultiBacktestConfig:
     weight_sharpe: float = 0.25
     weight_drawdown: float = 0.15
     weight_sortino: float = 0.10
-
-    @classmethod
-    def from_research_config(cls) -> 'MultiBacktestConfig':
-        """ResearchPassConfig에서 생성 (권장)"""
-        rc = ResearchPassConfig()
-        return cls(
-            initial_capital=rc.initial_capital,
-            commission=rc.commission,
-            slippage=rc.slippage,
-            days=rc.days,
-            min_return=rc.min_return,
-            min_win_rate=rc.min_win_rate,
-            min_profit_factor=rc.min_profit_factor,
-            min_sharpe_ratio=rc.min_sharpe_ratio,
-            min_sortino_ratio=rc.min_sortino_ratio,
-            min_calmar_ratio=rc.min_calmar_ratio,
-            max_drawdown=rc.max_drawdown,
-            max_consecutive_losses=rc.max_consecutive_losses,
-            max_volatility=rc.max_volatility,
-            min_trades=rc.min_trades,
-            min_avg_win_loss_ratio=rc.min_avg_win_loss_ratio,
-            max_avg_holding_hours=rc.max_avg_holding_hours,
-        )
 
 
 class MultiCoinBacktest:

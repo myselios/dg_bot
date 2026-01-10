@@ -5,11 +5,15 @@ Clean Architecture 통합:
 - ExecutionPort를 통한 체결 시뮬레이션
 - use_intrabar_stops 옵션으로 현실적인 스탑/익절 시뮬레이션
 """
+import logging
 from typing import List, Optional
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 import pandas as pd
+
+# Phase 2: 표준 logging 설정
+logger = logging.getLogger(__name__)
 
 from .strategy import Strategy
 from .portfolio import Portfolio
@@ -265,7 +269,7 @@ class Backtester:
                     # 시가로 체결 (Look-Ahead Bias 방지)
                     self._execute_order(pending_signal, current_bar_data, use_open_price=True)
                 except Exception as e:
-                    print(f"\n⚠️  시점 {i+1}에서 대기 주문 실행 오류: {str(e)}")
+                    logger.warning(f"시점 {i+1}에서 대기 주문 실행 오류: {str(e)}")
                 pending_signal = None  # 처리 완료
 
             # 3. 전략 시그널 생성 (portfolio 전달 - 매도 신호 생성을 위해)
@@ -273,7 +277,7 @@ class Backtester:
                 signal = self.strategy.generate_signal(current_bar, portfolio=self.portfolio)
             except Exception as e:
                 # 에러 발생 시 로깅하고 계속 진행
-                print(f"\n⚠️  시점 {i+1}에서 신호 생성 오류: {str(e)}")
+                logger.warning(f"시점 {i+1}에서 신호 생성 오류: {str(e)}")
                 signal = None
 
             # 4. 주문 처리
@@ -289,7 +293,7 @@ class Backtester:
                     try:
                         self._execute_order(signal, current_bar_data, use_open_price=False)
                     except Exception as e:
-                        print(f"\n⚠️  시점 {i+1}에서 주문 실행 오류: {str(e)}")
+                        logger.warning(f"시점 {i+1}에서 주문 실행 오류: {str(e)}")
 
             # 5. 포트폴리오 업데이트
             self.portfolio.update(current_bar_data)

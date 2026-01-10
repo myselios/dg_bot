@@ -6,7 +6,7 @@ from .portfolio import Portfolio, Position, Trade
 from .backtester import Backtester, BacktestResult
 from .performance import PerformanceAnalyzer
 from .runner import BacktestRunner
-from .quick_filter import QuickBacktestFilter, QuickBacktestConfig, QuickBacktestResult
+from .quick_filter import QuickBacktestFilter, BacktestConfig, QuickBacktestResult
 
 __all__ = [
     'Strategy',
@@ -19,7 +19,7 @@ __all__ = [
     'PerformanceAnalyzer',
     'BacktestRunner',
     'QuickBacktestFilter',
-    'QuickBacktestConfig',
+    'BacktestConfig',
     'QuickBacktestResult'
 ]
 

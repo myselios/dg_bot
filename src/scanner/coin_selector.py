@@ -32,7 +32,7 @@ from src.scanner.sector_mapping import (
 )
 # EntryAnalyzer 제거됨 - Clean Architecture 마이그레이션
 # from src.ai.entry_analyzer import EntryAnalyzer, EntrySignal
-from src.backtesting.quick_filter import QuickBacktestFilter, TradingPassConfig, BacktestConfig  # 2단 게이트
+from src.backtesting.quick_filter import QuickBacktestFilter, BacktestConfig
 from src.config.settings import ScannerConfig
 from src.utils.logger import Logger
 

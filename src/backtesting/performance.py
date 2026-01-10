@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 import pandas as pd
 import numpy as np
 from .portfolio import Trade
+from .expectancy_filter import AVG_LOSS_PCT_FLOOR
 
 
 class PerformanceAnalyzer:
@@ -84,7 +85,41 @@ class PerformanceAnalyzer:
         
         avg_win = np.mean([t.pnl for t in winning_trades]) if winning_trades else 0
         avg_loss = np.mean([t.pnl for t in losing_trades]) if losing_trades else 0
-        
+
+        # 8. 평균 손실률/수익률 계산 (Expectancy 필터용)
+        # avg_loss_pct: 손실 거래의 평균 손실률 (0~1)
+        # avg_win_pct: 수익 거래의 평균 수익률 (0~1)
+        avg_loss_pct_raw = 0.0
+        avg_win_pct = 0.0
+        avg_loss_pct_floor_applied = False
+
+        if losing_trades:
+            loss_pcts = []
+            for t in losing_trades:
+                if t.entry_price and t.size:
+                    # 진입 금액 대비 손실률 (양수로 변환, 0~1 범위)
+                    loss_pct = abs(t.pnl) / (t.entry_price * t.size)
+                    loss_pcts.append(loss_pct)
+            if loss_pcts:
+                avg_loss_pct_raw = np.mean(loss_pcts)
+
+        if winning_trades:
+            win_pcts = []
+            for t in winning_trades:
+                if t.entry_price and t.size:
+                    # 진입 금액 대비 수익률 (0~1 범위)
+                    win_pct = t.pnl / (t.entry_price * t.size)
+                    win_pcts.append(win_pct)
+            if win_pcts:
+                avg_win_pct = np.mean(win_pcts)
+
+        # AVG_LOSS_PCT_FLOOR 적용 (P0-7: 0.2% 최소 손실)
+        if avg_loss_pct_raw < AVG_LOSS_PCT_FLOOR and losing_trades:
+            avg_loss_pct = AVG_LOSS_PCT_FLOOR
+            avg_loss_pct_floor_applied = True
+        else:
+            avg_loss_pct = avg_loss_pct_raw
+
         profit_factor = (
             abs(sum(t.pnl for t in winning_trades)) / 
             abs(sum(t.pnl for t in losing_trades))
@@ -129,6 +164,9 @@ class PerformanceAnalyzer:
             'losing_trades': len(losing_trades),
             'avg_win': avg_win,
             'avg_loss': avg_loss,
+            'avg_win_pct': avg_win_pct,
+            'avg_loss_pct': avg_loss_pct,
+            'avg_loss_pct_floor_applied': avg_loss_pct_floor_applied,
             'profit_factor': profit_factor,
             'max_consecutive_wins': max_consecutive_wins,
             'max_consecutive_losses': max_consecutive_losses,
