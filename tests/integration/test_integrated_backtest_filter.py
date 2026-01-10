@@ -27,30 +27,30 @@ def sample_chart_data():
 
 @pytest.fixture
 def mock_backtest_result_passed():
-    """필터링 통과 Mock 백테스트 결과 (12가지 조건 충족)"""
+    """필터링 통과 Mock 백테스트 결과 (Phase 7 가중 필터 기준)"""
     return BacktestResult(
         initial_capital=10_000_000,
         final_equity=11_500_000,
-        equity_curve=[10_000_000 + i * 50000 for i in range(30)],
+        equity_curve=[10_000_000 + i * 50000 for i in range(35)],
         trades=[],
         metrics={
-            'total_return': 20.0,      # >= 15%
-            'win_rate': 45.0,          # >= 38%
-            'sharpe_ratio': 1.5,       # >= 1.0
-            'sortino_ratio': 1.5,      # >= 1.2
-            'calmar_ratio': 1.0,       # >= 0.8
-            'max_drawdown': -10.0,     # <= 15%
-            'total_trades': 25,        # >= 20
-            'profit_factor': 2.0,      # >= 1.8
+            'total_return': 20.0,      # >= 9%
+            'win_rate': 45.0,          # >= 35%
+            'sharpe_ratio': 1.5,       # >= 0.7
+            'sortino_ratio': 1.5,      # >= 0.9
+            'calmar_ratio': 1.0,       # >= 0.4
+            'max_drawdown': -10.0,     # <= 25%
+            'total_trades': 35,        # >= 30 (CLT 기준)
+            'profit_factor': 2.0,      # >= 1.5
             'final_equity': 11_500_000,
-            'volatility': 40.0,        # <= 50%
-            'winning_trades': 11,
-            'losing_trades': 14,
-            'avg_win': 260_000,        # avg_win/avg_loss >= 1.3
-            'avg_loss': -200_000,
+            'volatility': 40.0,        # <= 80%
+            'winning_trades': 16,
+            'losing_trades': 19,
+            'avg_win': 3.5,            # 3.5% 평균 수익 (백분율, R=1.75)
+            'avg_loss': -2.0,          # 2.0% 평균 손실 (expectancy 양수)
             'max_consecutive_wins': 4,
-            'max_consecutive_losses': 3,  # <= 5
-            'avg_holding_period_hours': 100.0,  # <= 168h
+            'max_consecutive_losses': 3,  # <= 6
+            'avg_holding_period_hours': 100.0,  # <= 240h
             'total_commission': 50_000
         }
     )
@@ -110,11 +110,11 @@ class TestIntegratedBacktestFilter:
         
         # Then
         assert result.passed is True
-        # 12가지 필터 조건에 맞게 수정
-        assert result.metrics['total_return'] >= 15.0
-        assert result.metrics['win_rate'] >= 38.0
-        assert result.metrics['sharpe_ratio'] >= 1.0
-        assert abs(result.metrics['max_drawdown']) <= 15.0
+        # Phase 7 가중 필터 기준
+        assert result.metrics['total_return'] >= 9.0
+        assert result.metrics['win_rate'] >= 35.0
+        assert result.metrics['sharpe_ratio'] >= 0.7
+        assert abs(result.metrics['max_drawdown']) <= 25.0
     
     @pytest.mark.integration
     @patch('src.backtesting.quick_filter.BacktestRunner')

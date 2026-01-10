@@ -8,7 +8,7 @@ from datetime import datetime
 from unittest.mock import Mock, patch, MagicMock
 from src.backtesting.quick_filter import (
     QuickBacktestFilter,
-    QuickBacktestConfig,
+    BacktestConfig,
     QuickBacktestResult
 )
 from src.backtesting.backtester import BacktestResult
@@ -65,30 +65,30 @@ def sample_multi_timeframe_data():
 
 @pytest.fixture
 def mock_backtest_result_passed():
-    """필터링 통과 Mock 백테스트 결과 (12가지 조건 충족)"""
+    """필터링 통과 Mock 백테스트 결과 (Phase 7 가중 필터 기준)"""
     return BacktestResult(
         initial_capital=10_000_000,
         final_equity=11_500_000,
-        equity_curve=[10_000_000 + i * 50000 for i in range(30)],
+        equity_curve=[10_000_000 + i * 50000 for i in range(35)],
         trades=[],
         metrics={
-            'total_return': 20.0,      # 20% 수익률 (>= 15%)
-            'win_rate': 45.0,          # 45% 승률 (>= 38%)
-            'sharpe_ratio': 1.5,       # 1.5 (>= 1.0)
-            'sortino_ratio': 1.5,      # 1.5 (>= 1.2)
-            'calmar_ratio': 1.0,       # 1.0 (>= 0.8)
-            'max_drawdown': -10.0,     # -10% (<= 15%)
-            'total_trades': 25,        # 25 (>= 20)
-            'profit_factor': 2.0,      # 2.0 (>= 1.8)
+            'total_return': 20.0,      # 20% 수익률 (>= 9%)
+            'win_rate': 45.0,          # 45% 승률 (>= 35%)
+            'sharpe_ratio': 1.5,       # 1.5 (>= 0.7)
+            'sortino_ratio': 1.5,      # 1.5 (>= 0.9)
+            'calmar_ratio': 1.0,       # 1.0 (>= 0.4)
+            'max_drawdown': -10.0,     # -10% (<= 25%)
+            'total_trades': 35,        # 35 (>= 30, CLT 기준)
+            'profit_factor': 2.0,      # 2.0 (>= 1.5)
             'final_equity': 11_500_000,
-            'volatility': 40.0,        # 40% (<= 50%)
-            'winning_trades': 11,
-            'losing_trades': 14,
-            'avg_win': 260_000,        # 260000/200000 = 1.3 (>= 1.3)
-            'avg_loss': -200_000,
+            'volatility': 40.0,        # 40% (<= 80%)
+            'winning_trades': 16,
+            'losing_trades': 19,
+            'avg_win': 3.5,            # 3.5% 평균 수익 (백분율 기준, R=1.75)
+            'avg_loss': -2.0,          # 2.0% 평균 손실 (expectancy 양수 확보)
             'max_consecutive_wins': 4,
-            'max_consecutive_losses': 3,  # 3 (<= 5)
-            'avg_holding_period_hours': 100.0,  # 100h (<= 168h)
+            'max_consecutive_losses': 3,  # 3 (<= 6)
+            'avg_holding_period_hours': 100.0,  # 100h (<= 240h)
             'total_commission': 50_000
         }
     )
@@ -125,14 +125,14 @@ def mock_backtest_result_failed():
     )
 
 
-class TestQuickBacktestConfig:
-    """QuickBacktestConfig 테스트"""
+class TestBacktestConfig:
+    """BacktestConfig 테스트"""
     
     @pytest.mark.unit
     def test_default_config(self):
         """기본 설정 테스트"""
         # When
-        config = QuickBacktestConfig()
+        config = BacktestConfig()
 
         # Then
         assert config.days == 730  # 2년
@@ -140,17 +140,17 @@ class TestQuickBacktestConfig:
         assert config.initial_capital == 10_000_000
         assert config.commission == 0.0005
         assert config.slippage == 0.0001
-        # 퀀트/헤지펀드 기준으로 강화된 설정
-        assert config.min_return == 15.0  # 2년간 15%
-        assert config.min_win_rate == 38.0  # 38%
-        assert config.min_sharpe_ratio == 1.0  # 기관 기준 1.0
-        assert config.max_drawdown == 15.0  # 15%
+        # Phase 7 가중 필터 시스템 기본값
+        assert config.min_return == 9.0  # 2년간 9%
+        assert config.min_win_rate == 35.0  # 35%
+        assert config.min_sharpe_ratio == 0.7  # 0.7
+        assert config.max_drawdown == 25.0  # 25%
     
     @pytest.mark.unit
     def test_custom_config(self):
         """커스텀 설정 테스트"""
         # When
-        config = QuickBacktestConfig(
+        config = BacktestConfig(
             days=60,
             min_return=10.0,
             min_win_rate=60.0,
@@ -177,14 +177,14 @@ class TestQuickBacktestFilter:
         
         # Then
         assert filter_instance.config is not None
-        assert isinstance(filter_instance.config, QuickBacktestConfig)
+        assert isinstance(filter_instance.config, BacktestConfig)
         assert filter_instance.data_provider is not None
     
     @pytest.mark.unit
     def test_filter_initialization_with_custom_config(self):
         """커스텀 설정으로 필터 초기화 테스트"""
         # Given
-        config = QuickBacktestConfig(min_return=10.0)
+        config = BacktestConfig(min_return=10.0)
         
         # When
         filter_instance = QuickBacktestFilter(config)
@@ -207,7 +207,7 @@ class TestQuickBacktestFilter:
         mock_runner.run_backtest.return_value = mock_backtest_result_passed
         mock_runner_class.run_backtest = Mock(return_value=mock_backtest_result_passed)
         
-        config = QuickBacktestConfig(use_local_data=False, days=30)
+        config = BacktestConfig(use_local_data=False, days=30)
         filter_instance = QuickBacktestFilter(config)
         
         # When
@@ -235,7 +235,7 @@ class TestQuickBacktestFilter:
         ticker = 'KRW-ETH'
         mock_runner_class.run_backtest = Mock(return_value=mock_backtest_result_failed)
         
-        config = QuickBacktestConfig(use_local_data=False, days=30)
+        config = BacktestConfig(use_local_data=False, days=30)
         filter_instance = QuickBacktestFilter(config)
         
         # When
@@ -259,7 +259,7 @@ class TestQuickBacktestFilter:
             'minute60': pd.DataFrame(),
             'minute15': pd.DataFrame()
         }
-        config = QuickBacktestConfig(use_local_data=False, days=30)
+        config = BacktestConfig(use_local_data=False, days=30)
         filter_instance = QuickBacktestFilter(config)
         
         # When
@@ -289,7 +289,7 @@ class TestQuickBacktestFilter:
             'minute60': pd.DataFrame(),
             'minute15': pd.DataFrame()
         }
-        config = QuickBacktestConfig(use_local_data=False, days=30)
+        config = BacktestConfig(use_local_data=False, days=30)
         filter_instance = QuickBacktestFilter(config)
         
         # When
@@ -303,23 +303,23 @@ class TestQuickBacktestFilter:
     
     @pytest.mark.unit
     def test_check_filters_all_passed(self):
-        """모든 필터 조건 통과 테스트 (12가지 조건)"""
+        """모든 필터 조건 통과 테스트 (Phase 7 가중 필터 기준)"""
         # Given
         filter_instance = QuickBacktestFilter()
         metrics = {
-            'total_return': 20.0,  # >= 15.0
-            'win_rate': 45.0,  # >= 38.0
-            'profit_factor': 2.0,  # >= 1.8
-            'sharpe_ratio': 1.5,  # >= 1.0
-            'sortino_ratio': 1.5,  # >= 1.2
-            'calmar_ratio': 1.0,  # >= 0.8
-            'max_drawdown': -10.0,  # <= 15.0
-            'max_consecutive_losses': 3,  # <= 5
-            'volatility': 40.0,  # <= 50.0
-            'total_trades': 25,  # >= 20
-            'avg_win': 200000,  # avg_win/avg_loss >= 1.3
+            'total_return': 20.0,  # >= 9.0
+            'win_rate': 45.0,  # >= 35.0
+            'profit_factor': 2.0,  # >= 1.5
+            'sharpe_ratio': 1.5,  # >= 0.7
+            'sortino_ratio': 1.5,  # >= 0.9
+            'calmar_ratio': 1.0,  # >= 0.4
+            'max_drawdown': -10.0,  # <= 25.0
+            'max_consecutive_losses': 3,  # <= 6
+            'volatility': 40.0,  # <= 80.0
+            'total_trades': 35,  # >= 30 (CLT 기준)
+            'avg_win': 200000,  # avg_win/avg_loss >= 1.0
             'avg_loss': -100000,
-            'avg_holding_period_hours': 100.0  # <= 168.0
+            'avg_holding_period_hours': 100.0  # <= 240.0
         }
 
         # When
@@ -422,7 +422,7 @@ class TestQuickBacktestFilter:
     
     @pytest.mark.unit
     def test_check_filters_failed_drawdown(self):
-        """Max Drawdown 필터 실패 테스트"""
+        """Max Drawdown 필터 실패 테스트 (Phase 7: max_drawdown=25%)"""
         # Given
         filter_instance = QuickBacktestFilter()
         metrics = {
@@ -432,10 +432,10 @@ class TestQuickBacktestFilter:
             'sharpe_ratio': 1.5,
             'sortino_ratio': 1.5,
             'calmar_ratio': 1.0,
-            'max_drawdown': -25.0,  # -25% (15% 초과)
+            'max_drawdown': -30.0,  # -30% (25% 초과)
             'max_consecutive_losses': 3,
             'volatility': 40.0,
-            'total_trades': 25,
+            'total_trades': 35,
             'avg_win': 200000,
             'avg_loss': -100000,
             'avg_holding_period_hours': 100.0
@@ -448,27 +448,27 @@ class TestQuickBacktestFilter:
         assert filter_results['return'] is True
         assert filter_results['win_rate'] is True
         assert filter_results['sharpe_ratio'] is True
-        assert filter_results['max_drawdown'] is False  # 25% > 15%
+        assert filter_results['max_drawdown'] is False  # 30% > 25%
     
     @pytest.mark.unit
     def test_check_filters_boundary_values(self):
-        """경계값 테스트 (정확히 경계값인 경우)"""
+        """경계값 테스트 (Phase 7 가중 필터 경계값)"""
         # Given
         filter_instance = QuickBacktestFilter()
         metrics = {
-            'total_return': 15.0,      # 정확히 15%
-            'win_rate': 38.0,          # 정확히 38%
-            'profit_factor': 1.8,      # 정확히 1.8
-            'sharpe_ratio': 1.0,       # 정확히 1.0
-            'sortino_ratio': 1.2,      # 정확히 1.2
-            'calmar_ratio': 0.8,       # 정확히 0.8
-            'max_drawdown': -15.0,     # 정확히 -15%
-            'max_consecutive_losses': 5,  # 정확히 5
-            'volatility': 50.0,        # 정확히 50%
-            'total_trades': 20,        # 정확히 20
-            'avg_win': 130000,         # 130000/100000 = 1.3
+            'total_return': 9.0,       # 정확히 9%
+            'win_rate': 35.0,          # 정확히 35%
+            'profit_factor': 1.5,      # 정확히 1.5
+            'sharpe_ratio': 0.7,       # 정확히 0.7
+            'sortino_ratio': 0.9,      # 정확히 0.9
+            'calmar_ratio': 0.4,       # 정확히 0.4
+            'max_drawdown': -25.0,     # 정확히 -25%
+            'max_consecutive_losses': 6,  # 정확히 6
+            'volatility': 80.0,        # 정확히 80%
+            'total_trades': 30,        # 정확히 30 (CLT 기준)
+            'avg_win': 100000,         # 100000/100000 = 1.0
             'avg_loss': -100000,
-            'avg_holding_period_hours': 168.0  # 정확히 168h
+            'avg_holding_period_hours': 240.0  # 정확히 240h
         }
 
         # When
@@ -620,7 +620,7 @@ class TestLoadTimeframeData:
             'minute60': pd.DataFrame(),
             'minute15': pd.DataFrame()
         }
-        config = QuickBacktestConfig(use_local_data=False, days=30)
+        config = BacktestConfig(use_local_data=False, days=30)
         filter_instance = QuickBacktestFilter(config)
         
         # When
@@ -638,7 +638,7 @@ class TestLoadTimeframeData:
         """chart_data가 None일 때 테스트"""
         # Given
         ticker = 'KRW-ETH'
-        config = QuickBacktestConfig(use_local_data=False, days=30)
+        config = BacktestConfig(use_local_data=False, days=30)
         filter_instance = QuickBacktestFilter(config)
         
         # When

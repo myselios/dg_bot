@@ -19,30 +19,30 @@ class TestMultiBacktestConfig:
     """MultiBacktestConfig 데이터클래스 테스트"""
 
     def test_default_config(self):
-        """기본 설정값 테스트 - Research Pass 기준 (느슨한 기준)"""
+        """기본 설정값 테스트 - Phase 7 가중 필터 기준"""
         config = MultiBacktestConfig()
 
-        # 수익성 지표 (Research Pass 기준)
-        assert config.min_return == 8.0
-        assert config.min_win_rate == 30.0
-        assert config.min_profit_factor == 1.3
+        # 수익성 지표 (Phase 7 기준)
+        assert config.min_return == 9.0
+        assert config.min_win_rate == 35.0
+        assert config.min_profit_factor == 1.5
 
-        # 위험조정 수익률 (Research Pass 기준)
-        assert config.min_sharpe_ratio == 0.4
-        assert config.min_sortino_ratio == 0.5
-        assert config.min_calmar_ratio == 0.25
+        # 위험조정 수익률 (Phase 7 기준)
+        assert config.min_sharpe_ratio == 0.7
+        assert config.min_sortino_ratio == 0.8
+        assert config.min_calmar_ratio == 0.35
 
-        # 리스크 관리 (Research Pass 기준)
-        assert config.max_drawdown == 30.0
-        assert config.max_consecutive_losses == 8
-        assert config.max_volatility == 100.0
+        # 리스크 관리 (Phase 7 기준)
+        assert config.max_drawdown == 25.0
+        assert config.max_consecutive_losses == 6
+        assert config.max_volatility == 80.0
 
-        # 통계적 유의성 (현재 10, Phase 7에서 30으로 상향 예정)
-        assert config.min_trades == 10
+        # 통계적 유의성 (Phase 7: CLT 기준 30)
+        assert config.min_trades == 30
 
-        # 거래 품질 (Research Pass 기준)
-        assert config.min_avg_win_loss_ratio == 1.0
-        assert config.max_avg_holding_hours == 336.0
+        # 거래 품질 (Phase 7 기준)
+        assert config.min_avg_win_loss_ratio == 1.2
+        assert config.max_avg_holding_hours == 240.0
 
     def test_custom_config(self):
         """커스텀 설정값 테스트"""
@@ -132,16 +132,16 @@ class TestMultiCoinBacktest:
         assert backtest.config.min_return == 25.0
 
     def test_get_filter_criteria_default(self):
-        """기본 필터 기준 반환 테스트 - Research Pass 기준"""
+        """기본 필터 기준 반환 테스트 - Phase 7 가중 필터 기준"""
         backtest = MultiCoinBacktest()
         criteria = backtest._get_filter_criteria(None)
 
-        # Research Pass 기준 (느슨한 기준)
-        assert criteria['min_return'] == 8.0
-        assert criteria['min_win_rate'] == 30.0
-        assert criteria['min_sharpe_ratio'] == 0.4
-        assert criteria['max_drawdown'] == 30.0
-        assert criteria['min_trades'] == 10  # 현재 10, Phase 7에서 30으로 상향 예정
+        # Phase 7 가중 필터 기준
+        assert criteria['min_return'] == 9.0
+        assert criteria['min_win_rate'] == 35.0
+        assert criteria['min_sharpe_ratio'] == 0.7
+        assert criteria['max_drawdown'] == 25.0
+        assert criteria['min_trades'] == 30  # CLT 기준
 
     def test_get_filter_criteria_custom(self):
         """커스텀 필터 기준 반환 테스트"""
