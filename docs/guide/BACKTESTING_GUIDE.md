@@ -417,19 +417,152 @@ print(f"Verdict: {report['verdict']}")  # 필터 조정 필요 여부
 
 ---
 
-## 9. 관련 파일
+## 9. ML 기반 필터 최적화
+
+### 9.1 개요
+
+백테스팅 필터의 12개 임계값은 **ML 기반 Bayesian 최적화**를 통해 결정됩니다.
+5년치 히스토리컬 데이터(BTC, ETH, XRP, SOL, DOGE)를 사용하여 가장 높은 수익률을 내는 임계값 조합을 탐색합니다.
+
+**최적화 목표**:
+- 실현 가능한 수익 최대화 (비용 반영)
+- 과적합(overfitting) 방지 (Walk-Forward Validation)
+- 재현 가능한 결과 (메타데이터 저장)
+
+### 9.2 최적화 실행 방법
+
+#### CLI 도구 사용
+
+```bash
+# 빠른 테스트 (각 10회)
+python scripts/run_ml_optimization.py --quick
+
+# 기본 최적화 (Random 30회 + Bayesian 50회)
+python scripts/run_ml_optimization.py
+
+# 전체 최적화 (Random 100회 + Bayesian 200회)
+python scripts/run_ml_optimization.py --full
+
+# 커스텀 설정
+python scripts/run_ml_optimization.py --random-trials 200 --bayesian-trials 300
+```
+
+#### 옵션
+
+| 옵션 | 설명 | 기본값 |
+|------|------|--------|
+| `--quick` | 빠른 테스트 모드 | 각 10회 |
+| `--full` | 전체 최적화 모드 | Random 100회, Bayesian 200회 |
+| `--random-trials N` | Random Search 시도 횟수 | 30 |
+| `--bayesian-trials N` | Bayesian Search 시도 횟수 | 50 |
+| `--data-dir PATH` | 데이터 디렉토리 | data/historical |
+| `--output-dir PATH` | 결과 저장 디렉토리 | data/ml_results |
+
+### 9.3 최적화 프로세스 (3-Stage)
+
+**Stage 1: Random Search** (넓은 탐색)
+- 탐색 공간을 무작위로 샘플링
+- 유망한 영역 발견
+
+**Stage 2: Bayesian Search** (집중 탐색)
+- Stage 1 상위 10% 주변을 Gaussian perturbation으로 탐색
+- 좋은 결과를 warm start로 활용
+
+**Stage 3: Pareto Filter** (다목적 최적화)
+- 수익률, Sharpe ratio, 최대 낙폭 등 다중 목표 균형
+- 현실 가능성 필터링 (거래 수, 슬리피지)
+
+### 9.4 현재 적용된 최적화 결과 (2026-01-13)
+
+**데이터**: BTC 5년 백테스트 (2000일, 2020-07-24 ~ 2026-01-13)
+**방법**: 3-Stage Bayesian-like (700 trials)
+**결과**: 60.15% 수익률 (Sharpe 0.80)
+
+**최적 임계값 (BacktestConfig 적용 완료)**:
+
+| 필터 | 기존 값 | 최적화 값 | 변경 |
+|------|---------|-----------|------|
+| min_return | 9.0 | **5.47** | 더 관대 |
+| min_win_rate | 35.0 | **45.99** | 더 엄격 |
+| min_profit_factor | 1.5 | **1.09** | 더 관대 |
+| min_sharpe_ratio | 0.7 | **0.83** | 더 엄격 |
+| min_sortino_ratio | 0.9 | **1.26** | 더 엄격 |
+| min_calmar_ratio | 0.4 | **0.44** | 약간 엄격 |
+| max_drawdown | 25.0 | **31.47** | 더 관대 |
+| max_consecutive_losses | 6 | **6** | 동일 |
+| max_volatility | 80.0 | **39.85** | 더 엄격 |
+| min_trades | 30 | **41** | 더 엄격 |
+| min_avg_win_loss_ratio | 1.0 | **1.79** | 더 엄격 |
+| max_avg_holding_hours | 240.0 | **221.25** | 약간 엄격 |
+
+**결과 파일**: `data/ml_results/optimization_btc_5y_bayesian_20260113_144339.json`
+
+### 9.5 결과 해석
+
+최적화 결과는 다음 정보를 포함합니다:
+
+```json
+{
+  "timestamp": "2026-01-13T14:43:39",
+  "duration_seconds": 3245.6,
+  "n_random_trials": 200,
+  "n_bayesian_trials": 500,
+  "best_config": {
+    "min_return": 5.47,
+    "min_win_rate": 45.99,
+    ...
+  },
+  "best_score": 60.15,
+  "stage1_best": 60.15,
+  "stage2_best": 59.82,
+  "top_5_configs": [...]
+}
+```
+
+**주요 지표**:
+- `best_score`: 최고 수익률 (%)
+- `stage1_best` / `stage2_best`: 단계별 최고 점수
+- `top_5_configs`: 상위 5개 설정 (A/B 테스트용)
+
+### 9.6 주의사항
+
+#### 과적합(Overfitting) 방지
+
+- ✅ **Walk-Forward Validation 사용** (Purge 7일 + Embargo 3일)
+- ✅ **Hold-out 구간 보존** (최근 3개월은 학습에 미사용)
+- ✅ **코인 간 동시성 누수 차단** (같은 시간 구간 재사용 금지)
+- ✅ **비용 모델 반영** (수수료, 슬리피지, 유동성 페널티)
+
+#### 실거래 검증 필수
+
+- 최적화 결과는 **과거 데이터 기반**이므로 실거래 검증 필요
+- 소액으로 30일 이상 실거래 테스트 후 본격 적용 권장
+- 시장 레짐 변화 시 재최적화 검토 (분기별 또는 반기별)
+
+#### 재최적화 시점
+
+다음 조건 발생 시 재최적화 검토:
+- 실거래 수익률이 백테스트 대비 -20% 이상 하락
+- Sharpe ratio가 0.5 이하로 하락
+- 최대 낙폭이 백테스트 대비 +10%p 이상 증가
+- 시장 레짐 전환 (강세장 → 약세장, 또는 반대)
+
+### 9.7 관련 파일
 
 | 파일 | 설명 |
 |------|------|
-| [src/backtesting/quick_filter.py](../../src/backtesting/quick_filter.py) | 12가지 필터 + 단일 게이트 |
-| [src/backtesting/backtester.py](../../src/backtesting/backtester.py) | 백테스트 엔진 |
-| [src/backtesting/rule_based_strategy.py](../../src/backtesting/rule_based_strategy.py) | 변동성 돌파 전략 |
-| [src/backtesting/expectancy_filter.py](../../src/backtesting/expectancy_filter.py) | 기대값 연동 필터 |
-| [tests/contracts/test_expectancy_filter.py](../../tests/contracts/test_expectancy_filter.py) | 기대값 계약 테스트 |
+| [scripts/run_ml_optimization.py](../../scripts/run_ml_optimization.py) | CLI 최적화 도구 |
+| [src/ml/optimization_runner.py](../../src/ml/optimization_runner.py) | 최적화 실행기 |
+| [src/ml/optimizer.py](../../src/ml/optimizer.py) | 3-Stage Optimizer |
+| [src/ml/search_space.py](../../src/ml/search_space.py) | 탐색 공간 정의 |
+| [src/ml/objective_function.py](../../src/ml/objective_function.py) | 목적 함수 (비용 반영) |
+| [src/ml/walk_forward.py](../../src/ml/walk_forward.py) | Walk-Forward Validator |
+| [src/ml/data_loader.py](../../src/ml/data_loader.py) | Parquet 데이터 로더 |
+| [docs/plans/PLAN_ml-data-collection.md](../plans/PLAN_ml-data-collection.md) | ML 최적화 계획 문서 |
 
 ---
 
-## 10. 레퍼런스
+## 11. 레퍼런스
 
 - [3Commas: AI Trading Bot Performance](https://3commas.io/blog/ai-trading-bot-performance-analysis) - PF > 1.5 = strong
 - [Coin Bureau: Backtest Guide 2025](https://coinbureau.com/guides/how-to-backtest-your-crypto-trading-strategy/) - 50-100 trades 권장
@@ -437,7 +570,7 @@ print(f"Verdict: {report['verdict']}")  # 필터 조정 필요 여부
 
 ---
 
-## 11. 변경 이력
+## 12. 변경 이력
 
 | 날짜 | 변경 내용 |
 |------|----------|
