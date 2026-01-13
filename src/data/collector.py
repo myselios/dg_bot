@@ -94,10 +94,10 @@ class DataCollector:
     def get_orderbook(ticker: str) -> Optional[list]:
         """
         오더북 정보 조회
-        
+
         Args:
             ticker: 거래 종목
-            
+
         Returns:
             오더북 정보 리스트
         """
@@ -105,8 +105,12 @@ class DataCollector:
             orderbook = pyupbit.get_orderbook(ticker)
             Logger.print_orderbook(ticker, orderbook)
             return orderbook
+        except pyupbit.errors.UpbitError as e:
+            # Upbit API 에러 (rate limit, 네트워크 오류 등)
+            Logger.print_error(f"오더북 조회 실패 [{ticker}]: code={e.code}, msg={e.msg}")
+            return None
         except Exception as e:
-            Logger.print_error(f"오더북 조회 실패: {str(e)}")
+            Logger.print_error(f"오더북 조회 실패 [{ticker}]: {type(e).__name__}: {str(e)}")
             return None
     
     @staticmethod

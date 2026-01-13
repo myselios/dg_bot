@@ -23,6 +23,8 @@ from src.position.portfolio_manager import PortfolioManager, TradingMode, Portfo
 # PositionAnalyzer 제거됨 - Clean Architecture 마이그레이션 완료
 # TODO: MANAGEMENT 모드는 ManagePositionUseCase + ValidationPort로 재구현 필요
 from src.utils.logger import Logger
+from src.domain.value_objects.averaging_down import AveragingDownPolicy
+from decimal import Decimal
 
 # TYPE_CHECKING: 타입 힌트만 필요한 레거시 타입들 (런타임에는 사용 안 함)
 if TYPE_CHECKING:
@@ -63,14 +65,15 @@ class HybridRiskCheckStage(BasePipelineStage):
 
     def __init__(
         self,
-        stop_loss_pct: float = -5.0,
-        take_profit_pct: float = 10.0,
+        stop_loss_pct: float = -12.0,
+        take_profit_pct: float = 15.0,
         daily_loss_limit_pct: float = -10.0,
         min_trade_interval_hours: int = 4,
-        max_positions: int = 3,
+        max_positions: int = 2,
         enable_scanning: bool = True,
         fallback_ticker: str = "KRW-ETH",
-        scanner_config: Optional[Dict[str, Any]] = None
+        scanner_config: Optional[Dict[str, Any]] = None,
+        enable_averaging_down: bool = True
     ):
         super().__init__(name="HybridRiskCheck")
 
@@ -85,6 +88,14 @@ class HybridRiskCheckStage(BasePipelineStage):
         self.enable_scanning = enable_scanning
         self.fallback_ticker = fallback_ticker
         self.scanner_config = scanner_config or self.DEFAULT_SCANNER_CONFIG.copy()
+
+        # 분할 매수 설정
+        self.enable_averaging_down = enable_averaging_down
+        self.averaging_down_policy = AveragingDownPolicy.default() if enable_averaging_down else AveragingDownPolicy.disabled()
+
+        # 분할 매수 이력 추적 (메모리 기반)
+        # {ticker: [level_0_executed, level_1_executed, ...]}
+        self._averaging_down_history: Dict[str, List[bool]] = {}
 
         # 내부 컴포넌트 (지연 초기화)
         self._coin_selector = None
@@ -213,42 +224,89 @@ class HybridRiskCheckStage(BasePipelineStage):
         portfolio_status
     ) -> StageResult:
         """
-        MANAGEMENT 모드 처리 (포지션 관리)
+        MANAGEMENT 모드 처리 (포지션 관리 + 분할 매수)
 
-        Phase 3: 규칙 기반 체크 + AI 검증 통합
+        Phase 3 + 분할 매수:
         1. 각 포지션에 대해 손익률 확인
-        2. 손절 조건 (PnL <= stop_loss_pct) → 즉시 매도 (AI 스킵)
-        3. 익절 조건 (PnL >= take_profit_pct) → 즉시 매도 (AI 스킵)
-        4. 중립 → AI 검증 호출 가능 (선택적)
+        2. 손절 조건 (PnL <= stop_loss_pct) → 즉시 매도
+        3. 익절 조건 (PnL >= take_profit_pct) → 즉시 매도
+        4. 분할 매수 조건 (-5%, -10% 도달) → 추가 매수
+        5. 중립 → HOLD
         """
         Logger.print_info(f"📋 포지션 관리 모드: {len(portfolio_status.positions)}개 포지션")
 
         actions_taken = []
         exit_positions = []
+        buy_more_positions = []
+        failed_positions = []
 
+        # 개별 포지션 처리 (실패 격리)
         for portfolio_pos in portfolio_status.positions:
-            pnl_pct = portfolio_pos.profit_rate
-            Logger.print_info(f"  [{portfolio_pos.symbol}] PnL: {pnl_pct:.2f}%")
+            try:
+                pnl_pct = portfolio_pos.profit_rate
+                Logger.print_info(f"  [{portfolio_pos.symbol}] PnL: {pnl_pct:.2f}%")
 
-            # 규칙 기반 체크
-            action_result = self._check_position_rules(
-                portfolio_pos,
-                pnl_pct,
-                context
-            )
+                # 규칙 기반 체크
+                action_result = self._check_position_rules(
+                    portfolio_pos,
+                    pnl_pct,
+                    context
+                )
 
-            actions_taken.append(action_result)
+                actions_taken.append(action_result)
 
-            # 매도 액션이 있으면 실행 대기열에 추가
-            if action_result['action'] in ['sell', 'exit']:
-                exit_positions.append(action_result)
+                # 매도 액션
+                if action_result['action'] in ['sell', 'exit']:
+                    exit_positions.append(action_result)
+                # 추가 매수 액션
+                elif action_result['action'] == 'buy_more':
+                    buy_more_positions.append(action_result)
+
+            except Exception as e:
+                # 개별 포지션 실패 - 다른 포지션 계속 처리
+                Logger.print_error(f"❌ [{portfolio_pos.symbol}] 포지션 처리 실패: {str(e)}")
+                failed_positions.append({
+                    'ticker': portfolio_pos.ticker,
+                    'symbol': portfolio_pos.symbol,
+                    'error': str(e)
+                })
+                continue
+
+        # 추가 매수 실행 (매도보다 먼저)
+        if buy_more_positions:
+            Logger.print_header(f"💰 {len(buy_more_positions)}개 포지션 추가 매수 실행")
+            for buy_action in buy_more_positions:
+                try:
+                    buy_result = self._execute_averaging_down(context, buy_action)
+                    buy_action['execution_result'] = buy_result
+                except Exception as e:
+                    Logger.print_error(f"❌ [{buy_action.get('ticker', 'Unknown')}] 추가 매수 실행 실패: {str(e)}")
+                    buy_action['execution_result'] = {'success': False, 'error': str(e)}
+                    failed_positions.append({
+                        'ticker': buy_action.get('ticker', 'Unknown'),
+                        'action': 'buy_more',
+                        'error': str(e)
+                    })
 
         # 매도 액션 실행
         if exit_positions:
             Logger.print_header(f"🔻 {len(exit_positions)}개 포지션 청산 실행")
             for exit_action in exit_positions:
-                sell_result = self._execute_position_exit(context, exit_action)
-                exit_action['execution_result'] = sell_result
+                try:
+                    sell_result = self._execute_position_exit(context, exit_action)
+                    exit_action['execution_result'] = sell_result
+                except Exception as e:
+                    Logger.print_error(f"❌ [{exit_action.get('ticker', 'Unknown')}] 청산 실행 실패: {str(e)}")
+                    exit_action['execution_result'] = {'success': False, 'error': str(e)}
+                    failed_positions.append({
+                        'ticker': exit_action.get('ticker', 'Unknown'),
+                        'action': 'sell',
+                        'error': str(e)
+                    })
+
+            # 실패 정보 로깅
+            if failed_positions:
+                Logger.print_warning(f"⚠️ {len(failed_positions)}개 포지션 처리 실패")
 
             return StageResult(
                 success=True,
@@ -258,17 +316,46 @@ class HybridRiskCheckStage(BasePipelineStage):
                     'decision': 'sell',
                     'actions': actions_taken,
                     'exit_count': len(exit_positions),
+                    'buy_more_count': len(buy_more_positions),
+                    'failed_count': len(failed_positions),
+                    'failed_positions': failed_positions,
                     'reason': f'{len(exit_positions)}개 포지션 청산 (규칙 기반)'
                 },
-                message=f"{len(exit_positions)}개 포지션 청산 완료"
+                message=f"{len(exit_positions)}개 포지션 청산 완료 (실패: {len(failed_positions)}개)"
+            )
+
+        # 추가 매수만 있거나 모든 포지션 HOLD
+        if buy_more_positions:
+            # 실패 정보 로깅
+            if failed_positions:
+                Logger.print_warning(f"⚠️ {len(failed_positions)}개 포지션 처리 실패")
+
+            return StageResult(
+                success=True,
+                action='continue',
+                data={
+                    'actions': actions_taken,
+                    'buy_more_count': len(buy_more_positions),
+                    'failed_count': len(failed_positions),
+                    'failed_positions': failed_positions
+                },
+                message=f"{len(buy_more_positions)}개 포지션 추가 매수 완료 (실패: {len(failed_positions)}개)"
             )
 
         # 모든 포지션 HOLD
+        # 실패 정보 로깅
+        if failed_positions:
+            Logger.print_warning(f"⚠️ {len(failed_positions)}개 포지션 처리 실패")
+
         return StageResult(
             success=True,
             action='continue',
-            data={'actions': actions_taken},
-            message="포지션 관리 완료 (변동 없음)"
+            data={
+                'actions': actions_taken,
+                'failed_count': len(failed_positions),
+                'failed_positions': failed_positions
+            },
+            message=f"포지션 관리 완료 (변동 없음, 실패: {len(failed_positions)}개)" if failed_positions else "포지션 관리 완료 (변동 없음)"
         )
 
     def _check_position_rules(
@@ -278,18 +365,23 @@ class HybridRiskCheckStage(BasePipelineStage):
         context: PipelineContext
     ) -> Dict[str, Any]:
         """
-        포지션 규칙 기반 체크 (Phase 3)
+        포지션 규칙 기반 체크 (Phase 3 + 분할 매수)
 
-        손절/익절 조건:
-        - 손절: PnL <= stop_loss_pct (기본 -5%)
-        - 익절: PnL >= take_profit_pct (기본 +10%)
+        우선순위:
+        1. 손절: PnL <= stop_loss_pct (기본 -12%)
+        2. 익절: PnL >= take_profit_pct (기본 +15%)
+        3. 분할 매수: -10% 또는 -5% 도달 (활성화 시)
+        4. 중립: HOLD
 
         Returns:
             Dict with 'ticker', 'action', 'reason', 'pnl_pct', 'ai_used'
         """
-        # 손절 조건 체크
+        # 1. 손절 조건 체크 (최우선)
         if pnl_pct <= self.stop_loss_pct:
             Logger.print_warning(f"    ⚠️ 손절 트리거: {pnl_pct:.2f}% <= {self.stop_loss_pct}%")
+            # 손절 시 이력 초기화
+            if position.ticker in self._averaging_down_history:
+                del self._averaging_down_history[position.ticker]
             return {
                 'ticker': position.ticker,
                 'symbol': position.symbol,
@@ -300,9 +392,12 @@ class HybridRiskCheckStage(BasePipelineStage):
                 'trigger': 'stop_loss'
             }
 
-        # 익절 조건 체크
+        # 2. 익절 조건 체크
         if pnl_pct >= self.take_profit_pct:
             Logger.print_success(f"    ✅ 익절 트리거: {pnl_pct:.2f}% >= {self.take_profit_pct}%")
+            # 익절 시 이력 초기화
+            if position.ticker in self._averaging_down_history:
+                del self._averaging_down_history[position.ticker]
             return {
                 'ticker': position.ticker,
                 'symbol': position.symbol,
@@ -313,8 +408,32 @@ class HybridRiskCheckStage(BasePipelineStage):
                 'trigger': 'take_profit'
             }
 
-        # 중립 상태 - AI 검증 옵션 (현재는 HOLD)
-        # TODO: AI 검증 호출 조건 추가 (Phase 3 확장)
+        # 3. 분할 매수 조건 체크 (활성화 시)
+        if self.enable_averaging_down:
+            # 이력 조회 (없으면 빈 리스트)
+            executed_levels = self._averaging_down_history.get(position.ticker, [])
+
+            # 다음 추가 매수 액션 결정
+            next_action = self.averaging_down_policy.get_next_action(
+                current_pnl_pct=Decimal(str(pnl_pct)),
+                executed_levels=executed_levels
+            )
+
+            if next_action:
+                Logger.print_info(f"    💰 분할 매수 트리거: {next_action['description']}")
+                return {
+                    'ticker': position.ticker,
+                    'symbol': position.symbol,
+                    'action': 'buy_more',
+                    'reason': next_action['description'],
+                    'pnl_pct': pnl_pct,
+                    'ai_used': False,
+                    'trigger': 'averaging_down',
+                    'averaging_down_level': next_action['level'],
+                    'averaging_down_ratio': float(next_action['ratio'])
+                }
+
+        # 4. 중립 상태 - HOLD
         Logger.print_info(f"    ⏸️ 중립 상태 유지: {self.stop_loss_pct}% < {pnl_pct:.2f}% < {self.take_profit_pct}%")
         return {
             'ticker': position.ticker,
@@ -357,6 +476,80 @@ class HybridRiskCheckStage(BasePipelineStage):
 
         except Exception as e:
             Logger.print_error(f"  ❌ 매도 실행 오류: {str(e)}")
+            return {'success': False, 'error': str(e)}
+
+    def _execute_averaging_down(
+        self,
+        context: PipelineContext,
+        buy_action: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        분할 매수 (추가 매수) 실행
+
+        Args:
+            context: 파이프라인 컨텍스트
+            buy_action: 추가 매수 액션 정보
+
+        Returns:
+            실행 결과 딕셔너리
+        """
+        ticker = buy_action['ticker']
+        reason = buy_action['reason']
+        ratio = buy_action['averaging_down_ratio']
+        level = buy_action['averaging_down_level']
+
+        try:
+            # 1. 가용 자본 확인
+            upbit_client = context.upbit_client
+            if not upbit_client:
+                Logger.print_warning(f"  ⚠️ upbit_client 없음")
+                return {'success': False, 'error': 'upbit_client not available'}
+
+            krw_balance = upbit_client.get_balance("KRW")
+            if krw_balance is None or krw_balance < 5000:
+                Logger.print_warning(f"  ⚠️ KRW 잔고 부족: {krw_balance:,.0f} KRW")
+                return {'success': False, 'error': f'insufficient_balance: {krw_balance}'}
+
+            # 2. 추가 매수 금액 계산
+            # 가용 자본 × ratio (예: 30% or 20%)
+            buy_amount = krw_balance * ratio
+            buy_amount = max(5000, min(buy_amount, krw_balance - 1000))  # 최소 5000, 여유 1000
+
+            Logger.print_info(f"  💰 {ticker} 추가 매수 실행: {reason}")
+            Logger.print_info(f"     매수 금액: {buy_amount:,.0f} KRW ({ratio*100:.0f}%)")
+
+            # 3. 매수 실행
+            trading_service = context.trading_service
+            if not trading_service:
+                Logger.print_warning(f"  ⚠️ trading_service 없음")
+                return {'success': False, 'error': 'trading_service not available'}
+
+            result = trading_service.execute_buy(ticker, amount=buy_amount)
+
+            # 4. 성공 시 이력 업데이트
+            if ticker not in self._averaging_down_history:
+                # 초기화: 레벨 수만큼 False 리스트
+                self._averaging_down_history[ticker] = [False] * len(self.averaging_down_policy.levels)
+
+            # 해당 레벨 실행 완료 표시
+            if level < len(self._averaging_down_history[ticker]):
+                self._averaging_down_history[ticker][level] = True
+                Logger.print_success(f"  ✅ 분할 매수 완료 - 레벨 {level+1} 실행됨")
+            else:
+                # 레벨 수가 맞지 않으면 확장
+                while len(self._averaging_down_history[ticker]) <= level:
+                    self._averaging_down_history[ticker].append(False)
+                self._averaging_down_history[ticker][level] = True
+
+            return {
+                'success': True,
+                'result': result,
+                'buy_amount': buy_amount,
+                'level': level
+            }
+
+        except Exception as e:
+            Logger.print_error(f"  ❌ 추가 매수 실행 오류: {str(e)}")
             return {'success': False, 'error': str(e)}
 
     def _handle_entry_mode(
@@ -504,7 +697,8 @@ class HybridRiskCheckStage(BasePipelineStage):
                             'passed': getattr(bt, 'passed', False),
                             'filter_results': getattr(bt, 'filter_results', {}),
                             'metrics': getattr(bt, 'metrics', {}),  # 테이블 표시용
-                            'reason': getattr(bt, 'reason', '')
+                            'reason': getattr(bt, 'reason', ''),
+                            'expectancy': getattr(bt, 'expectancy', None),
                         })
 
             # best_bt_result에서 ticker 추출
@@ -608,6 +802,7 @@ class HybridRiskCheckStage(BasePipelineStage):
                         'filter_results': getattr(bt, 'filter_results', {}),
                         'metrics': getattr(bt, 'metrics', {}),
                         'reason': getattr(bt, 'reason', ''),
+                        'expectancy': getattr(bt, 'expectancy', None),
                     })
 
         # 선택된 코인의 백테스팅 메트릭

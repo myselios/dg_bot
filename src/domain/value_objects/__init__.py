@@ -15,6 +15,13 @@ from src.domain.value_objects.prompt_version import (
     PromptVersion,
     PromptType,
 )
+from src.domain.value_objects.position_sizing import PositionSizingPolicy
+from src.domain.value_objects.averaging_down import (
+    AveragingDownPolicy,
+    AveragingDownLevel,
+)
+from src.domain.value_objects.cost_policy import CostPolicy
+from src.domain.value_objects.reproducibility_metadata import ReproducibilityMetadata
 
 __all__ = [
     "Money",
@@ -29,4 +36,9 @@ __all__ = [
     "DecisionConfidence",
     "PromptVersion",
     "PromptType",
+    "PositionSizingPolicy",
+    "AveragingDownPolicy",
+    "AveragingDownLevel",
+    "CostPolicy",
+    "ReproducibilityMetadata",
 ]

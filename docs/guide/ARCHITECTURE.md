@@ -103,8 +103,9 @@ AI 기반 암호화폐 자동매매 시스템으로, **멀티코인 스캐닝 + 
 ├─────────────────────────────┤    ├─────────────────────────────┤
 │                             │    │                             │
 │  1. 유동성 스캔 (10개)      │    │  1. 규칙 기반 체크 (무료)   │
-│     └─ 100억원+ 거래대금    │    │     ├─ 손절 -5%            │
-│     └─ 스테이블코인 제외    │    │     ├─ 익절 +10%           │
+│     └─ 100억원+ 거래대금    │    │     ├─ 손절 -12%           │
+│     └─ 스테이블코인 제외    │    │     ├─ 익절 +15%           │
+│                             │    │     ├─ 분할 매수 (-5%, -10%)│
 │                             │    │     ├─ Fakeout 감지        │
 │  2. 병렬 백테스팅 (5개)     │    │     ├─ 타임아웃 (24h)      │
 │     └─ 12가지 퀀트 필터     │    │     └─ 트레일링 스탑       │
@@ -419,8 +420,9 @@ class CoinScanStage(BasePipelineStage):
 
 - **역할**: 포지션 있을 때 하이브리드 방식 관리
 - **규칙 기반 청산 조건** (무료):
-  - 손절: -5%
-  - 익절: +10%
+  - 손절: -12%
+  - 익절: +15%
+  - 분할 매수: -5% (30%), -10% (20%)
   - Fakeout: 3봉 내 -2%
   - 타임아웃: 24시간 + 수익률 < 2%
   - ADX 약화: < 20 (6시간 이후)
@@ -433,8 +435,8 @@ class CoinScanStage(BasePipelineStage):
 ```python
 class PositionAnalyzer:
     # 규칙 기반 설정
-    DEFAULT_STOP_LOSS_PCT = -5.0
-    DEFAULT_TAKE_PROFIT_PCT = 10.0
+    DEFAULT_STOP_LOSS_PCT = -12.0
+    DEFAULT_TAKE_PROFIT_PCT = 15.0
     FAKEOUT_THRESHOLD_PCT = -2.0
     FAKEOUT_MAX_CANDLES = 3
     TIMEOUT_HOURS = 24
@@ -445,19 +447,19 @@ class PositionAnalyzer:
 
 - **역할**: 멀티코인 포트폴리오 레벨 관리
 - **설정**:
-  - 최대 3개 코인 동시 보유
-  - 코인당 최대 자본 40%
-  - 예비 자금 10%
+  - 최대 2개 코인 동시 보유
+  - 코인당 최대 자본 50%
+  - 예비 자금 5%
   - 일일 손실 한도 -10%
   - 주간 손실 한도 -15%
 - **거래 모드**: ENTRY / MANAGEMENT / BLOCKED
 
 ```python
 class PortfolioManager:
-    MAX_POSITIONS = 3
-    MAX_ALLOCATION_PER_COIN = 0.4  # 40%
+    MAX_POSITIONS = 2
+    MAX_ALLOCATION_PER_COIN = 0.5  # 50%
     MIN_POSITION_VALUE = 10000     # 1만원
-    RESERVE_RATIO = 0.1            # 10%
+    RESERVE_RATIO = 0.05           # 5%
     PORTFOLIO_DAILY_LOSS_LIMIT = -0.10
     PORTFOLIO_WEEKLY_LOSS_LIMIT = -0.15
 ```
@@ -882,8 +884,9 @@ trading_result = filter.evaluate_trading_pass(metrics)  # Expectancy 포함
 [PositionAnalyzer 실행]
     ↓
 [규칙 기반 체크 (무료)]
-  - 손절 체크: 수익률 <= -5%
-  - 익절 체크: 수익률 >= +10%
+  - 손절 체크: 수익률 <= -12%
+  - 분할 매수: -5% (30%), -10% (20%)
+  - 익절 체크: 수익률 >= +15%
   - Fakeout 체크: 3봉 내 -2%
   - 타임아웃 체크: 24시간 + 수익률 < 2%
   - ADX 약화 체크: < 20 (6시간 이후)

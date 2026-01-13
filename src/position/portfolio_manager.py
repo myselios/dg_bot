@@ -96,10 +96,10 @@ class PortfolioManager:
     """
 
     # 포트폴리오 설정
-    MAX_POSITIONS = 3  # 최대 동시 보유 코인 수
-    MAX_ALLOCATION_PER_COIN = 0.4  # 코인당 최대 자본 비율 (40%)
+    MAX_POSITIONS = 2  # 최대 동시 보유 코인 수
+    MAX_ALLOCATION_PER_COIN = 0.5  # 코인당 최대 자본 비율 (50%)
     MIN_POSITION_VALUE = 10000  # 최소 포지션 가치 (1만원)
-    RESERVE_RATIO = 0.1  # 예비 자금 비율 (10%)
+    RESERVE_RATIO = 0.05  # 예비 자금 비율 (5%)
 
     # 포트폴리오 레벨 리스크
     PORTFOLIO_DAILY_LOSS_LIMIT = -0.10  # 일일 손실 한도 (-10%)
@@ -172,6 +172,13 @@ class PortfolioManager:
 
             current_price = self.exchange.get_current_price(ticker)
             if current_price is None or current_price <= 0:
+                continue
+
+            # 투자 금액 (매수 원금)
+            total_cost = amount * avg_buy_price
+
+            # 최소 투자 금액 미만은 무시 (먼지 잔고, 에어드랍 등 필터링)
+            if total_cost < self.MIN_POSITION_VALUE:
                 continue
 
             position_value = amount * current_price

@@ -144,27 +144,27 @@ class BacktestConfig:
     commission: float = 0.0005
     slippage: float = 0.0001
 
-    # 수익성 지표
-    min_return: float = 9.0
-    min_win_rate: float = 35.0
-    min_profit_factor: float = 1.5
+    # 수익성 지표 (ML 최적화 결과 적용: BTC 5년 백테스트, 700 trials Bayesian)
+    min_return: float = 5.47
+    min_win_rate: float = 45.99
+    min_profit_factor: float = 1.09
 
-    # 위험조정 수익률
-    min_sharpe_ratio: float = 0.7
-    min_sortino_ratio: float = 0.9
-    min_calmar_ratio: float = 0.4
+    # 위험조정 수익률 (ML 최적화 결과 적용)
+    min_sharpe_ratio: float = 0.83
+    min_sortino_ratio: float = 1.26
+    min_calmar_ratio: float = 0.44
 
-    # 리스크 관리
-    max_drawdown: float = 25.0
+    # 리스크 관리 (ML 최적화 결과 적용)
+    max_drawdown: float = 31.47
     max_consecutive_losses: int = 6
-    max_volatility: float = 80.0
+    max_volatility: float = 39.85
 
-    # 통계적 유의성 (Phase 7: 10 → 30, Central Limit Theorem 기반)
-    min_trades: int = 30
+    # 통계적 유의성 (ML 최적화 결과 적용)
+    min_trades: int = 41
 
-    # 거래 품질
-    min_avg_win_loss_ratio: float = 1.0
-    max_avg_holding_hours: float = 240.0
+    # 거래 품질 (ML 최적화 결과 적용)
+    min_avg_win_loss_ratio: float = 1.79
+    max_avg_holding_hours: float = 221.25
 
     # Phase 7: 가중치 기반 평가 활성화 (기본값 True로 변경)
     use_weighted_evaluation: bool = True

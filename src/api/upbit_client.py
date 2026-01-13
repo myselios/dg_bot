@@ -2,11 +2,12 @@
 Upbit API 클라이언트 래퍼
 """
 import pyupbit
+import time
 from typing import Optional, Dict, Any, List
 from ..config.settings import APIConfig
 from .interfaces import IExchangeClient
 from ..exceptions import (
-    APIError, AuthenticationError, RateLimitError, 
+    APIError, AuthenticationError, RateLimitError,
     OrderExecutionError, DataCollectionError
 )
 
@@ -47,12 +48,63 @@ class UpbitClient(IExchangeClient):
                 raise RateLimitError("Upbit", retry_after=getattr(e, 'retry_after', None))
             return 0.0
     
-    def get_current_price(self, ticker: str) -> Optional[float]:
-        """현재가 조회"""
+    def get_current_price(self, ticker: str, max_retries: int = 3) -> Optional[float]:
+        """
+        현재가 조회 (재시도 로직 포함)
+
+        Args:
+            ticker: 조회할 티커 (예: "KRW-BTC")
+            max_retries: 최대 재시도 횟수 (기본 3회)
+
+        Returns:
+            현재가 또는 None (모든 재시도 실패 시)
+
+        Raises:
+            DataCollectionError: 모든 재시도 실패 후
+        """
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                price = pyupbit.get_current_price(ticker)
+
+                # 유효성 검증: 0 또는 None은 실패로 간주
+                if price is None or price <= 0:
+                    raise ValueError(f"Invalid price: {price}")
+
+                return price
+
+            except Exception as e:
+                last_error = e
+
+                # 마지막 시도가 아니면 재시도
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1초, 2초, 4초
+                    time.sleep(wait_time)
+                    continue
+
+        # 모든 재시도 실패
+        raise DataCollectionError(
+            "Upbit API",
+            f"현재가 조회 실패 (재시도 {max_retries}회): {str(last_error)}"
+        )
+
+    def get_orderbook(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """호가창 조회"""
         try:
-            return pyupbit.get_current_price(ticker)
+            orderbooks = pyupbit.get_orderbook(ticker)
+            # 다양한 응답 형식 처리
+            if orderbooks is None:
+                return {"orderbook_units": [], "total_ask_size": 0, "total_bid_size": 0}
+            if isinstance(orderbooks, list) and len(orderbooks) > 0:
+                return orderbooks[0]
+            if isinstance(orderbooks, dict):
+                return orderbooks
+            # 빈 응답 처리
+            return {"orderbook_units": [], "total_ask_size": 0, "total_bid_size": 0}
         except Exception as e:
-            raise DataCollectionError("Upbit API", f"현재가 조회 실패: {str(e)}")
+            # 에러 시에도 빈 호가창 반환 (전체 파이프라인 중단 방지)
+            return {"orderbook_units": [], "total_ask_size": 0, "total_bid_size": 0}
     
     def buy_market_order(self, ticker: str, amount: float) -> Optional[Dict[str, Any]]:
         """시장가 매수 주문"""

@@ -1,0 +1,211 @@
+{
+  "timestamp": "2026-01-13T14:43:39.369824",
+  "optimization_method": "3-Stage Bayesian-like (700 trials)",
+  "stages": {
+    "stage1_random": 200,
+    "stage2_local": 300,
+    "stage3_finetuning": 200
+  },
+  "best_result": {
+    "total_return": 60.14506519357219,
+    "sharpe": 0.8036393720287521,
+    "trial": 1,
+    "stage": 1
+  },
+  "best_config": {
+    "min_return": 5.4685390684379325,
+    "min_win_rate": 45.99370997901753,
+    "min_profit_factor": 1.0932503293339773,
+    "min_sharpe_ratio": 0.8300914944749953,
+    "min_sortino_ratio": 1.2564478016567875,
+    "min_calmar_ratio": 0.44230002912294125,
+    "max_drawdown": 31.474096388025764,
+    "max_consecutive_losses": 6,
+    "max_volatility": 39.854408047308674,
+    "min_trades": 41,
+    "min_avg_win_loss_ratio": 1.7934849525860934,
+    "max_avg_holding_hours": 221.25186222439442
+  },
+  "top_10_results": [
+    {
+      "trial": 1,
+      "return": 60.14506519357219,
+      "config": {
+        "min_return": 5.4685390684379325,
+        "min_win_rate": 45.99370997901753,
+        "min_profit_factor": 1.0932503293339773,
+        "min_sharpe_ratio": 0.8300914944749953,
+        "min_sortino_ratio": 1.2564478016567875,
+        "min_calmar_ratio": 0.44230002912294125,
+        "max_drawdown": 31.474096388025764,
+        "max_consecutive_losses": 6,
+        "max_volatility": 39.854408047308674,
+        "min_trades": 41,
+        "min_avg_win_loss_ratio": 1.7934849525860934,
+        "max_avg_holding_hours": 221.25186222439442
+      }
+    },
+    {
+      "trial": 2,
+      "return": 60.14506519357219,
+      "config": {
+        "min_return": 4.055020255318784,
+        "min_win_rate": 38.06759348552224,
+        "min_profit_factor": 1.5932169203322704,
+        "min_sharpe_ratio": 0.7899246259161428,
+        "min_sortino_ratio": 0.7685558224276003,
+        "min_calmar_ratio": 0.35904400905301737,
+        "max_drawdown": 25.873158384139444,
+        "max_consecutive_losses": 4,
+        "max_volatility": 70.72464617392225,
+        "min_trades": 48,
+        "min_avg_win_loss_ratio": 1.8192652940429874,
+        "max_avg_holding_hours": 175.38012260206125
+      }
+    },
+    {
+      "trial": 3,
+      "return": 60.14506519357219,
+      "config": {
+        "min_return": 14.826110140647256,
+        "min_win_rate": 38.6715359841169,
+        "min_profit_factor": 1.728092377015914,
+        "min_sharpe_ratio": 0.8275516119693123,
+        "min_sortino_ratio": 0.8240526944978168,
+        "min_calmar_ratio": 0.8319059001856435,
+        "max_drawdown": 26.613988928701097,
+        "max_consecutive_losses": 8,
+        "max_volatility": 54.18531758168316,
+        "min_trades": 16,
+        "min_avg_win_loss_ratio": 1.5458016906387106,
+        "max_avg_holding_hours": 285.6914340831506
+      }
+    },
+    {
+      "trial": 4,
+      "return": 60.14506519357219,
+      "config": {
+        "min_return": 11.371862649047115,
+        "min_win_rate": 40.566349127723285,
+        "min_profit_factor": 1.7875899513001239,
+        "min_sharpe_ratio": 0.8459657422440454,
+        "min_sortino_ratio": 1.4603421753207446,
+        "min_calmar_ratio": 0.8663822977423001,
+        "max_drawdown": 32.779348706139025,
+        "max_consecutive_losses": 6,
+        "max_volatility": 62.61746955366631,
+        "min_trades": 14,
+        "min_avg_win_loss_ratio": 0.5046195897301765,
+        "max_avg_holding_hours": 474.4317054841659
+      }
+    },
+    {
+      "trial": 5,
+      "return": 60.14506519357219,
+      "config": {
+        "min_return": 8.856051111229316,
+        "min_win_rate": 33.35749260924944,
+        "min_profit_factor": 1.9785756051369567,
+        "min_sharpe_ratio": 0.8070771453177907,
+        "min_sortino_ratio": 0.3220446940311869,
+        "min_calmar_ratio": 0.5375048683933545,
+        "max_drawdown": 19.26415693005157,
+        "max_consecutive_losses": 8,
+        "max_volatility": 79.06862268589252,
+        "min_trades": 36,
+        "min_avg_win_loss_ratio": 1.2025428671752831,
+        "max_avg_holding_hours": 146.27889744432596
+      }
+    },
+    {
+      "trial": 6,
+      "return": 60.14506519357219,
+      "config": {
+        "min_return": 9.746111819115352,
+        "min_win_rate": 42.70463924736207,
+        "min_profit_factor": 2.459596533328474,
+        "min_sharpe_ratio": 1.0597036919803982,
+        "min_sortino_ratio": 0.48467164749479374,
+        "min_calmar_ratio": 0.46071858180912967,
+        "max_drawdown": 35.64208946768723,
+        "max_consecutive_losses": 7,
+        "max_volatility": 48.85879908397965,
+        "min_trades": 28,
+        "min_avg_win_loss_ratio": 1.620239305894957,
+        "max_avg_holding_hours": 239.7037682085494
+      }
+    },
+    {
+      "trial": 7,
+      "return": 60.14506519357219,
+      "config": {
+        "min_return": 3.1118726245528845,
+        "min_win_rate": 40.79162988477829,
+        "min_profit_factor": 1.837838900140516,
+        "min_sharpe_ratio": 1.3868407540740615,
+        "min_sortino_ratio": 0.3984089177154396,
+        "min_calmar_ratio": 0.23012487043900764,
+        "max_drawdown": 23.2377771322126,
+        "max_consecutive_losses": 3,
+        "max_volatility": 70.50409254974542,
+        "min_trades": 35,
+        "min_avg_win_loss_ratio": 1.752874928584149,
+        "max_avg_holding_hours": 379.73254348004986
+      }
+    },
+    {
+      "trial": 8,
+      "return": 60.14506519357219,
+      "config": {
+        "min_return": 6.342729993621961,
+        "min_win_rate": 42.23699878994579,
+        "min_profit_factor": 1.9130920956201352,
+        "min_sharpe_ratio": 1.4056267014184505,
+        "min_sortino_ratio": 0.3310561084065688,
+        "min_calmar_ratio": 0.6928554463890741,
+        "max_drawdown": 37.665839259201086,
+        "max_consecutive_losses": 4,
+        "max_volatility": 98.96538235106253,
+        "min_trades": 14,
+        "min_avg_win_loss_ratio": 1.1179966473752252,
+        "max_avg_holding_hours": 155.773728163039
+      }
+    },
+    {
+      "trial": 9,
+      "return": 60.14506519357219,
+      "config": {
+        "min_return": 11.548175549449297,
+        "min_win_rate": 29.8898181055511,
+        "min_profit_factor": 1.7130461301133502,
+        "min_sharpe_ratio": 0.777021252178024,
+        "min_sortino_ratio": 0.8882224715645939,
+        "min_calmar_ratio": 0.513445423308705,
+        "max_drawdown": 25.32769635039386,
+        "max_consecutive_losses": 9,
+        "max_volatility": 40.34272471503241,
+        "min_trades": 40,
+        "min_avg_win_loss_ratio": 1.5689612053216029,
+        "max_avg_holding_hours": 395.13733665056236
+      }
+    },
+    {
+      "trial": 10,
+      "return": 60.14506519357219,
+      "config": {
+        "min_return": 12.792029321218783,
+        "min_win_rate": 28.506860452874335,
+        "min_profit_factor": 2.1498496480773843,
+        "min_sharpe_ratio": 0.36499500585073563,
+        "min_sortino_ratio": 1.4205054369819503,
+        "min_calmar_ratio": 0.9624008964890682,
+        "max_drawdown": 34.29213730363668,
+        "max_consecutive_losses": 8,
+        "max_volatility": 80.65713873782721,
+        "min_trades": 35,
+        "min_avg_win_loss_ratio": 0.8715084764859304,
+        "max_avg_holding_hours": 483.622207561244
+      }
+    }
+  ]
+}

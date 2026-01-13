@@ -12,6 +12,7 @@ from src.application.use_cases.analyze_breakout import (
     BreakoutAnalysisRequest,
     BreakoutAnalysisResult,
 )
+from src.application.use_cases.calculate_entry_amount import CalculateEntryAmountUseCase
 
 __all__ = [
     "ExecuteTradeUseCase",
@@ -20,4 +21,5 @@ __all__ = [
     "AnalyzeBreakoutUseCase",
     "BreakoutAnalysisRequest",
     "BreakoutAnalysisResult",
+    "CalculateEntryAmountUseCase",
 ]

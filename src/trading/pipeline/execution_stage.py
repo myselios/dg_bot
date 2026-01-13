@@ -118,24 +118,34 @@ class ExecutionStage(BasePipelineStage):
             context.risk_manager.daily_trade_count += 1
 
     async def _execute_buy_with_use_case(self, context: PipelineContext) -> None:
-        """UseCase를 통한 매수 실행"""
+        """
+        UseCase를 통한 매수 실행
+
+        Clean Architecture 적용:
+        - CalculateEntryAmountUseCase로 진입 금액 계산
+        - PositionSizingPolicy 기반 자본 배분
+        - ExecuteTradeUseCase로 주문 실행
+        """
         from src.domain.value_objects.money import Money, Currency
 
-        use_case = context.container.get_execute_trade_use_case()
+        # 1. 진입 금액 계산 (CalculateEntryAmountUseCase)
+        calc_use_case = context.container.get_calculate_entry_amount_use_case()
+        entry_amount = await calc_use_case.execute(context.ticker)
 
-        # Port를 통해 잔고 조회
-        exchange_port = context.get_exchange_port()
-        krw_balance_info = await exchange_port.get_balance("KRW")
-        krw_balance = float(krw_balance_info.available.amount)
+        # 진입 불가 시 (금액 0) 매수 스킵
+        if not entry_amount.is_positive():
+            Logger.print_warning(f"진입 가능 금액 없음 - 매수 스킵")
+            context.trade_result = {
+                'success': False,
+                'error': '진입 가능 금액 없음 (포지션 제한 또는 잔고 부족)',
+            }
+            return
 
-        # 매수 금액 결정 (설정값 또는 보유 현금의 일부)
-        buy_amount = self._calculate_buy_amount(krw_balance)
+        Logger.print_info(f"📊 계산된 진입 금액: {entry_amount}")
 
-        # Money 객체로 변환
-        amount = Money(Decimal(str(buy_amount)), Currency.KRW)
-
-        # UseCase 실행
-        response = await use_case.execute_buy(context.ticker, amount)
+        # 2. 거래 실행 (ExecuteTradeUseCase)
+        trade_use_case = context.container.get_execute_trade_use_case()
+        response = await trade_use_case.execute_buy(context.ticker, entry_amount)
 
         # OrderResponse를 레거시 dict 형식으로 변환
         context.trade_result = self._convert_order_response_to_dict(response)
@@ -148,7 +158,29 @@ class ExecutionStage(BasePipelineStage):
             context.trade_result = trading_service.execute_buy(context.ticker)
 
     def _calculate_buy_amount(self, krw_balance: float) -> float:
-        """매수 금액 계산"""
+        """
+        매수 금액 계산 (레거시 fallback)
+
+        ⚠️ DEPRECATED: CalculateEntryAmountUseCase 사용 권장
+
+        이 메서드는 레거시 호환성을 위해 유지됩니다.
+        Container가 있으면 _execute_buy_with_use_case()에서
+        CalculateEntryAmountUseCase를 사용합니다.
+
+        Args:
+            krw_balance: 현재 KRW 잔고
+
+        Returns:
+            매수 금액 (float)
+        """
+        import warnings
+        warnings.warn(
+            "_calculate_buy_amount is deprecated. "
+            "Use CalculateEntryAmountUseCase instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         # TradingConfig에서 매수 비율 또는 고정 금액 사용
         buy_ratio = getattr(TradingConfig, 'BUY_RATIO', 0.95)
         min_order = getattr(TradingConfig, 'MIN_ORDER_AMOUNT', 5000)

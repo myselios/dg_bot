@@ -37,6 +37,68 @@
 
 ---
 
+## 0.5) 작업 방식 규칙 (Planning with Files - 자동 적용)
+
+**⚠️ 복잡한 작업 시 항상 Manus 스타일 파일 기반 계획을 사용**
+
+다음 조건에 해당하면 **자동으로** planning-with-files 패턴을 적용한다:
+
+1. **3단계 이상의 멀티스텝 작업**
+2. **새로운 기능 구현**
+3. **리팩토링 또는 마이그레이션**
+4. **연구/조사 작업**
+5. **버그 수정 (원인 파악이 필요한 경우)**
+
+### 필수 파일 패턴 (3-File Pattern)
+
+| 파일 | 목적 | 업데이트 시점 |
+|------|------|--------------|
+| `task_plan.md` | 페이즈와 진행 상황 추적 | 각 페이즈 완료 후 |
+| `notes.md` | 연구 결과, 발견 사항 저장 | 조사 중 |
+| `[deliverable].md` | 최종 산출물 | 완료 시 |
+
+### 핵심 규칙
+
+1. **계획 먼저**: 복잡한 작업 시작 전 `task_plan.md` 생성 (협상 불가)
+2. **읽고 결정**: 중요한 결정 전 plan 파일 읽기 (목표 refresh)
+3. **즉시 업데이트**: 페이즈 완료 후 즉시 체크박스 업데이트
+4. **오류 기록**: 오류는 숨기지 말고 "Errors Encountered" 섹션에 기록
+5. **파일에 저장**: 큰 출력은 context에 넣지 말고 파일에 저장
+
+### task_plan.md 템플릿
+
+```markdown
+# Task Plan: [작업 설명]
+
+## Goal
+[한 문장으로 최종 상태 정의]
+
+## Phases
+- [ ] Phase 1: 계획 및 설정
+- [ ] Phase 2: 조사/정보 수집
+- [ ] Phase 3: 실행/구현
+- [ ] Phase 4: 검토 및 전달
+
+## Key Questions
+1. [답해야 할 질문]
+
+## Decisions Made
+- [결정]: [근거]
+
+## Errors Encountered
+- [오류]: [해결 방법]
+
+## Status
+**Currently in Phase X** - [현재 하고 있는 것]
+```
+
+### 참조
+- `.claude/skills/planning-with-files/SKILL.md`
+- `.claude/skills/planning-with-files/reference.md`
+- `.claude/skills/planning-with-files/examples.md`
+
+---
+
 ## 1) Non-Negotiables (실거래 안전 규칙)
 
 1. **주문(매수/매도) 경로는 반드시 BOTH 적용**

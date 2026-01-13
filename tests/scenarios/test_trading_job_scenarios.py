@@ -105,14 +105,12 @@ class TestTradingJobScenarios:
         """Telegram 알림 Mock"""
         with patch('backend.app.services.notification.notify_cycle_start', new_callable=AsyncMock) as mock_start, \
              patch('backend.app.services.notification.notify_scan_result', new_callable=AsyncMock) as mock_scan, \
-             patch('backend.app.services.notification.notify_ai_decision', new_callable=AsyncMock) as mock_ai, \
-             patch('backend.app.services.notification.notify_portfolio_status', new_callable=AsyncMock) as mock_portfolio, \
+             patch('backend.app.services.notification.notify_trading_cycle_complete', new_callable=AsyncMock) as mock_complete, \
              patch('backend.app.services.notification.notify_error', new_callable=AsyncMock) as mock_error:
             yield {
                 'cycle_start': mock_start,
                 'scan_result': mock_scan,
-                'ai_decision': mock_ai,
-                'portfolio_status': mock_portfolio,
+                'trading_cycle_complete': mock_complete,
                 'error': mock_error
             }
 
@@ -147,6 +145,18 @@ class TestTradingJobScenarios:
             mock.return_value = mock_generator()
             yield mock
 
+    @pytest.fixture
+    def mock_upbit_client_success(self):
+        """UpbitClient 성공 Mock (포트폴리오 조회용)"""
+        mock_client = Mock()
+        # 잔고 반환 (포트폴리오 조회 시 사용)
+        mock_client.get_balances.return_value = [
+            {'currency': 'KRW', 'balance': '1000000', 'avg_buy_price': '0'},
+            {'currency': 'BTC', 'balance': '0.001', 'avg_buy_price': '50000000'},
+        ]
+        mock_client.get_current_price.return_value = 51000000
+        return mock_client
+
     async def test_trading_job_success_flow(
         self,
         mock_container,
@@ -154,7 +164,8 @@ class TestTradingJobScenarios:
         mock_orchestrator_success,
         mock_telegram,
         mock_metrics,
-        mock_db
+        mock_db,
+        mock_upbit_client_success
     ):
         """
         시나리오: trading_job 정상 실행 (Happy Path)
@@ -168,10 +179,9 @@ class TestTradingJobScenarios:
             4. 거래 사이클 실행
             5. AI 판단 메트릭 기록
             6. 거래 내역 DB 저장
-            7. AI 의사결정 알림 전송
-            8. 포트폴리오 알림 전송
-            9. 성공 메트릭 기록
-            10. Lock 해제
+            7. 트레이딩 사이클 완료 알림 전송
+            8. 성공 메트릭 기록
+            9. Lock 해제
         """
         from backend.app.core.scheduler import trading_job
 
@@ -180,7 +190,7 @@ class TestTradingJobScenarios:
         mock_container.get_trading_orchestrator.return_value = mock_orchestrator_success
 
         with patch('backend.app.core.scheduler.get_container', return_value=mock_container), \
-             patch('backend.app.core.scheduler.get_upbit_client', return_value=Mock()), \
+             patch('backend.app.core.scheduler.get_upbit_client', return_value=mock_upbit_client_success), \
              patch('backend.app.core.scheduler.get_data_collector', return_value=Mock()):
 
             # When: trading_job 실행
@@ -205,16 +215,13 @@ class TestTradingJobScenarios:
             # 6. 거래 내역 메트릭 기록 (buy/sell인 경우)
             mock_metrics['trade'].assert_called_once()
 
-            # 7. AI 의사결정 알림
-            mock_telegram['ai_decision'].assert_called_once()
+            # 7. 트레이딩 사이클 완료 알림 (AI 결정 + 포트폴리오 통합)
+            mock_telegram['trading_cycle_complete'].assert_called_once()
 
-            # 8. 포트폴리오 알림
-            mock_telegram['portfolio_status'].assert_called_once()
-
-            # 9. 성공 메트릭
+            # 8. 성공 메트릭
             mock_metrics['success'].labels.return_value.inc.assert_called()
 
-            # 10. Lock 해제
+            # 9. Lock 해제
             mock_lock_port_success.release.assert_called_once_with("trading_cycle")
 
     async def test_trading_job_lock_acquisition_failure(
@@ -299,8 +306,7 @@ class TestTradingJobScenarios:
             mock_metrics['success'].labels.return_value.inc.assert_called()
 
             # 4. 알림 전송 안 됨 (스킵이므로)
-            mock_telegram['ai_decision'].assert_not_called()
-            mock_telegram['portfolio_status'].assert_not_called()
+            mock_telegram['trading_cycle_complete'].assert_not_called()
 
             # 5. Lock 해제
             mock_lock_port_success.release.assert_called_once()
@@ -420,7 +426,8 @@ class TestTradingJobScenarios:
         mock_orchestrator_success,
         mock_telegram,
         mock_metrics,
-        mock_db
+        mock_db,
+        mock_upbit_client_success
     ):
         """
         시나리오: Telegram 알림 순서 검증
@@ -430,8 +437,7 @@ class TestTradingJobScenarios:
         Then: Telegram 알림이 올바른 순서로 전송됨
             1. 사이클 시작 알림
             2. 스캔 결과 알림 (백테스팅 콜백)
-            3. AI 의사결정 알림
-            4. 포트폴리오 알림
+            3. 트레이딩 사이클 완료 알림
         """
         from backend.app.core.scheduler import trading_job
 
@@ -440,7 +446,7 @@ class TestTradingJobScenarios:
         mock_container.get_trading_orchestrator.return_value = mock_orchestrator_success
 
         with patch('backend.app.core.scheduler.get_container', return_value=mock_container), \
-             patch('backend.app.core.scheduler.get_upbit_client', return_value=Mock()), \
+             patch('backend.app.core.scheduler.get_upbit_client', return_value=mock_upbit_client_success), \
              patch('backend.app.core.scheduler.get_data_collector', return_value=Mock()):
 
             # When: trading_job 실행
@@ -453,12 +459,9 @@ class TestTradingJobScenarios:
                 call_order.append('cycle_start')
             if mock_telegram['scan_result'].called:
                 call_order.append('scan_result')
-            if mock_telegram['ai_decision'].called:
-                call_order.append('ai_decision')
-            if mock_telegram['portfolio_status'].called:
-                call_order.append('portfolio_status')
+            if mock_telegram['trading_cycle_complete'].called:
+                call_order.append('trading_cycle_complete')
 
-            # 최소한 cycle_start, ai_decision, portfolio_status는 호출되어야 함
+            # 최소한 cycle_start, trading_cycle_complete는 호출되어야 함
             assert 'cycle_start' in call_order
-            assert 'ai_decision' in call_order
-            assert 'portfolio_status' in call_order
+            assert 'trading_cycle_complete' in call_order

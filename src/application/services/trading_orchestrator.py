@@ -86,10 +86,10 @@ class TradingOrchestrator:
         ticker: str = "KRW-BTC",
         trading_type: str = 'spot',
         enable_scanning: bool = True,
-        max_positions: int = 3,
+        max_positions: int = 2,
         # 리스크 관리 파라미터
-        stop_loss_pct: float = -5.0,
-        take_profit_pct: float = 10.0,
+        stop_loss_pct: float = -12.0,
+        take_profit_pct: float = 15.0,
         daily_loss_limit_pct: float = -10.0,
         min_trade_interval_hours: int = 4,
         # 스캐너 파라미터
@@ -111,9 +111,9 @@ class TradingOrchestrator:
             ticker: 거래 종목 (스캔 활성화 시 fallback 티커로 사용)
             trading_type: 거래 타입 ('spot' 또는 'futures')
             enable_scanning: 멀티코인 스캐닝 활성화 여부 (기본 True)
-            max_positions: 최대 동시 포지션 수 (기본 3)
-            stop_loss_pct: 손절 비율 (기본 -5%)
-            take_profit_pct: 익절 비율 (기본 +10%)
+            max_positions: 최대 동시 포지션 수 (기본 2)
+            stop_loss_pct: 손절 비율 (기본 -12%)
+            take_profit_pct: 익절 비율 (기본 +15%)
             daily_loss_limit_pct: 일일 최대 손실 비율 (기본 -10%)
             min_trade_interval_hours: 최소 거래 간격 (기본 4시간)
             liquidity_top_n: 유동성 스캔 상위 N개 (기본 10)
@@ -251,9 +251,9 @@ class TradingOrchestrator:
     async def execute_position_management(
         self,
         # 리스크 관리 파라미터
-        stop_loss_pct: float = -5.0,
-        take_profit_pct: float = 10.0,
-        max_positions: int = 3
+        stop_loss_pct: float = -12.0,
+        take_profit_pct: float = 15.0,
+        max_positions: int = 2
     ) -> Dict[str, Any]:
         """
         포지션 관리 전용 사이클 실행 (15분 주기용)
@@ -262,9 +262,9 @@ class TradingOrchestrator:
         포지션이 없으면 즉시 종료합니다 (진입 로직 없음).
 
         Args:
-            stop_loss_pct: 손절 비율 (기본 -5%)
-            take_profit_pct: 익절 비율 (기본 +10%)
-            max_positions: 최대 동시 포지션 수 (기본 3)
+            stop_loss_pct: 손절 비율 (기본 -12%)
+            take_profit_pct: 익절 비율 (기본 +15%)
+            max_positions: 최대 동시 포지션 수 (기본 2)
 
         Returns:
             {

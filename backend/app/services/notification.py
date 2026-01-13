@@ -120,18 +120,23 @@ class TelegramNotifier:
         ]
 
         rows = []
+        # metrics가 빈 딕셔너리인지 확인 (빈 경우 실제값은 N/A로 표시)
+        has_metrics = bool(metrics)
+
         for tier, key, name, direction, threshold, unit, metric_key, weight in filter_defs:
-            # 실제값 추출
-            if key == 'avg_win_loss_ratio':
-                avg_win = metrics.get('avg_win', 0)
-                avg_loss = abs(metrics.get('avg_loss', 1))
-                actual = avg_win / avg_loss if avg_loss > 0 else 0
-            elif key == 'max_drawdown':
-                actual = abs(metrics.get(metric_key, 0)) if metric_key else 0
-            elif metric_key:
-                actual = metrics.get(metric_key, 0)
-            else:
-                actual = 0
+            # 실제값 추출 (metrics가 없으면 None)
+            actual = None
+            if has_metrics:
+                if key == 'avg_win_loss_ratio':
+                    avg_win = metrics.get('avg_win', 0)
+                    avg_loss = abs(metrics.get('avg_loss', 1))
+                    actual = avg_win / avg_loss if avg_loss > 0 else 0
+                elif key == 'max_drawdown':
+                    actual = abs(metrics.get(metric_key, 0)) if metric_key else 0
+                elif metric_key:
+                    actual = metrics.get(metric_key, 0)
+                else:
+                    actual = 0
 
             # 통과 여부
             passed = filter_results.get(key, False)
@@ -143,8 +148,10 @@ class TelegramNotifier:
             else:
                 threshold_str = f"{op}{int(threshold)}{unit}"
 
-            # 실제값 포맷팅
-            if isinstance(actual, float) and actual != 0:
+            # 실제값 포맷팅 (None이면 N/A)
+            if actual is None:
+                actual_str = "N/A"
+            elif isinstance(actual, float) and actual != 0:
                 actual_str = f"{actual:.1f}{unit}"
             else:
                 actual_str = f"{int(actual) if isinstance(actual, float) else actual}{unit}"
@@ -830,13 +837,15 @@ class TelegramNotifier:
                 # 필터 결과 상세 표시 (표 형식)
                 filter_results = bt_result.get('filter_results', {})
 
-                if filter_results and metrics:
-                    rows = self._get_filter_table_data(metrics, filter_results)
+                # filter_results가 있으면 테이블 표시 (metrics 없어도 통과/실패 표시 가능)
+                if filter_results:
+                    # metrics가 없으면 빈 딕셔너리 사용 (실제값 0으로 표시)
+                    rows = self._get_filter_table_data(metrics or {}, filter_results)
                     table = self._format_filter_table(rows)
                     message += f"<pre>{table}</pre>\n"
                 else:
-                    passed_count = len([k for k, v in filter_results.items() if v]) if filter_results else 0
-                    total_count = len(filter_results) if filter_results else 12
+                    passed_count = 0
+                    total_count = 12
                     message += f"   통과: {passed_count}/{total_count}\n"
 
         message += f"\n🕐 <b>시각:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -1003,3 +1012,258 @@ async def notify_scan_result(
     return await notifier.notify_scan_result(
         scan_summary, selected_coin, all_backtest_results
     )
+
+
+async def notify_position_status(
+    positions: list,
+    total_invested: float = 0,
+    total_value: float = 0,
+    krw_balance: float = 0,
+) -> bool:
+    """
+    포지션 상태 알림 (15분 주기)
+
+    Args:
+        positions: 보유 포지션 리스트 [{'symbol': 'DOGE', 'invested': 95689, 'value': 92128, 'pnl': -3.72}, ...]
+        total_invested: 총 투자 금액
+        total_value: 총 평가 금액
+        krw_balance: KRW 잔고
+    """
+    total_pnl = ((total_value - total_invested) / total_invested * 100) if total_invested > 0 else 0
+    pnl_emoji = "📈" if total_pnl >= 0 else "📉"
+    pnl_sign = "+" if total_pnl >= 0 else ""
+
+    message = f"""
+🔍 <b>포지션 관리 - 현황 체크</b>
+
+━━━━━━━━━━━━━━━━━━━━
+<b>💼 전체 포트폴리오</b>
+━━━━━━━━━━━━━━━━━━━━
+💵 <b>KRW 잔고:</b> {krw_balance:,.0f} KRW
+📊 <b>보유 포지션:</b> {len(positions)}개
+💰 <b>투자 금액:</b> {total_invested:,.0f} KRW
+📈 <b>평가 금액:</b> {total_value:,.0f} KRW
+{pnl_emoji} <b>총 손익:</b> {pnl_sign}{total_pnl:.2f}% ({pnl_sign}{total_value - total_invested:,.0f} KRW)
+"""
+
+    if positions:
+        message += f"""
+━━━━━━━━━━━━━━━━━━━━
+<b>📋 개별 포지션 상태</b>
+━━━━━━━━━━━━━━━━━━━━
+"""
+        for pos in positions:
+            symbol = pos.get('symbol', 'N/A')
+            invested = pos.get('invested', 0)
+            value = pos.get('value', 0)
+            pnl = pos.get('pnl', 0)
+
+            # 투자 금액이 0인 항목은 제외
+            if invested == 0:
+                continue
+
+            pos_emoji = "📈" if pnl >= 0 else "📉"
+            pos_sign = "+" if pnl >= 0 else ""
+
+            # 손절/익절 근접 상태 표시
+            status = ""
+            if pnl <= -5.0:
+                status = " ⚠️ 손절 위험"
+            elif pnl <= -4.0:
+                status = " 🟡 손절 근접"
+            elif pnl >= 10.0:
+                status = " ✅ 익절 도달"
+            elif pnl >= 8.0:
+                status = " 🟢 익절 근접"
+
+            message += f"""
+🪙 <b>{symbol}</b>{status}
+   투자: {invested:,.0f} → 평가: {value:,.0f}
+   {pos_emoji} 손익: {pos_sign}{pnl:.2f}%
+"""
+
+    message += f"\n🕐 <b>시각:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+    return await notifier.send_message(message)
+
+
+async def notify_position_exit(
+    symbol: str,
+    exit_type: str,
+    invested: float,
+    exit_value: float,
+    pnl: float,
+    reason: str,
+) -> bool:
+    """
+    포지션 청산 알림 (손절/익절)
+
+    Args:
+        symbol: 코인 심볼
+        exit_type: 'stop_loss' 또는 'take_profit'
+        invested: 투자 금액
+        exit_value: 청산 금액
+        pnl: 손익률 (%)
+        reason: 청산 사유
+    """
+    if exit_type == 'stop_loss':
+        emoji = "🔴"
+        title = "손절 실행"
+        color_emoji = "📉"
+    elif exit_type == 'take_profit':
+        emoji = "💚"
+        title = "익절 실행"
+        color_emoji = "📈"
+    else:
+        emoji = "💸"
+        title = "포지션 청산"
+        color_emoji = "📊"
+
+    pnl_sign = "+" if pnl >= 0 else ""
+    pnl_amount = exit_value - invested
+
+    message = f"""
+{emoji} <b>{title}</b>
+
+━━━━━━━━━━━━━━━━━━━━
+<b>💱 청산 정보</b>
+━━━━━━━━━━━━━━━━━━━━
+🪙 <b>심볼:</b> {symbol}
+📝 <b>사유:</b> {escape_html(reason)}
+
+💰 <b>투자 금액:</b> {invested:,.0f} KRW
+💸 <b>청산 금액:</b> {exit_value:,.0f} KRW
+{color_emoji} <b>실현 손익:</b> {pnl_sign}{pnl:.2f}% ({pnl_sign}{pnl_amount:,.0f} KRW)
+
+🕐 <b>시각:</b> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+"""
+
+    return await notifier.send_message(message)
+
+
+async def notify_trading_cycle_complete(
+    decision: str,
+    reason: str,
+    positions: list,
+    krw_balance: float = 0,
+    total_invested: float = 0,
+    total_value: float = 0,
+    trading_mode: str = "entry",
+    can_open_new_position: bool = True,
+    max_positions: int = 3,
+    duration: float = 0,
+    trade_result: dict = None,
+) -> bool:
+    """
+    트레이딩 사이클 완료 통합 알림
+
+    로그와 동일한 형태로 한눈에 볼 수 있는 정보 제공
+
+    Args:
+        decision: AI 결정 (buy/sell/hold)
+        reason: 결정 사유
+        positions: 보유 포지션 리스트
+        krw_balance: KRW 잔고
+        total_invested: 총 투자 금액
+        total_value: 총 평가 금액
+        trading_mode: 거래 모드 (entry/management/blocked)
+        can_open_new_position: 신규 진입 가능 여부
+        max_positions: 최대 포지션 수
+        duration: 소요 시간
+        trade_result: 거래 실행 결과 (매수/매도 시)
+    """
+    # 결정 이모지
+    decision_emoji_map = {
+        'buy': '💰',
+        'sell': '💸',
+        'hold': '⏸️',
+    }
+    decision_emoji = decision_emoji_map.get(decision, '❓')
+    decision_kr = {'buy': '매수', 'sell': '매도', 'hold': '관망'}.get(decision, decision)
+
+    # 거래 모드 한글
+    mode_kr = {'entry': '진입', 'management': '관리', 'blocked': '차단'}.get(trading_mode, trading_mode)
+
+    # 진입 가능 여부
+    can_entry_text = "Yes ✅" if can_open_new_position else "No ❌"
+
+    # 총 손익 계산
+    total_pnl = ((total_value - total_invested) / total_invested * 100) if total_invested > 0 else 0
+    pnl_emoji = "📈" if total_pnl >= 0 else "📉"
+    pnl_sign = "+" if total_pnl >= 0 else ""
+
+    # 실제 포지션 수 (투자금액 > 0인 것만)
+    valid_positions = [p for p in positions if p.get('invested', 0) > 0]
+    position_count = len(valid_positions)
+
+    message = f"""
+✅ <b>트레이딩 사이클 완료</b>
+
+━━━━━━━━━━━━━━━━━━━━
+<b>📊 포트폴리오 현황</b>
+━━━━━━━━━━━━━━━━━━━━
+🔄 <b>거래 모드:</b> {mode_kr}
+📦 <b>보유 포지션:</b> {position_count}/{max_positions}개
+🚀 <b>신규 진입:</b> {can_entry_text}
+
+💵 <b>현금 잔고:</b> {krw_balance:,.0f} KRW
+💰 <b>투자 금액:</b> {total_invested:,.0f} KRW
+📈 <b>평가 금액:</b> {total_value:,.0f} KRW
+{pnl_emoji} <b>총 손익:</b> {pnl_sign}{total_pnl:.2f}% ({pnl_sign}{total_value - total_invested:,.0f} KRW)
+"""
+
+    # 개별 포지션 상태
+    if valid_positions:
+        message += """
+━━━━━━━━━━━━━━━━━━━━
+<b>📋 보유 포지션</b>
+━━━━━━━━━━━━━━━━━━━━
+"""
+        for pos in valid_positions:
+            symbol = pos.get('symbol', 'N/A')
+            invested = pos.get('invested', 0)
+            value = pos.get('value', 0)
+            pnl = pos.get('pnl', 0)
+
+            pos_emoji = "📈" if pnl >= 0 else "📉"
+            pos_sign = "+" if pnl >= 0 else ""
+
+            # 손절/익절 근접 상태 표시
+            status = ""
+            if pnl <= -5.0:
+                status = " ⚠️ 손절"
+            elif pnl <= -4.0:
+                status = " 🟡 주의"
+            elif pnl >= 10.0:
+                status = " ✅ 익절"
+            elif pnl >= 8.0:
+                status = " 🟢 양호"
+
+            message += f"  🪙 <b>{symbol}</b>{status}: {value:,.0f} KRW ({pos_sign}{pnl:.2f}%)\n"
+
+    # 결정 정보
+    message += f"""
+━━━━━━━━━━━━━━━━━━━━
+<b>🤖 AI 결정</b>
+━━━━━━━━━━━━━━━━━━━━
+{decision_emoji} <b>결정:</b> {decision_kr.upper()}
+⏱️ <b>소요 시간:</b> {duration:.1f}초
+💭 <b>사유:</b> {escape_html(reason[:200])}{"..." if len(reason) > 200 else ""}
+"""
+
+    # 거래 실행 결과 (매수/매도 성공 시)
+    if trade_result and trade_result.get('trade_success'):
+        trade_side = "매수" if decision == 'buy' else "매도"
+        message += f"""
+━━━━━━━━━━━━━━━━━━━━
+<b>💱 거래 실행</b>
+━━━━━━━━━━━━━━━━━━━━
+✅ <b>{trade_side} 성공</b>
+💵 체결가: {trade_result.get('price', 0):,.0f} KRW
+📦 수량: {trade_result.get('amount', 0):.8f}
+💰 총액: {trade_result.get('total', 0):,.0f} KRW
+"""
+
+    message += f"\n🕐 <b>시각:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+    return await notifier.send_message(message)

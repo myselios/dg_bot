@@ -15,6 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from backend.app.core.config import settings
+from backend.app.services.notification import notify_scan_result
 
 logger = logging.getLogger(__name__)
 
@@ -123,13 +124,8 @@ async def trading_job():
     """
     from src.config.settings import TradingConfig
     from backend.app.services.notification import (
-        notify_trade,
         notify_error,
-        notify_cycle_start,  # 1) 사이클 시작 알림
-        notify_scan_result,  # 2) 스캔 결과 알림 (유동성 + 백테스팅)
-        notify_backtest_and_signals,  # 3) 백테스팅 및 신호 분석
-        notify_ai_decision,  # 4) AI 의사결정 상세
-        notify_portfolio_status,  # 5) 포트폴리오 현황
+        notify_cycle_start,
     )
     from backend.app.services.metrics import (
         record_ai_decision,
@@ -190,11 +186,12 @@ async def trading_job():
 
             current_price = upbit_client.get_current_price(ticker)
             orderbook = upbit_client.get_orderbook(ticker)
-            chart_data = data_collector.collect_market_data(
-                ticker,
-                interval='day',
-                count=60
-            )
+            # DataCollector.get_chart_data는 {'day': df, 'minute60': df, 'minute15': df} 반환
+            chart_data_dict = data_collector.get_chart_data(ticker)
+            chart_data = chart_data_dict.get('day') if chart_data_dict else None
+            if chart_data is None:
+                logger.warning("차트 데이터 수집 실패")
+                raise RuntimeError("차트 데이터를 가져올 수 없습니다")
             
             # 기술적 지표 계산
             # chart_data의 컬럼명 확인 (trade_price 또는 close)
@@ -419,68 +416,87 @@ async def trading_job():
                 except Exception as e:
                     logger.error(f"거래 내역 저장 실패: {e}", exc_info=True)
             
-            # 포트폴리오 정보 수집 (텔레그램 로그용) - 실제 선택된 코인 사용
+            # 포트폴리오 정보 수집 (전체 포지션 포함)
+            positions_info = []
+            total_invested = 0.0
+            total_value = 0.0
+            krw_balance = 0.0
+            trading_mode = "entry"
+            can_open_new_position = True
+
             try:
-                # Container에서 레거시 서비스 추출
                 _upbit_client = get_upbit_client()
                 if not _upbit_client:
                     raise RuntimeError("UpbitClient를 가져올 수 없습니다")
 
-                # 전체 잔고 조회 (get_balances 사용)
                 balances = _upbit_client.get_balances()
-
-                # KRW 잔고 찾기
-                krw_balance = 0.0
-                crypto_balance = 0.0
-                crypto_currency = actual_symbol  # 실제 선택된 코인 심볼 사용
+                MIN_POSITION_VALUE = 10000  # 최소 포지션 가치
 
                 if balances:
                     for balance in balances:
-                        if balance['currency'] == 'KRW':
-                            krw_balance = float(balance['balance'])
-                        elif balance['currency'] == crypto_currency:
-                            crypto_balance = float(balance['balance'])
+                        currency = balance['currency']
+                        amount = float(balance['balance'])
+                        avg_buy_price = float(balance['avg_buy_price'])
 
-                # 현재가 조회 - 실제 선택된 코인
-                current_price = _upbit_client.get_current_price(actual_ticker)
-                
-                total_value = krw_balance + (crypto_balance * current_price if current_price else 0)
-                
-                portfolio_data = {
-                    'krw_balance': krw_balance,
-                    'crypto_balance': crypto_balance,
-                    'total_value': total_value,
-                }
-                logger.info(f"✅ 포트폴리오 정보 수집 완료: 총 자산 {total_value:,.0f} KRW")
+                        if currency == 'KRW':
+                            krw_balance = amount
+                        elif amount > 0 and avg_buy_price > 0:
+                            invested = amount * avg_buy_price
+                            if invested < MIN_POSITION_VALUE:
+                                continue
+
+                            ticker = f'KRW-{currency}'
+                            try:
+                                current_price = _upbit_client.get_current_price(ticker)
+                                if current_price:
+                                    value = amount * current_price
+                                    pnl = ((current_price - avg_buy_price) / avg_buy_price * 100)
+
+                                    positions_info.append({
+                                        'symbol': currency,
+                                        'ticker': ticker,
+                                        'invested': invested,
+                                        'value': value,
+                                        'pnl': pnl,
+                                    })
+                                    total_invested += invested
+                                    total_value += value
+                            except:
+                                pass
+
+                # 거래 모드 및 진입 가능 여부 결정
+                max_positions = 3
+                position_count = len(positions_info)
+                if position_count >= max_positions:
+                    trading_mode = "management"
+                    can_open_new_position = False
+                elif position_count > 0:
+                    trading_mode = "entry"
+                    can_open_new_position = krw_balance >= MIN_POSITION_VALUE
+                else:
+                    trading_mode = "entry"
+                    can_open_new_position = krw_balance >= MIN_POSITION_VALUE
+
+                logger.info(f"✅ 포트폴리오 수집: {position_count}개 포지션, 투자 {total_invested:,.0f} KRW")
             except Exception as portfolio_error:
                 logger.warning(f"포트폴리오 정보 수집 실패: {portfolio_error}")
-                portfolio_data = {}
-            
+
             # result에 추가 정보 포함
             result['market_data'] = market_data
-            result['portfolio'] = portfolio_data
-            
+            result['portfolio'] = {
+                'krw_balance': krw_balance,
+                'total_invested': total_invested,
+                'total_value': total_value,
+                'positions': positions_info,
+            }
+
             # 실행 시간 계산
             duration = time() - job_start_time
 
-            # 📱 2) 백테스팅 알림은 콜백에서 AI 분석 전에 이미 전송됨 (on_backtest_complete_callback)
+            # 📱 통합 트레이딩 사이클 완료 알림 (로그와 동일한 형태)
+            try:
+                from backend.app.services.notification import notify_trading_cycle_complete
 
-            # 📱 3) 의사결정 상세 알림 (AI 또는 신호 기반) - 실제 선택된 코인 사용
-            try:
-                await notify_ai_decision(
-                    symbol=actual_ticker,  # 실제 선택된 코인 사용
-                    decision=result['decision'],
-                    confidence=result.get('confidence', 'medium'),
-                    reason=result.get('reason', '분석 중'),
-                    duration=duration,
-                    signal_analysis=result.get('signal_analysis'),  # Phase 1: SignalAnalyzer 결과
-                )
-                logger.info("✅ 의사결정 상세 알림 전송 완료")
-            except Exception as telegram_error:
-                logger.warning(f"의사결정 알림 전송 실패: {telegram_error}")
-            
-            # 📱 4) 포트폴리오 현황 알림 - 실제 선택된 코인 사용
-            try:
                 # 거래 결과 (매수/매도인 경우)
                 trade_result_data = None
                 if result['decision'] in ['buy', 'sell'] and result.get('trade_id'):
@@ -493,14 +509,22 @@ async def trading_job():
                         'fee': result.get('fee'),
                     }
 
-                await notify_portfolio_status(
-                    symbol=actual_ticker,  # 실제 선택된 코인 사용
-                    portfolio_data=portfolio_data,
+                await notify_trading_cycle_complete(
+                    decision=result['decision'],
+                    reason=result.get('reason', '분석 중'),
+                    positions=positions_info,
+                    krw_balance=krw_balance,
+                    total_invested=total_invested,
+                    total_value=total_value,
+                    trading_mode=trading_mode,
+                    can_open_new_position=can_open_new_position,
+                    max_positions=max_positions,
+                    duration=duration,
                     trade_result=trade_result_data,
                 )
-                logger.info("✅ 포트폴리오 현황 알림 전송 완료")
+                logger.info("✅ 트레이딩 사이클 완료 알림 전송")
             except Exception as telegram_error:
-                logger.warning(f"포트폴리오 알림 전송 실패: {telegram_error}")
+                logger.warning(f"트레이딩 사이클 완료 알림 전송 실패: {telegram_error}")
             
             # 성공 메트릭
             scheduler_job_success_total.labels(job_name='trading_job').inc()
@@ -593,7 +617,12 @@ async def position_management_job():
     - TradingOrchestrator를 통해 포지션 관리 실행
     - Lock으로 trading_job과 상호 배제
     """
-    from backend.app.services.notification import notify_error
+    from backend.app.services.notification import (
+        notify_error,
+        notify_cycle_start,
+        notify_position_status,
+        notify_position_exit,
+    )
     from backend.app.services.metrics import (
         scheduler_job_duration_seconds,
         scheduler_job_success_total,
@@ -620,6 +649,86 @@ async def position_management_job():
         logger.info("🔒 position_management 락 획득 완료")
         logger.info(f"[{datetime.now()}] 포지션 관리 작업 시작 (15분 주기)")
 
+        # 📱 1) 포지션 관리 시작 알림
+        try:
+            await notify_cycle_start(
+                symbol="포지션 관리",
+                status="started",
+                message="보유 포지션 손절/익절 체크를 시작합니다 (15분 주기)"
+            )
+            logger.info("✅ 포지션 관리 시작 알림 전송 완료")
+        except Exception as telegram_error:
+            logger.warning(f"포지션 관리 시작 알림 전송 실패: {telegram_error}")
+
+        # 📊 포지션 정보 수집 (텔레그램 알림용)
+        positions_info = []
+        total_invested = 0.0
+        total_value = 0.0
+        krw_balance = 0.0
+
+        try:
+            upbit_client = get_upbit_client()
+            if upbit_client:
+                balances = upbit_client.get_balances()
+
+                # 최소 포지션 가치 (1만원 이하는 무시)
+                MIN_POSITION_VALUE = 10000
+
+                for balance in balances:
+                    currency = balance['currency']
+                    amount = float(balance['balance'])
+                    avg_buy_price = float(balance['avg_buy_price'])
+
+                    if currency == 'KRW':
+                        krw_balance = amount
+                    elif amount > 0 and avg_buy_price > 0:
+                        # 투자 금액 계산
+                        invested = amount * avg_buy_price
+
+                        # 최소 포지션 가치 미만은 무시 (먼지 잔고 필터링)
+                        if invested < MIN_POSITION_VALUE:
+                            continue
+
+                        # 암호화폐 포지션
+                        ticker = f'KRW-{currency}'
+                        try:
+                            current_price = upbit_client.get_current_price(ticker)
+                            if current_price:
+                                value = amount * current_price
+                                pnl = ((current_price - avg_buy_price) / avg_buy_price * 100) if avg_buy_price > 0 else 0
+
+                                positions_info.append({
+                                    'symbol': currency,
+                                    'ticker': ticker,
+                                    'invested': invested,
+                                    'value': value,
+                                    'pnl': pnl,
+                                    'amount': amount,
+                                    'avg_buy_price': avg_buy_price,
+                                    'current_price': current_price,
+                                })
+
+                                total_invested += invested
+                                total_value += value
+                        except:
+                            pass
+
+                logger.info(f"✅ 포지션 정보 수집 완료: {len(positions_info)}개 포지션")
+        except Exception as position_error:
+            logger.warning(f"포지션 정보 수집 실패: {position_error}")
+
+        # 📱 2) 포지션 상태 알림
+        try:
+            await notify_position_status(
+                positions=positions_info,
+                total_invested=total_invested,
+                total_value=total_value,
+                krw_balance=krw_balance,
+            )
+            logger.info("✅ 포지션 상태 알림 전송 완료")
+        except Exception as telegram_error:
+            logger.warning(f"포지션 상태 알림 전송 실패: {telegram_error}")
+
         # TradingOrchestrator 초기화 (Clean Architecture)
         orchestrator = get_trading_orchestrator()
 
@@ -635,7 +744,33 @@ async def position_management_job():
 
             if exit_actions:
                 logger.info(f"✅ 포지션 관리 완료: {len(exit_actions)}개 포지션 청산")
-                # TODO: 청산 알림 전송
+
+                # 📱 3) 청산 알림 전송
+                for action in exit_actions:
+                    try:
+                        symbol = action.get('symbol', 'N/A')
+                        exit_type = action.get('exit_type', 'unknown')  # 'stop_loss' 또는 'take_profit'
+                        reason = action.get('reason', '포지션 청산')
+
+                        # 포지션 정보에서 투자금액 및 PnL 찾기
+                        pos_info = next((p for p in positions_info if p['symbol'] == symbol.replace('KRW-', '')), None)
+
+                        if pos_info:
+                            invested = pos_info['invested']
+                            exit_value = pos_info['value']
+                            pnl = pos_info['pnl']
+
+                            await notify_position_exit(
+                                symbol=symbol,
+                                exit_type=exit_type,
+                                invested=invested,
+                                exit_value=exit_value,
+                                pnl=pnl,
+                                reason=reason,
+                            )
+                            logger.info(f"✅ {symbol} 청산 알림 전송 완료")
+                    except Exception as telegram_error:
+                        logger.warning(f"청산 알림 전송 실패: {telegram_error}")
             else:
                 logger.info(f"✅ 포지션 관리 완료: 변동 없음")
 

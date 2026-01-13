@@ -55,18 +55,20 @@ class TradingPipeline:
                 stage.post_execute(context, result)
 
                 # 백테스팅 콜백 처리 (스테이지에서 설정한 경우)
+                # 콜백 데이터는 response에 포함을 위해 유지 (_backtest_callback_sent 플래그로 중복 방지)
                 if context.pending_backtest_callback_data and context.on_backtest_complete:
-                    try:
-                        callback_data = context.pending_backtest_callback_data
-                        context.pending_backtest_callback_data = None  # 처리 후 초기화
-                        callback_result = context.on_backtest_complete(callback_data)
-                        # 코루틴이면 await으로 완료 대기
-                        import asyncio
-                        if asyncio.iscoroutine(callback_result):
-                            await callback_result
-                        Logger.print_success("✅ 백테스팅 콜백 전송 완료")
-                    except Exception as cb_error:
-                        Logger.print_warning(f"⚠️ 백테스팅 콜백 실패: {cb_error}")
+                    if not getattr(context, '_backtest_callback_sent', False):
+                        try:
+                            callback_data = context.pending_backtest_callback_data
+                            context._backtest_callback_sent = True  # 중복 콜백 방지 플래그
+                            callback_result = context.on_backtest_complete(callback_data)
+                            # 코루틴이면 await으로 완료 대기
+                            import asyncio
+                            if asyncio.iscoroutine(callback_result):
+                                await callback_result
+                            Logger.print_success("✅ 백테스팅 콜백 전송 완료")
+                        except Exception as cb_error:
+                            Logger.print_warning(f"⚠️ 백테스팅 콜백 실패: {cb_error}")
 
                 # 결과 처리
                 if not result.success:
@@ -112,18 +114,20 @@ class TradingPipeline:
         Args:
             context: 파이프라인 컨텍스트
         """
+        # 콜백 데이터는 response에 포함을 위해 유지 (_backtest_callback_sent 플래그로 중복 방지)
         if context.pending_backtest_callback_data and context.on_backtest_complete:
-            try:
-                callback_data = context.pending_backtest_callback_data
-                context.pending_backtest_callback_data = None  # 처리 후 초기화
-                callback_result = context.on_backtest_complete(callback_data)
-                # 코루틴이면 await으로 완료 대기
-                import asyncio
-                if asyncio.iscoroutine(callback_result):
-                    await callback_result
-                Logger.print_success("✅ 백테스팅 콜백 전송 완료 (파이프라인 종료 시)")
-            except Exception as cb_error:
-                Logger.print_warning(f"⚠️ 백테스팅 콜백 실패: {cb_error}")
+            if not getattr(context, '_backtest_callback_sent', False):
+                try:
+                    callback_data = context.pending_backtest_callback_data
+                    context._backtest_callback_sent = True  # 중복 콜백 방지 플래그
+                    callback_result = context.on_backtest_complete(callback_data)
+                    # 코루틴이면 await으로 완료 대기
+                    import asyncio
+                    if asyncio.iscoroutine(callback_result):
+                        await callback_result
+                    Logger.print_success("✅ 백테스팅 콜백 전송 완료 (파이프라인 종료 시)")
+                except Exception as cb_error:
+                    Logger.print_warning(f"⚠️ 백테스팅 콜백 실패: {cb_error}")
 
     def _create_success_response(
         self,
@@ -228,11 +232,11 @@ class TradingPipeline:
 
 def create_hybrid_trading_pipeline(
     # 리스크 파라미터
-    stop_loss_pct: float = -5.0,
-    take_profit_pct: float = 10.0,
+    stop_loss_pct: float = -12.0,
+    take_profit_pct: float = 15.0,
     daily_loss_limit_pct: float = -10.0,
     min_trade_interval_hours: int = 4,
-    max_positions: int = 3,
+    max_positions: int = 2,
     # 스캔 파라미터
     enable_scanning: bool = True,
     fallback_ticker: str = "KRW-ETH",
@@ -261,11 +265,11 @@ def create_hybrid_trading_pipeline(
     4. ExecutionStage: 거래 실행
 
     Args:
-        stop_loss_pct: 손절 비율 (기본 -5%)
-        take_profit_pct: 익절 비율 (기본 +10%)
+        stop_loss_pct: 손절 비율 (기본 -12%)
+        take_profit_pct: 익절 비율 (기본 +15%)
         daily_loss_limit_pct: 일일 최대 손실 비율 (기본 -10%)
         min_trade_interval_hours: 최소 거래 간격 (기본 4시간)
-        max_positions: 최대 동시 포지션 수 (기본 3개)
+        max_positions: 최대 동시 포지션 수 (기본 2개)
         enable_scanning: 코인 스캔 활성화 여부 (기본 True)
         fallback_ticker: 스캔 비활성화 또는 실패 시 사용할 티커 (기본 "KRW-ETH")
         liquidity_top_n: 유동성 스캔 상위 N개 (기본 10)
@@ -350,9 +354,9 @@ def create_spot_trading_pipeline(
 
 
 def create_position_management_pipeline(
-    stop_loss_pct: float = -5.0,
-    take_profit_pct: float = 10.0,
-    max_positions: int = 3
+    stop_loss_pct: float = -12.0,
+    take_profit_pct: float = 15.0,
+    max_positions: int = 2
 ) -> TradingPipeline:
     """
     포지션 관리 전용 파이프라인 생성 (15분 주기용)
@@ -361,9 +365,9 @@ def create_position_management_pipeline(
     포지션이 없으면 즉시 종료합니다.
 
     Args:
-        stop_loss_pct: 손절 비율 (기본 -5%)
-        take_profit_pct: 익절 비율 (기본 +10%)
-        max_positions: 최대 동시 포지션 수 (기본 3개)
+        stop_loss_pct: 손절 비율 (기본 -12%)
+        take_profit_pct: 익절 비율 (기본 +15%)
+        max_positions: 최대 동시 포지션 수 (기본 2개)
 
     Returns:
         TradingPipeline: 포지션 관리 전용 파이프라인

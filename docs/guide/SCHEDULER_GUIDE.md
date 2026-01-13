@@ -211,10 +211,10 @@ AI 자동매매 시스템을 **듀얼 타임프레임 (1시간 + 15분)**으로 
 
 ```python
 # 파라미터 (기본값)
-stop_loss_pct=-5.0        # 손절 비율
-take_profit_pct=10.0      # 익절 비율
+stop_loss_pct=-12.0       # 손절 비율
+take_profit_pct=15.0      # 익절 비율
 daily_loss_limit_pct=-10.0  # 일일 최대 손실
-max_positions=3           # 최대 동시 포지션 수
+max_positions=2           # 최대 동시 포지션 수
 liquidity_top_n=10        # 유동성 스캔 코인 수
 min_volume_krw=10_000_000_000  # 최소 거래대금 (100억원)
 ```
@@ -488,8 +488,8 @@ async def execute_trading_cycle(
     """
     # 파이프라인 생성
     pipeline = create_spot_trading_pipeline(
-        stop_loss_pct=-5.0,
-        take_profit_pct=10.0,
+        stop_loss_pct=-12.0,
+        take_profit_pct=15.0,
         daily_loss_limit_pct=-10.0,
         min_trade_interval_hours=4
     )
@@ -777,8 +777,8 @@ SCHEDULER_INTERVAL_MINUTES=360
 
 ```python
 pipeline = create_spot_trading_pipeline(
-    stop_loss_pct=-5.0,           # 손절 비율 (-5%)
-    take_profit_pct=10.0,         # 익절 비율 (+10%)
+    stop_loss_pct=-12.0,          # 손절 비율 (-12%)
+    take_profit_pct=15.0,         # 익절 비율 (+15%)
     daily_loss_limit_pct=-10.0,   # 일일 최대 손실 (-10%)
     min_trade_interval_hours=4     # 최소 거래 간격 (4시간)
 )

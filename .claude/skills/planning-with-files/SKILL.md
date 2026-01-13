@@ -11,26 +11,28 @@ Work like Manus: Use persistent markdown files as your "working memory on disk."
 
 Before ANY complex task:
 
-1. **Create `task_plan.md`** in the working directory
+1. **Create `.claude/plans/task_plan.md`** (temporary working memory)
 2. **Define phases** with checkboxes
 3. **Update after each phase** - mark [x] and change status
 4. **Read before deciding** - refresh goals in attention window
 
+> **Note**: 이 스킬은 임시 작업 메모리용. 영구 계획 문서는 `docs/plans/PLAN_<feature>.md` 사용 (feature-planner 스킬)
+
 ## The 3-File Pattern
 
-For every non-trivial task, create THREE files:
+For every non-trivial task, create THREE files in `.claude/plans/`:
 
 | File | Purpose | When to Update |
 |------|---------|----------------|
-| `task_plan.md` | Track phases and progress | After each phase |
-| `notes.md` | Store findings and research | During research |
-| `[deliverable].md` | Final output | At completion |
+| `.claude/plans/task_plan.md` | Track phases and progress | After each phase |
+| `.claude/plans/notes.md` | Store findings and research | During research |
+| `.claude/plans/[deliverable].md` | Final output | At completion |
 
 ## Core Workflow
 
 ```
-Loop 1: Create task_plan.md with goal and phases
-Loop 2: Research → save to notes.md → update task_plan.md
+Loop 1: Create .claude/plans/task_plan.md with goal and phases
+Loop 2: Research → save to .claude/plans/notes.md → update task_plan.md
 Loop 3: Read notes.md → create deliverable → update task_plan.md
 Loop 4: Deliver final output
 ```
@@ -39,22 +41,22 @@ Loop 4: Deliver final output
 
 **Before each major action:**
 ```bash
-Read task_plan.md  # Refresh goals in attention window
+Read .claude/plans/task_plan.md  # Refresh goals in attention window
 ```
 
 **After each phase:**
 ```bash
-Edit task_plan.md  # Mark [x], update status
+Edit .claude/plans/task_plan.md  # Mark [x], update status
 ```
 
 **When storing information:**
 ```bash
-Write notes.md     # Don't stuff context, store in file
+Write .claude/plans/notes.md     # Don't stuff context, store in file
 ```
 
 ## task_plan.md Template
 
-Create this file FIRST for any complex task:
+Create `.claude/plans/task_plan.md` FIRST for any complex task:
 
 ```markdown
 # Task Plan: [Brief Description]
@@ -107,7 +109,7 @@ For research and findings:
 ## Critical Rules
 
 ### 1. ALWAYS Create Plan First
-Never start a complex task without `task_plan.md`. This is non-negotiable.
+Never start a complex task without `.claude/plans/task_plan.md`. This is non-negotiable.
 
 ### 2. Read Before Decide
 Before any major decision, read the plan file. This keeps goals in your attention window.
@@ -142,7 +144,7 @@ Every error goes in the "Errors Encountered" section. This builds knowledge for 
 
 | Don't | Do Instead |
 |-------|------------|
-| Use TodoWrite for persistence | Create `task_plan.md` file |
+| Use TodoWrite for persistence | Create `.claude/plans/task_plan.md` file |
 | State goals once and forget | Re-read plan before each decision |
 | Hide errors and retry | Log errors to plan file |
 | Stuff everything in context | Store large content in files |

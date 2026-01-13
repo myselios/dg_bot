@@ -29,6 +29,8 @@ from src.application.use_cases.execute_trade import ExecuteTradeUseCase
 from src.application.use_cases.analyze_market import AnalyzeMarketUseCase
 from src.application.use_cases.manage_position import ManagePositionUseCase
 from src.application.use_cases.analyze_breakout import AnalyzeBreakoutUseCase
+from src.application.use_cases.calculate_entry_amount import CalculateEntryAmountUseCase
+from src.domain.value_objects.position_sizing import PositionSizingPolicy
 
 
 class Container:
@@ -83,6 +85,10 @@ class Container:
         self._analyze_market_use_case: Optional[AnalyzeMarketUseCase] = None
         self._manage_position_use_case: Optional[ManagePositionUseCase] = None
         self._analyze_breakout_use_case: Optional[AnalyzeBreakoutUseCase] = None
+        self._calculate_entry_amount_use_case: Optional[CalculateEntryAmountUseCase] = None
+
+        # Position sizing policy (configurable)
+        self._position_sizing_policy: Optional[PositionSizingPolicy] = None
 
     @classmethod
     def create_for_testing(cls) -> "Container":
@@ -316,6 +322,51 @@ class Container:
                 ai_client=ai_client,
             )
         return self._analyze_breakout_use_case
+
+    def get_calculate_entry_amount_use_case(
+        self,
+        policy: Optional[PositionSizingPolicy] = None,
+    ) -> CalculateEntryAmountUseCase:
+        """
+        Get CalculateEntryAmountUseCase with wired dependencies.
+
+        진입 금액 계산 UseCase를 반환합니다.
+        PositionSizingPolicy를 통해 자본 배분 규칙을 적용합니다.
+
+        Args:
+            policy: 포지션 사이징 정책 (None이면 기본 정책 사용)
+
+        Returns:
+            CalculateEntryAmountUseCase instance
+        """
+        # 정책이 지정되면 새로 생성 (캐싱하지 않음)
+        if policy is not None:
+            return CalculateEntryAmountUseCase(
+                exchange=self.get_exchange_port(),
+                policy=policy,
+            )
+
+        # 기본 정책으로 캐싱된 인스턴스 반환
+        if self._calculate_entry_amount_use_case is None:
+            self._calculate_entry_amount_use_case = CalculateEntryAmountUseCase(
+                exchange=self.get_exchange_port(),
+                policy=self._position_sizing_policy or PositionSizingPolicy.default(),
+            )
+        return self._calculate_entry_amount_use_case
+
+    def set_position_sizing_policy(self, policy: PositionSizingPolicy) -> None:
+        """
+        포지션 사이징 정책 설정
+
+        이 메서드로 기본 정책을 변경하면, 이후 get_calculate_entry_amount_use_case()
+        호출 시 새 정책이 적용됩니다.
+
+        Args:
+            policy: 새로운 포지션 사이징 정책
+        """
+        self._position_sizing_policy = policy
+        # 캐싱된 UseCase 무효화 (다음 호출 시 새 정책으로 생성)
+        self._calculate_entry_amount_use_case = None
 
     # --- Execution Port ---
 

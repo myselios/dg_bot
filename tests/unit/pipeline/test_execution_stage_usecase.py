@@ -71,8 +71,15 @@ class TestExecutionStageWithUseCase:
         mock_use_case.execute_buy = AsyncMock()
         mock_use_case.execute_sell = AsyncMock()
 
+        # CalculateEntryAmountUseCase mock 추가
+        mock_calc_use_case = MagicMock()
+        mock_calc_use_case.execute = AsyncMock(
+            return_value=Money(Decimal("100000"), Currency.KRW)
+        )
+
         container = MagicMock(spec=Container)
         container.get_execute_trade_use_case.return_value = mock_use_case
+        container.get_calculate_entry_amount_use_case.return_value = mock_calc_use_case
         container.get_exchange_port.return_value = mock_exchange_port
 
         return container, mock_use_case
@@ -279,10 +286,17 @@ class TestExecutionStageErrorHandling:
             )
         )
 
+        # CalculateEntryAmountUseCase mock 추가
+        mock_calc_use_case = MagicMock()
+        mock_calc_use_case.execute = AsyncMock(
+            return_value=Money(Decimal("100000"), Currency.KRW)
+        )
+
         mock_exchange_port = create_mock_exchange_port()
 
         container = MagicMock(spec=Container)
         container.get_execute_trade_use_case.return_value = mock_use_case
+        container.get_calculate_entry_amount_use_case.return_value = mock_calc_use_case
         container.get_exchange_port.return_value = mock_exchange_port
 
         return container
@@ -317,10 +331,17 @@ class TestExecutionStageErrorHandling:
         mock_use_case = MagicMock(spec=ExecuteTradeUseCase)
         mock_use_case.execute_buy = AsyncMock(side_effect=Exception("네트워크 오류"))
 
+        # CalculateEntryAmountUseCase mock 추가
+        mock_calc_use_case = MagicMock()
+        mock_calc_use_case.execute = AsyncMock(
+            return_value=Money(Decimal("100000"), Currency.KRW)
+        )
+
         mock_exchange_port = create_mock_exchange_port()
 
         container = MagicMock(spec=Container)
         container.get_execute_trade_use_case.return_value = mock_use_case
+        container.get_calculate_entry_amount_use_case.return_value = mock_calc_use_case
         container.get_exchange_port.return_value = mock_exchange_port
 
         context = PipelineContext(
@@ -362,10 +383,17 @@ class TestExecutionStageMoneyConversion:
             )
         )
 
+        # CalculateEntryAmountUseCase mock 추가
+        mock_calc_use_case = MagicMock()
+        mock_calc_use_case.execute = AsyncMock(
+            return_value=Money(Decimal("100000"), Currency.KRW)
+        )
+
         mock_exchange_port = create_mock_exchange_port()
 
         container = MagicMock(spec=Container)
         container.get_execute_trade_use_case.return_value = mock_use_case
+        container.get_calculate_entry_amount_use_case.return_value = mock_calc_use_case
         container.get_exchange_port.return_value = mock_exchange_port
 
         context = PipelineContext(
